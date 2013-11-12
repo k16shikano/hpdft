@@ -14,9 +14,11 @@ import Control.Applicative
 import Text.Parsec.ByteString
 import Codec.Compression.Zlib (decompress)
 
+import Debug.Trace
+
 type PDFObj = (Int,BS.ByteString)
 type PDFStream = BSL.ByteString
-data Obj = PdfDict [(Obj, Obj)]
+data Obj = PdfDict Dict -- [(Obj, Obj)]
          | PdfText String 
          | PdfStream PDFStream
          | PdfNumber Double 
@@ -27,7 +29,9 @@ data Obj = PdfDict [(Obj, Obj)]
          | ObjRef Int
          | ObjOther String
          | PdfNull
-         deriving (Show)
+         deriving (Show, Eq)
+type Dict =  [(Obj,Obj)]
+
 
 -- First: grub objects
 -- Second: parse within each object, deflating its stream
@@ -36,29 +40,16 @@ data Obj = PdfDict [(Obj, Obj)]
 main = do
   (fileName:_) <- getArgs
   contents <- BS.readFile fileName
---  let txt = parsePDFObj ((getObjs contents) !! 2)
---  let txt = ((getObjs contents) !! 2)
---  let rn = rootRef contents
-  
   let objs = map parsePDFObj $ getObjs contents
-  let root = rootRef contents
-    
-  putStrLn $ show $ findObjByRef root objs
-
+  let root = case rootRef contents of
+        Just r  -> r
+        Nothing -> 0
+  BSL.putStrLn $ linearize root objs
 
 getObjs :: BS.ByteString -> [PDFObj]
 getObjs contents = case parse (many1 obj) "" contents of
   Left  err -> []
   Right rlt -> rlt
-
-findObjByRef :: Maybe Int -> [(Int,[Obj])] -> Maybe [Obj]
-findObjByRef (Just x) pdfobjs = case find (isRefObj (Just x)) pdfobjs of
-  Just (_,objs) -> Just objs
-  Nothing -> Nothing
-
-isRefObj :: Maybe Int -> (Int,[Obj]) -> Bool
-isRefObj (Just x) (y, objs) = if x==y then True else False
-isRefObj _ _ = False
 
 obj :: Parser PDFObj
 obj = do
@@ -69,7 +60,74 @@ obj = do
 
 -- linearize objects
 
-parseTrailer :: BS.ByteString -> Maybe [(Obj,Obj)]
+linearize :: Int -> [(Int,[Obj])] -> PDFStream
+linearize parent objs = 
+  case findObjByRef parent objs of
+    Just os -> case findDictByType "/Catalog" os of
+      Just dict -> case pages dict of 
+        Just pr -> linearize pr objs
+        Nothing -> ""
+      Nothing -> case findDictByType "/Pages" os of
+        Just dict -> case pagesKids dict of
+          Just kidsrefs -> BSL.concat $ map (\f -> f objs) (map linearize kidsrefs)
+          Nothing -> ""
+        Nothing -> case findDictByType "/Page" os of
+          Just dict -> contentsStream dict objs
+          Nothing -> ""
+    Nothing -> ""
+
+findObjByRef :: Int -> [(Int,[Obj])] -> Maybe [Obj]
+findObjByRef x pdfobjs = case find (isRefObj (Just x)) pdfobjs of
+  Just (_,objs) -> Just objs
+  Nothing -> Nothing
+
+isRefObj :: Maybe Int -> (Int,[Obj]) -> Bool
+isRefObj (Just x) (y, objs) = if x==y then True else False
+isRefObj _ _ = False
+
+getRefs :: ((Obj,Obj) -> Bool) -> Maybe Dict -> Maybe Int
+getRefs pred (Just objs) = case find pred objs of
+  Just (_, ObjRef x) -> Just x
+  Nothing            -> Nothing
+
+parseRefsArray :: [Obj] -> [Int]
+parseRefsArray (ObjRef x:y) = (x:parseRefsArray y)
+parseRefsArray [] = []
+
+findDictByType :: String -> [Obj] -> Maybe Dict
+findDictByType typename objs = case find isDict objs of
+  Just (PdfDict d) -> if isType d then Just d else Nothing 
+  Nothing          -> Nothing
+  where isType dict = (PdfName "/Type",PdfName typename) `elem` dict
+        isDict (PdfDict d) = True
+        isDict _           = False
+
+pages :: Dict -> Maybe Int
+pages dict = case find isPagesRef dict of
+  Just (_, ObjRef x) -> Just x
+  Nothing            -> Nothing
+
+pagesKids :: Dict -> Maybe [Int]
+pagesKids dict = case find isKidsRefs dict of
+  Just (_, PdfArray arr) -> Just (parseRefsArray arr)
+  Nothing                -> Nothing
+
+contentsStream :: Dict -> [(Int,[Obj])] -> PDFStream
+contentsStream dict objs = case find content dict of
+  Just (PdfName "/Contents", ObjRef x) -> case findObjByRef x objs of
+    Just contobjs -> case find isStream contobjs of
+      Just (PdfStream strm) -> strm
+      Nothing               -> ""
+  Nothing -> ""
+  where
+    content (PdfName "/Contents", ObjRef x) = True
+    content _                               = False
+
+isStream :: Obj -> Bool
+isStream (PdfStream s) = True
+isStream _             = False
+
+parseTrailer :: BS.ByteString -> Maybe Dict
 parseTrailer bs = case parse trailer "" bs of
   Left  err -> Nothing
   Right rlt -> case parse (spaces >> pdfdictionary) "" rlt of
@@ -83,32 +141,33 @@ trailer = do
   t <- manyTill anyChar (try $ string "startxref")
   return $ BS.pack t
 
-isRoot :: (Obj,Obj) -> Bool
-isRoot (PdfName "/Root", ObjRef x) = True
-isRoot (_,_) = False
-
 rootRef :: BS.ByteString -> Maybe Int
-rootRef bs = case parseTrailer bs of
-  Just dict -> case find isRoot dict of
-    Just (_, ObjRef x) -> Just x
-    Nothing -> Nothing
-  Nothing -> Nothing
+rootRef bs = getRefs isRootRef $ parseTrailer bs
 
-rootPages :: Maybe Int -> Obj
-rootPages (Just x) = undefined
+pagesRef :: Maybe Dict -> Maybe Int
+pagesRef objs = getRefs isPagesRef objs
+
+pageRef :: Maybe Dict -> Maybe Int
+pageRef objs = getRefs isPageRef objs
+
+isRootRef :: (Obj,Obj) -> Bool
+isRootRef (PdfName "/Root", ObjRef x) = True
+isRootRef (_,_) = False
+
+isPagesRef :: (Obj,Obj) -> Bool
+isPagesRef (PdfName "/Pages", ObjRef x) = True
+isPagesRef (_,_)                        = False
+
+isPageRef :: (Obj,Obj) -> Bool
+isPageRef (PdfName "/Page", ObjRef x) = True
+isPageRef (_,_)                       = False
+
+isKidsRefs :: (Obj,Obj) -> Bool
+isKidsRefs (PdfName "/Kids", PdfArray x) = True
+isKidsRefs (_,_)                         = False
 
 
 
-
-
-{-
-parseTrailer :: BS.ByteString -> Obj
-parseTrailer bs = case parse trailer "" bs of
-  Left  err -> PdfNull
-  Right rlt -> case parse (spaces >> pdfdictionary) "" rlt of
-    Left err -> PdfNull
-    Right ob -> ob
--}      
     
 -- parse raw pdf
 
