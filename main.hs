@@ -32,6 +32,7 @@ data Obj = PdfDict Dict -- [(Obj, Obj)]
          deriving (Show, Eq)
 type Dict =  [(Obj,Obj)]
 
+type PSParser a = GenParser Char (Double,Double) a
 
 -- First: grub objects
 -- Second: parse within each object, deflating its stream
@@ -45,7 +46,9 @@ main = do
         Just r  -> r
         Nothing -> 0
   BSL.putStrLn $ linearize root objs
-
+--  putStrLn $ show $ parsePDFObj (getObjs contents !! 433)
+--  BSL.putStrLn $ decompressStream $ (getObjs contents) !! 2
+  
 getObjs :: BS.ByteString -> [PDFObj]
 getObjs contents = case parse (many1 obj) "" contents of
   Left  err -> []
@@ -166,10 +169,16 @@ isKidsRefs :: (Obj,Obj) -> Bool
 isKidsRefs (PdfName "/Kids", PdfArray x) = True
 isKidsRefs (_,_)                         = False
 
-
-
     
 -- parse raw pdf
+
+decompressStream :: PDFObj -> PDFStream
+decompressStream (n,pdfobject) = 
+  case parse (BSL.pack <$> 
+              (manyTill anyChar (try $ string "stream\n") 
+               *> manyTill anyChar (try $ string "endstream"))) "" pdfobject of
+    Left err -> ""
+    Right bs -> decompress bs
 
 parsePDFObj :: PDFObj -> (Int,[Obj])
 parsePDFObj (n,pdfobject) = case parse (spaces >> many1 (pdfobj <|> objother)) "" pdfobject of
@@ -204,16 +213,27 @@ pdfname :: Parser Obj
 pdfname = PdfName <$> ((++) <$> string "/" <*> manyTill anyChar (try space))
 
 pdfletters :: Parser Obj
-pdfletters = PdfText <$> letters
+pdfletters = PdfText <$> (char '(' *> manyTill pdfletter (try $ char ')'))
+  where pdfletter  =  (char '\\' >> oneOf "\\()") <|> noneOf "\\"
 
 pdfstream :: Parser Obj
 pdfstream = PdfStream <$> stream
 
 pdfnumber :: Parser Obj
-pdfnumber = PdfNumber <$> digitParam
+pdfnumber = PdfNumber <$> pdfdigit
+  where pdfdigit = do 
+          sign <- many $ char '-'
+          num <- ((++) <$> (("0"++) <$> string ".") <*> many1 digit)
+                 <|>
+                 ((++) <$> (many1 digit) <*> ((++) <$> (many $ char '.') <*> many digit))
+          return $ read $ sign ++ num
 
 pdfhex :: Parser Obj
-pdfhex = PdfHex <$> hexParam
+pdfhex = PdfHex <$> hex  
+  where hex = do
+          char '<'
+          lets <- manyTill (oneOf "0123456789abcdefABCDEF") (try $ char '>')
+          return $ lets
 
 pdfbool :: Parser Obj
 pdfbool = PdfBool <$> (True <$ string "true"
@@ -241,14 +261,17 @@ rrefs = do
 objother :: Parser Obj
 objother = ObjOther <$> (manyTill anyChar space)
 
+
 -- parse deflated pdf
 
+parsePage p st = runParser p st ""
+
 parseDeflated :: BS.ByteString -> PDFStream
-parseDeflated pdfstrem = case parse (concat <$> many (elems <|> skipOther)) "" pdfstrem of
+parseDeflated pdfstrem = case parsePage (concat <$> many (elems <|> skipOther)) (0,0) pdfstrem of
   Left  err -> ""
   Right str -> BSL.pack str
 
-elems :: Parser String
+elems :: PSParser String
 elems = choice [ try pdfopTf
                , try pdfopTD
                , try pdfopTm
@@ -256,51 +279,64 @@ elems = choice [ try pdfopTf
                , array
                ]
 
-skipOther :: Parser String
+skipOther :: PSParser String
 skipOther = do
   manyTill anyChar (try $ string "\n")
   return ""
 
-array :: Parser String
+array :: PSParser String
 array = do
   char '['
   str <- manyTill (letters <|> kern) (try $ char ']')
   return $ concat str
 
-letters :: Parser String
+letters :: PSParser String
 letters = do
   char '('
   lets <- manyTill psLetter (try $ char ')')
   return $ lets
 
-psLetter :: Parser Char
+psLetter :: PSParser Char
 psLetter = do
   c <- (char '\\' >> oneOf "\\()") <|> noneOf "\\"
   return c
         
-kern :: Parser String
+kern :: PSParser String
 kern = do
   t <- digitParam
   return $ if t < -100.0 then " " else ""
 
-pdfopTf :: Parser String
+psname :: PSParser String
+psname = ((++) <$> string "/" <*> manyTill anyChar (try space))
+
+pdfopTf :: PSParser String
 pdfopTf = do
-  font <- pdfname
+  font <- psname
   spaces
   t <- digitParam
   string "Tf"
   return ""
 
-pdfopTD :: Parser String
+pdfopTD :: PSParser String
 pdfopTD = do
   t1 <- digitParam
   spaces
   t2 <- digitParam
   spaces
   string "TD"
-  return $ desideParagraphBreak t1 t2
+  (lh,ah) <- getState
+  updateState (\(lh,ah) -> (lh,ah+(lh*t2)))
+  return $ desideParagraphBreak t1 (t2*lh)
 
-pdfopTm :: Parser String
+desideParagraphBreak :: Double -> Double -> String
+desideParagraphBreak t1 t2 = 
+  (if t1 > 0.1
+   then if t2 < -1.0 then "\n\n" else " "
+   else "") 
+  ++
+  (if t2 < -20 then "\n\n" else " ")
+
+pdfopTm :: PSParser String
 pdfopTm = do
   a <- digitParam
   spaces
@@ -315,23 +351,22 @@ pdfopTm = do
   f <- digitParam
   spaces
   string "Tm"
-  let t1 = e/a 
-  let t2 = f/d
-  return $ desideLineBreak t1 t2
+  (lh,ah) <- getState
+  updateState (\(lh,ah) -> (d,f))
+  return $ if abs (f - ah) < 2*lh then " " else "\n\n"
 
-desideParagraphBreak :: Double -> Double -> String
-desideParagraphBreak t1 t2 = 
-  (if t1 > 0.1
-   then if t2 < -1.0 then "\n\n" else " "
-   else "") 
-  ++
-  (if t2 < -2.0 then "\n\n" else " ")
+pdfopTast :: PSParser String
+pdfopTast = do
+  string "T*"
+  (lh,ah) <- getState
+  updateState (\(lh,ah) -> (lh,ah-lh))
+  return ""
 
 desideLineBreak :: Double -> Double -> String
 desideLineBreak t1 t2 = 
   if t2 > 40.0 then "\n\n" else ""
 
-digitParam :: Parser Double
+digitParam :: PSParser Double
 digitParam = do 
   sign <- many $ char '-'
   num <- ((++) <$> (("0"++) <$> string ".") <*> many1 digit)
