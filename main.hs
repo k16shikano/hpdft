@@ -35,10 +35,20 @@ data Obj = PdfDict Dict -- [(Obj, Obj)]
 type Dict =  [(Obj,Obj)]
 type FontMap = [(Char,String)]
 
-type PSParser a = GenParser Char (Double,Double,Double,Double) a
+data PSR = PSR { linex     :: Double
+               , liney     :: Double
+               , absolutex :: Double
+               , absolutey :: Double
+               , fontmaps  :: [(String, FontMap)]}
+         deriving (Show)
+type PSParser a = GenParser Char PSR a
 
 --initstate = (0,0,70,660)
-initstate = (0,0,0,700)
+initstate = PSR { linex=0
+                , liney=0
+                , absolutex=0
+                , absolutey=700
+                , fontmaps=[]}
 topPt = 700
 bottomPt = 0
 leftMargin = 0
@@ -135,7 +145,7 @@ contentsStream :: Dict -> [PDFObj] -> PDFStream
 contentsStream dict objs = case find content dict of
   Just (PdfName "/Contents", ObjRef x) -> case findObjByRef x objs of
     Just contobjs -> case find isStream contobjs of
-      Just (PdfStream strm) -> strm
+      Just (PdfStream strm) -> deflate initstate strm
       Nothing               -> ""
   Nothing -> ""
   where
@@ -283,10 +293,7 @@ stream :: Parser PDFStream
 stream = do
   string "stream\n"
   stm <- BSL.pack <$> manyTill anyChar (try $ string "endstream")
-  return $ deflate stm
-
-deflate :: PDFStream -> PDFStream
-deflate = parseDeflated . BS.pack . BSL.unpack . decompress
+  return stm
 
 pdfdictionary :: Parser Obj
 pdfdictionary = PdfDict <$> (string "<<" >> spaces *> manyTill dictEntry (try $ spaces >> string ">>"))
@@ -355,10 +362,13 @@ objother = ObjOther <$> (manyTill anyChar space)
 
 parsePage p st = runParser p st ""
 
-parseDeflated :: BS.ByteString -> PDFStream
-parseDeflated pdfstrem = case parsePage (concat <$> many (elems <|> skipOther)) initstate pdfstrem of
+parseDeflated :: PSR -> BS.ByteString -> PDFStream
+parseDeflated psr pdfstrem = case parsePage (concat <$> many (elems <|> skipOther)) psr pdfstrem of
   Left  err -> ""
   Right str -> BSL.pack str
+
+deflate :: PSR -> PDFStream -> PDFStream
+deflate psr = (parseDeflated psr) . BS.pack . BSL.unpack . decompress
 
 elems :: PSParser String
 elems = choice [ try pdfopTf
@@ -391,7 +401,6 @@ array = do
 letters :: PSParser String
 letters = do
   char '('
-  (lx,ly,ax,ay) <- getState
   lets <- manyTill psletter (try $ char ')')
   return $ lets
 --  return $ if ay > topPt || ay < bottomPt then "" else lets
@@ -433,8 +442,14 @@ pdfopTD = do
   spaces
   string "TD"
   spaces
-  (lx,ly,ax,ay) <- getState
-  updateState (\(lx,ly,ax,ay) -> (lx,ly,ax+(lx*t1),ay+(ly*t2)))
+  st <- getState
+  let ax = absolutex st
+      ay = absolutey st
+      lx = linex st
+      ly = liney st
+  updateState (\s -> s { absolutex = ax+(lx*t1)
+                       , absolutey = ay+(ly*t2)
+                       })
   return $ desideParagraphBreak (ax+(t1*lx)) (t2*ly)
 
 pdfopTd :: PSParser String
@@ -445,9 +460,15 @@ pdfopTd = do
   spaces
   string "Td"
   spaces
-  (lx,ly,ax,ay) <- getState
-  let needBreak = t2 > 0
-  updateState (\(lx,ly,ax,ay) -> (lx,ly,ax+t1,ay+t2))
+  st <- getState
+  let ax = absolutex st
+      ay = absolutey st
+      lx = linex st
+      ly = liney st
+      needBreak = t2 > 0
+  updateState (\s -> s { absolutex = ax+t1
+                       , absolutey = ay+t2
+                       })
   return $ if needBreak then "\n\n" else desideParagraphBreak t1 t2
 
 desideParagraphBreak :: Double -> Double -> String
@@ -474,8 +495,16 @@ pdfopTm = do
   spaces
   string "Tm"
   spaces
-  (lx,ly,ax,ay) <- getState
-  updateState (\(lx,ly,ax,ay) -> (a,d,e,f))
+  st <- getState
+  let ax = absolutex st
+      ay = absolutey st
+      lx = linex st
+      ly = liney st
+  updateState (\s -> s { linex     = a
+                       , liney     = d
+                       , absolutex = e
+                       , absolutey = f
+                       })
   return $ if abs (f - ay) < 2*ly then 
              if e/lx < 1.5*lx then "" else " "
            else "\n\n"
@@ -483,8 +512,16 @@ pdfopTm = do
 pdfopTast :: PSParser String
 pdfopTast = do
   string "T*"
-  (lx,ly,ax,ay) <- getState
-  updateState (\(lx,ly,ax,ay) -> (lx,ly,70,ay-ly))
+  st <- getState
+  let ax = absolutex st
+      ay = absolutey st
+      lx = linex st
+      ly = liney st
+  updateState (\s -> s { linex     = lx
+                       , liney     = ly
+                       , absolutex = 70
+                       , absolutey = ay-ly
+                       })
   return " "
 
 digitParam :: PSParser Double
