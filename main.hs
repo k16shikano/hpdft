@@ -39,6 +39,7 @@ data PSR = PSR { linex     :: Double
                , liney     :: Double
                , absolutex :: Double
                , absolutey :: Double
+               , curfont   :: String
                , fontmaps  :: [(String, FontMap)]}
          deriving (Show)
 type PSParser a = GenParser Char PSR a
@@ -48,6 +49,7 @@ initstate = PSR { linex=0
                 , liney=0
                 , absolutex=0
                 , absolutey=700
+                , curfont=""
                 , fontmaps=[]}
 topPt = 700
 bottomPt = 0
@@ -65,8 +67,8 @@ main = do
         Just r  -> r
         Nothing -> 0
 --  putStrLn $ show $ grubFontDiff 1666 objs
---  putStrLn $ show $ parsePDFObj (getObjs contents !! 659)
---  BSL.putStrLn $ decompressStream $ (getObjs contents) !! 168
+--  putStrLn $ show $ parsePDFObj (getObjs contents !! 2)
+--  BSL.putStrLn $ decompressStream $ (getObjs contents) !! 2
   BSL.putStrLn $ linearize root objs
 
 takeObjByRefs :: [PDFObj] -> Int -> [Obj]
@@ -145,12 +147,13 @@ contentsStream :: Dict -> [PDFObj] -> PDFStream
 contentsStream dict objs = case find content dict of
   Just (PdfName "/Contents", ObjRef x) -> case findObjByRef x objs of
     Just contobjs -> case find isStream contobjs of
-      Just (PdfStream strm) -> deflate initstate strm
+      Just (PdfStream strm) -> deflate (initstate {fontmaps=fontdict}) strm
       Nothing               -> ""
   Nothing -> ""
   where
     content (PdfName "/Contents", ObjRef x) = True
     content _                               = False
+    fontdict = resourcesFont dict objs
 
 resourcesFont :: Dict -> [PDFObj] -> [(String, FontMap)]
 resourcesFont dict objs = case find resources dict of
@@ -188,7 +191,7 @@ walkGraph :: Int -> String -> [PDFObj] -> Maybe Obj
 walkGraph ref name objs = case findObjByRef ref objs of 
   Just os -> case find isDict os of
     Just (PdfDict d) -> case find isName d of
-      Just (_, o) -> trace (show o) Just o
+      Just (_, o) -> Just o
       otherwise -> Nothing
     otherwise -> Nothing
   otherwise -> Nothing
@@ -197,17 +200,18 @@ walkGraph ref name objs = case findObjByRef ref objs of
 
 findFontMap :: Int -> [PDFObj] -> FontMap
 findFontMap x objs = case walkGraph x "/Encoding" objs of
-  Just (ObjRef ref) -> case trace (show x) walkGraph ref "/Differences" objs of
+  Just (ObjRef ref) -> case walkGraph ref "/Differences" objs of
     Just (PdfArray arr) -> charMap arr
     otherwise -> []
   otherwise -> []
 
 charMap :: [Obj] -> FontMap
 charMap objs = fontmap objs 0
-  where fontmap (PdfNumber x : PdfName n : xs) i = if i < truncate x then 
-                                                     (chr $ truncate x, n) : (fontmap xs $ incr x)
-                                                     else 
-                                                     (chr $ i, n) : (fontmap xs $ i+1)
+  where fontmap (PdfNumber x : PdfName n : xs) i = 
+          if i < truncate x then 
+            (chr $ truncate x, n) : (fontmap xs $ incr x)
+          else 
+            (chr $ i, n) : (fontmap xs $ i+1)
         fontmap (PdfName n : xs) i               = (chr i, n) : (fontmap xs $ i+1)
         fontmap [] i                             = []
         incr x = (truncate x) + 1
@@ -231,7 +235,7 @@ isDifferences (_,_)                                = False
 parseTrailer :: BS.ByteString -> Maybe Dict
 parseTrailer bs = case parse trailer "" bs of
   Left  err -> Nothing
-  Right rlt -> case parse (spaces >> pdfdictionary) "" rlt of
+  Right rlt -> case parse (spaces >> pdfdictionary <* spaces) "" rlt of
     Left  err  -> Nothing
     Right (PdfDict dict) -> Just dict
     Right other -> Nothing
@@ -305,7 +309,7 @@ pdfarray :: Parser Obj
 pdfarray = PdfArray <$> (string "[" >> spaces *> manyTill pdfobj (try $ spaces >> string "]"))
 
 pdfname :: Parser Obj
-pdfname = PdfName <$> ((++) <$> string "/" <*> manyTill anyChar (try $ lookAhead $ oneOf "] \n/")) <* spaces
+pdfname = PdfName <$> ((++) <$> string "/" <*> manyTill anyChar (try $ lookAhead $ oneOf "] \n\r/")) <* spaces
 
 pdfletters :: Parser Obj
 pdfletters = PdfText <$> (char '(' *> manyTill pdfletter (try $ char ')'))
@@ -344,7 +348,7 @@ pdfobj = choice [ try rrefs <* spaces
                 , try pdfname <* spaces, try pdfnumber <* spaces, try pdfhex <* spaces
                 , try pdfbool <* spaces, try pdfnull <* spaces
                 , try pdfarray <* spaces, try pdfdictionary <* spaces, try pdfstream <* spaces
-                , pdfletters <* spaces] <* spaces
+                , pdfletters <* spaces]
 
 rrefs :: Parser Obj
 rrefs = do  
@@ -402,19 +406,26 @@ letters :: PSParser String
 letters = do
   char '('
   lets <- manyTill psletter (try $ char ')')
-  return $ lets
+  return $ concat lets
 --  return $ if ay > topPt || ay < bottomPt then "" else lets
 
-psletter :: PSParser Char
+psletter :: PSParser String
 psletter = do
+  st <- getState
+  let fontmap = case lookup (curfont st) (fontmaps st) of
+        Just m -> m
+        Nothing -> []
   c <- try (char '\\' >> oneOf "\\()")
        <|>
-       try (toChar . readOct <$> (char '\\' >> (count 3 $ oneOf "01234567")))
+       try (octToString . readOct <$> (char '\\' >> (count 3 $ oneOf "01234567")))
        <|>
        noneOf "\\"
-  return c
-    where toChar [] = '?'
-          toChar [(o,_)] = chr o
+  return $ replaceDiff fontmap c
+    where octToString [] = '?'
+          octToString [(o,_)] = chr o
+          replaceDiff m c' = case lookup c' m of
+            Just s -> s
+            Nothing -> [c']
 
 kern :: PSParser String
 kern = do
@@ -432,6 +443,7 @@ pdfopTf = do
   spaces
   string "Tf"
   spaces
+  updateState (\s -> s{curfont= trace (show font) (font)})
   return ""
 
 pdfopTD :: PSParser String
