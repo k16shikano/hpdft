@@ -8,6 +8,8 @@ import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 
+import Debug.Trace
+
 import Pdf
 import PdfObj
 import PdfStream

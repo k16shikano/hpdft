@@ -76,7 +76,7 @@ pdfarray :: Parser Obj
 pdfarray = PdfArray <$> (string "[" >> spaces *> manyTill pdfobj (try $ spaces >> string "]"))
 
 pdfname :: Parser Obj
-pdfname = PdfName <$> ((++) <$> string "/" <*> manyTill anyChar (try $ lookAhead $ oneOf "] \n\r/")) <* spaces
+pdfname = PdfName <$> ((++) <$> string "/" <*> manyTill anyChar (try $ lookAhead $ oneOf "><][ \n\r/")) <* spaces
 
 pdfletters :: Parser Obj
 pdfletters = PdfText <$> (char '(' *> manyTill pdfletter (try $ char ')'))
