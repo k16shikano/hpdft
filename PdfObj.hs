@@ -43,7 +43,7 @@ getObjs contents = case parse (many1 pdfObj) "" contents of
 
 pdfObj :: Parser PDFBS
 pdfObj = do
-  many $ comment <|> char (chr 13)
+  many $ comment <|> oneOf "\r\n"
   objn <- many1 digit <* string " 0 obj"
   object <- manyTill anyChar (try $ string "endobj")
   spaces
@@ -62,7 +62,8 @@ comment = do
 
 stream :: Parser PDFStream
 stream = do
-  string "stream\n"
+  string "stream"
+  spaces
   stm <- BSL.pack <$> manyTill anyChar (try $ string "endstream")
   return stm
 
@@ -76,7 +77,7 @@ pdfarray :: Parser Obj
 pdfarray = PdfArray <$> (string "[" >> spaces *> manyTill pdfobj (try $ spaces >> string "]"))
 
 pdfname :: Parser Obj
-pdfname = PdfName <$> ((++) <$> string "/" <*> manyTill anyChar (try $ lookAhead $ oneOf "><][ \n\r/")) <* spaces
+pdfname = PdfName <$> ((++) <$> string "/" <*> manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/")) <* spaces
 
 pdfletters :: Parser Obj
 pdfletters = PdfText <$> (char '(' *> manyTill pdfletter (try $ char ')'))

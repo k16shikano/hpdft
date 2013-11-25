@@ -6,7 +6,7 @@ module PdfStream
        ) where
 
 import Data.Char (chr)
-import Numeric (readOct)
+import Numeric (readOct, readHex)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
@@ -71,7 +71,7 @@ skipOther = do
 array :: PSParser T.Text
 array = do
   char '['
-  str <- (manyTill (letters <|> kern) (try $ char ']'))
+  str <- (manyTill (letters <|> octletters <|> kern) (try $ char ']'))
   return $ T.concat str
 
 letters :: PSParser T.Text
@@ -80,6 +80,20 @@ letters = do
   lets <- manyTill psletter (try $ char ')')
   return $ T.concat lets
 --  return $ if ay > topPt || ay < bottomPt then "" else lets
+
+octletters :: PSParser T.Text
+octletters = do
+  char '<'
+  lets <- manyTill octletter (try $ char '>')
+  return $ T.concat lets
+
+adobeOneSix :: Int -> T.Text
+adobeOneSix  a  = T.pack (show a)
+
+octletter :: PSParser T.Text
+octletter = (hexToString . readHex) <$> (count 4 $ oneOf "0123456789ABCDEFabcdef")
+  where hexToString [] = "?"
+        hexToString [(h,_)] = adobeOneSix h
 
 psletter :: PSParser T.Text
 psletter = do
@@ -93,14 +107,14 @@ psletter = do
        <|>
        noneOf "\\"
   return $ replaceWithDiff fontmap c
-    where octToString [] = '?'
-          octToString [(o,_)] = chr o
-          replaceWithDiff m c' = case lookup c' m of
+    where replaceWithDiff m c' = case lookup c' m of
             Just s -> replaceWithCharDict s
             Nothing -> T.pack [c']
           replaceWithCharDict s = case lookup s pdfchardict of
             Just cs -> cs
             Nothing -> T.pack s
+          octToString [] = '?'
+          octToString [(o,_)] = chr o
 
 kern :: PSParser T.Text
 kern = do
