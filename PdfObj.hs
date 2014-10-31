@@ -260,12 +260,21 @@ fonts dict objs = map pairwise dict
     pairwise (PdfName n, ObjRef r) = (n, findFontMap r objs)
     pairwise x = ("",[])
 
+-- Needs rewrite!
 findFontMap :: Int -> [PDFObj] -> FontMap
 findFontMap x objs = case findObjThroughDict x "/Encoding" objs of
   Just (ObjRef ref) -> case findObjThroughDict ref "/Differences" objs of
     Just (PdfArray arr) -> charMap arr
     otherwise -> []
-  otherwise -> []
+  Just (PdfName "/StandardEncoding") -> (trace "standard enc." [])
+  Just (PdfName "/MacRomanEncoding") -> (trace "mac roman enc." [])
+  Just (PdfName "/MacExpertEncoding") -> (trace "mac expert enc." [])
+  Just (PdfName "/WinAnsiEncoding") -> (trace "win ansi enc." [])
+  otherwise -> case findObjThroughDict x "/FontDescriptor" objs of
+    Just (ObjRef ref) -> case findObjThroughDict ref "/CharSet" objs of
+      Just (PdfText str) -> []
+      otherwise -> []
+    otherwise -> []
 
 charMap :: [Obj] -> FontMap
 charMap objs = fontmap objs 0
