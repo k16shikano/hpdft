@@ -192,13 +192,30 @@ pagesKids dict = case find isKidsRefs dict of
   Just (_, PdfArray arr) -> Just (parseRefsArray arr)
   Nothing                -> Nothing
   where 
-    parseRefsArray (ObjRef x:y) = (x:parseRefsArray y)
-    parseRefsArray [] = []
     isKidsRefs (PdfName "/Kids", PdfArray x) = True
     isKidsRefs (_,_)                         = False
 
 contentsStream :: Dict -> PSR -> [PDFObj] -> PDFStream
-contentsStream dict st objs = case find content dict of
+contentsStream dict st objs = case find contents dict of
+  Just (PdfName "/Contents", PdfArray arr) -> BSL.concat $ map (parseContentsStream dict st objs) (parseRefsArray arr)
+  Nothing                                  -> parseContentStream dict st objs
+  where
+    contents (PdfName "/Contents", PdfArray x) = True
+    contents _                                 = False
+
+parseContentsStream :: Dict -> PSR -> [PDFObj] -> Int -> PDFStream
+parseContentsStream dict st objs ref = case findObjsByRef ref objs of
+  Just contobjs -> case find isStream contobjs of
+    Just (PdfStream strm) -> deflate (st {fontmaps=fontdict}) strm
+    Nothing               -> ""
+  Nothing -> ""
+  where
+    isStream (PdfStream s) = True
+    isStream _             = False
+    fontdict = resourcesFont dict objs
+
+parseContentStream :: Dict -> PSR -> [PDFObj] -> PDFStream
+parseContentStream dict st objs = case find content dict of
   Just (PdfName "/Contents", ObjRef x) -> case findObjsByRef x objs of
     Just contobjs -> case find isStream contobjs of
       Just (PdfStream strm) -> deflate (st {fontmaps=fontdict}) strm
@@ -210,6 +227,12 @@ contentsStream dict st objs = case find content dict of
     content (PdfName "/Contents", ObjRef x) = True
     content _                               = False
     fontdict = resourcesFont dict objs
+
+
+parseRefsArray :: [Obj] -> [Int]
+parseRefsArray (ObjRef x:y) = (x:parseRefsArray y)
+parseRefsArray [] = []
+
 
 
 -- make fontmap from /Resources

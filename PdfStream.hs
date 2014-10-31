@@ -35,13 +35,14 @@ parseDeflated psr pdfstrem = case parsePage (T.concat <$> many (elems <|> skipOt
 
 deflate :: PSR -> PDFStream -> PDFStream
 deflate psr = (parseDeflated psr) . decompress
+--deflate psr = decompress
 
 decompressStream :: PDFBS -> PDFStream
 decompressStream (n,pdfobject) = 
   case parse (BSL.pack <$> 
-              (manyTill anyChar (try $ string "stream\n") 
+              (manyTill anyChar (try $ (string "stream" >> oneOf "\n\r")) >> spaces
                *> manyTill anyChar (try $ string "endstream"))) "" pdfobject of
-    Left err -> ""
+    Left err -> "err"
     Right bs -> decompress bs
 
 
@@ -54,8 +55,14 @@ elems = choice [ try pdfopTf
                , try pdfopTast
                , try letters
                , try bore
-               , array
+               , try array
+               , unknowns
                ]
+
+unknowns :: PSParser T.Text
+unknowns = do 
+  ps <- manyTill anyChar (try $ oneOf "\r\n")
+  return ""
 
 bore :: PSParser T.Text
 bore = do
@@ -65,7 +72,7 @@ bore = do
 
 skipOther :: PSParser T.Text
 skipOther = do
-  a <- manyTill anyChar (try $ oneOf "\n")
+  a <- manyTill anyChar (try $ oneOf "\r\n")
   return $ ""
 
 array :: PSParser T.Text
