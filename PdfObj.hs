@@ -15,6 +15,7 @@ module PdfObj
        , parsePDFObj
        , getObjs 
        , pdfObj
+       , getXref
        ) where
 
 import Data.Char (chr)
@@ -41,12 +42,18 @@ getObjs contents = case parse (many1 pdfObj) "" contents of
   Left  err -> []
   Right rlt -> rlt
 
+getXref :: BS.ByteString -> String
+getXref contents = case parse (xref) "" contents of
+  Left  err -> []
+  Right rlt -> rlt
+
 pdfObj :: Parser PDFBS
 pdfObj = do
-  many $ comment <|> oneOf "\r\n"
+  skipMany (comment <|> oneOf "\r\n")
   objn <- many1 digit <* string " 0 obj"
   object <- manyTill anyChar (try $ string "endobj")
   spaces
+  skipMany xref
   return $ (read objn, BS.pack object)
 
 parsePDFObj :: PDFBS -> PDFObj
@@ -57,8 +64,18 @@ parsePDFObj (n,pdfobject) = case parse (spaces >> many1 (pdfobj <|> objother)) "
 comment :: Parser Char
 comment = do
   char '%'
+  noneOf "%"
   manyTill anyChar $ oneOf "\r\n"
   return ' '
+
+xref :: Parser String
+xref = do
+  spaces
+  string "xref"
+  spaces
+  ref <- manyTill anyChar (try $ string "%%EOF")
+  spaces
+  return ""
 
 stream :: Parser PDFStream
 stream = do

@@ -10,6 +10,8 @@ type PDFObj = (Int,[Obj])
 
 type PDFStream = BSL.ByteString
 
+type PDFxref = BSL.ByteString
+
 data Obj = PdfDict Dict -- [(Obj, Obj)]
          | PdfText String 
          | PdfStream PDFStream

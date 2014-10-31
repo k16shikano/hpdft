@@ -25,10 +25,11 @@ main = do
   let root = case rootRef contents of
         Just r  -> r
         Nothing -> 0
---  putStrLn $ show $ grubFontDiff 1666 objs
---  putStrLn $ show $ parsePDFObj (getObjs contents !! 2)
---  BSL.putStrLn $ decompressStream $ (getObjs contents) !! 2
-  BSL.putStrLn $ linearize root objs
+--  putStrLn $ show $ grubFontDiff 53 objs
+--  putStrLn $ show objs
+--  putStrLn $ show $ objs !! 19
+--  BSL.putStrLn $ decompressStream $ (getObjs contents) !! 27
+  BSL.putStrLn $ linearize (trace (show root) root) objs
 
 
 -- linearize objects
