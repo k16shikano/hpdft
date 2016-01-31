@@ -4,6 +4,9 @@ module PdfObj
        ( parseTrailer
        , rootRef
        , getRefs
+       , getPdfObjByRef
+       , getPDFBSFile
+       , getPDFObjFile
        , resourcesFont
        , grubFontDiff
        , contentsStream
@@ -33,6 +36,28 @@ import Debug.Trace
 
 import Pdf
 import PdfStream
+
+
+-- IO utilities
+
+getPDFBSFile :: String -> IO [PDFBS]
+getPDFBSFile f = do
+  c <- BS.readFile f
+  let bs = getObjs c
+  return bs
+
+getPDFObjFile :: String -> IO [PDFObj]
+getPDFObjFile f = do
+  c <- BS.readFile f
+  let obj = map parsePDFObj $ getObjs c
+  return obj
+
+getPdfObjByRef :: Int -> IO [PDFObj] -> IO [Obj]
+getPdfObjByRef ref ioobjs = do
+  objs <- ioobjs
+  case findObjsByRef ref objs of
+    Just os -> return $ os
+    Nothing -> error $ "No Object with Ref " ++ show ref
 
 
 -- parse pdf objects
