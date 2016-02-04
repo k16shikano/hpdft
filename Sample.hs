@@ -33,10 +33,15 @@ contentByRef filename ref = do
   BSL.putStrLn $ showPageContent obj objs
 
 showPageContent obj objs =
-    case findDictOfType "/Page" obj of
-      Just dict -> contentsStream dict initstate objs
-      Nothing -> ""
+  case findDictOfType "/Page" obj of
+    Just dict -> contentsStream dict initstate objs
+    Nothing -> ""
 
+getRootRef filename = do
+  n <- getRootRefFile filename
+  case n of
+    Just i -> return i
+    Nothing -> error "Can not find rood object"
 
 ---------------------------------------
 -- Sort Object References in Page order
@@ -46,12 +51,9 @@ data  PageTree = Nop | Page Int | Pages [PageTree]
                  deriving Show
 
 refByPage filename = do
-  contents <- BS.readFile filename
-  let objs = map parsePDFObj $ getObjs contents
-  let rootref = case rootRef contents of
-                  Just r  -> r
-                  Nothing -> 0
-  putStrLn $ show $ pageTreeToList $ pageorder rootref objs
+  root <- getRootRef filename
+  objs <- getPDFObjFile filename
+  putStrLn $ show $ pageTreeToList $ pageorder root objs
 
 pageorder :: Int -> [PDFObj] -> PageTree
 pageorder parent objs = 

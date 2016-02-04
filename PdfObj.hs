@@ -7,6 +7,7 @@ module PdfObj
        , getPdfObjByRef
        , getPDFBSFile
        , getPDFObjFile
+       , getRootRefFile
        , resourcesFont
        , grubFontDiff
        , contentsStream
@@ -58,6 +59,11 @@ getPdfObjByRef ref ioobjs = do
   case findObjsByRef ref objs of
     Just os -> return $ os
     Nothing -> error $ "No Object with Ref " ++ show ref
+
+getRootRefFile :: String -> IO (Maybe Int)
+getRootRefFile f = do
+  c <- BS.readFile f
+  return $ rootRef c
 
 
 -- parse pdf objects
