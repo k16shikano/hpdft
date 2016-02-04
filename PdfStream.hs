@@ -29,7 +29,7 @@ type PSParser a = GenParser Char PSR a
 parsePage p st = runParser p st ""
 
 parseDeflated :: PSR -> BSL.ByteString -> PDFStream
-parseDeflated psr pdfstrem = case parsePage (T.concat <$> many (elems <|> skipOther)) psr pdfstrem of
+parseDeflated psr pdfstream = case parsePage (T.concat <$> many (elems <|> skipOther)) psr pdfstream of
   Left  err -> ""
   Right str -> BSL.pack $ BS.unpack $ encodeUtf8 str
 
