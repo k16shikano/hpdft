@@ -3,6 +3,7 @@
 module PdfStream 
        ( deflate
        , decompressStream
+       , parseCMap
        ) where
 
 import Data.Char (chr)
@@ -30,12 +31,11 @@ parsePage p st = runParser p st ""
 
 parseDeflated :: PSR -> BSL.ByteString -> PDFStream
 parseDeflated psr pdfstream = case parsePage (T.concat <$> many (elems <|> skipOther)) psr pdfstream of
-  Left  err -> ""
+  Left  err -> error "Nothing to be parsed"
   Right str -> BSL.pack $ BS.unpack $ encodeUtf8 str
 
 deflate :: PSR -> PDFStream -> PDFStream
-deflate psr = (parseDeflated psr) . decompress
---deflate psr = decompress
+deflate st = parseDeflated (trace (show st) st)
 
 decompressStream :: PDFBS -> PDFStream
 decompressStream (n,pdfobject) = 
@@ -45,6 +45,13 @@ decompressStream (n,pdfobject) =
     Left err -> "err"
     Right bs -> decompress bs
 
+parseCMap :: BSL.ByteString -> CMap
+parseCMap str = case runParser cmapParser () "" str of
+  Left err -> error "Can not parse CMap"
+  Right cmap -> cmap
+  
+cmapParser :: Parser CMap
+cmapParser = return []
 
 
 elems :: PSParser T.Text
@@ -54,6 +61,7 @@ elems = choice [ try pdfopTf
                , try pdfopTm
                , try pdfopTast
                , try letters
+               , try hexletters
                , try bore
                , try array
                , unknowns
@@ -78,7 +86,7 @@ skipOther = do
 array :: PSParser T.Text
 array = do
   char '['
-  str <- (manyTill (letters <|> octletters <|> kern) (try $ char ']'))
+  str <- (manyTill (letters <|> hexletters <|> kern) (try $ char ']'))
   return $ T.concat str
 
 letters :: PSParser T.Text
@@ -88,19 +96,29 @@ letters = do
   return $ T.concat lets
 --  return $ if ay > topPt || ay < bottomPt then "" else lets
 
-octletters :: PSParser T.Text
-octletters = do
+hexletters :: PSParser T.Text
+hexletters = do
   char '<'
-  lets <- manyTill octletter (try $ char '>')
+  lets <- manyTill hexletter (try $ char '>')
   return $ T.concat lets
 
 adobeOneSix :: Int -> T.Text
 adobeOneSix  a  = T.pack (show a)
 
-octletter :: PSParser T.Text
-octletter = (hexToString . readHex) <$> (count 4 $ oneOf "0123456789ABCDEFabcdef")
-  where hexToString [] = "?"
-        hexToString [(h,_)] = adobeOneSix h
+toUcs :: CMap -> Int -> T.Text
+toUcs map h = case lookup h map of
+  Just ucs -> T.pack ucs
+  Nothing -> adobeOneSix h
+
+hexletter :: PSParser T.Text
+hexletter = do
+  st <- getState
+  let cmap = case lookup (curfont st) (cmaps st) of
+        Just m -> m
+        Nothing -> []
+  (hexToString cmap . readHex) <$> (count 4 $ oneOf "0123456789ABCDEFabcdef")
+  where hexToString map [] = "????"
+        hexToString map [(h,_)] = toUcs map h
 
 psletter :: PSParser T.Text
 psletter = do
@@ -244,3 +262,5 @@ hexParam = do
   char '<'
   lets <- manyTill (oneOf "0123456789abcdefABCDEF") (try $ char '>')
   return $ T.pack lets
+  
+

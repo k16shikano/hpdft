@@ -8,9 +8,8 @@ module PdfObj
        , getPDFBSFile
        , getPDFObjFile
        , getRootRefFile
-       , resourcesFont
-       , grubFontDiff
        , contentsStream
+       , rawContentsStream
        , pagesKids  
        , pages
        , findDictOfType
@@ -188,27 +187,38 @@ findObjsByRef x pdfobjs = case find (isRefObj (Just x)) pdfobjs of
     isRefObj (Just x) (y, objs) = if x==y then True else False
     isRefObj _ _ = False
 
-findObjThroughDict :: Int -> String -> [PDFObj] -> Maybe Obj
-findObjThroughDict ref name objs = case findObjsByRef ref objs of 
-  Just os -> case find isDict os of
-    Just (PdfDict d) -> case find isName d of
-      Just (_, o) -> Just o
-      otherwise -> Nothing
-    otherwise -> Nothing
+findObjThroughDictByRef :: Int -> String -> [PDFObj] -> Maybe Obj
+findObjThroughDictByRef ref name objs = case findDictByRef ref objs of 
+  Just d -> findObjThroughDict d name
+  Nothing -> Nothing
+  
+findObjThroughDict :: Dict -> String -> Maybe Obj
+findObjThroughDict d name = case find isName d of
+  Just (_, o) -> Just o
   otherwise -> Nothing
   where isName (PdfName n, _) = if name == n then True else False
         isName _              = False
 
+findDictByRef :: Int -> [PDFObj] -> Maybe Dict
+findDictByRef ref objs = case findObjsByRef ref objs of
+  Just os -> findDict os
+  Nothing -> Nothing
+
 findDictOfType :: String -> [Obj] -> Maybe Dict
-findDictOfType typename objs = case find isDict objs of
-  Just (PdfDict d) -> if isType d then Just d else Nothing 
-  Nothing          -> Nothing
+findDictOfType typename objs = case findDict objs of
+  Just d  -> if isType d then Just d else Nothing 
+  Nothing -> Nothing
   where 
     isType dict = (PdfName "/Type",PdfName typename) `elem` dict
  
-isDict :: Obj -> Bool
-isDict (PdfDict d) = True
-isDict _           = False
+findDict :: [Obj] -> Maybe Dict
+findDict objs = case find isDict objs of
+  Just (PdfDict d) -> Just d
+  otherwise -> Nothing
+  where 
+    isDict :: Obj -> Bool
+    isDict (PdfDict d) = True
+    isDict _           = False
 
 pages :: Dict -> Maybe Int
 pages dict = case find isPagesRef dict of
@@ -228,37 +238,35 @@ pagesKids dict = case find isKidsRefs dict of
 
 contentsStream :: Dict -> PSR -> [PDFObj] -> PDFStream
 contentsStream dict st objs = case find contents dict of
-  Just (PdfName "/Contents", PdfArray arr) -> BSL.concat $ map (parseContentsStream dict st objs) (parseRefsArray arr)
-  Nothing                                  -> parseContentStream dict st objs
+  Just (PdfName "/Contents", PdfArray arr) -> BSL.concat $ map (parsedContentStreamByRef dict st objs) (parseRefsArray arr)
+  Just (PdfName "/Contents", ObjRef x)     -> parsedContentStreamByRef dict st objs x
+  Nothing                                  -> error "No content to be shown"
   where
-    contents (PdfName "/Contents", PdfArray x) = True
-    contents _                                 = False
+    contents (PdfName "/Contents", _) = True
+    contents _                        = False
 
-parseContentsStream :: Dict -> PSR -> [PDFObj] -> Int -> PDFStream
-parseContentsStream dict st objs ref = case findObjsByRef ref objs of
-  Just contobjs -> case find isStream contobjs of
-    Just (PdfStream strm) -> deflate (st {fontmaps=fontdict}) strm
-    Nothing               -> ""
-  Nothing -> ""
+rawContentsStream :: Dict -> [PDFObj] -> PDFStream
+rawContentsStream dict objs = case find contents dict of
+  Just (PdfName "/Contents", PdfArray arr) -> BSL.concat $ map (rawStreamByRef objs) (parseRefsArray arr)
+  Just (PdfName "/Contents", ObjRef x)     -> rawStreamByRef objs (trace (show x) x)
+  Nothing                                  -> error "No content to be shown"
+  where
+    contents (PdfName "/Contents", _) = True
+    contents _                        = False
+
+parsedContentStreamByRef :: Dict -> PSR -> [PDFObj] -> Int -> PDFStream
+parsedContentStreamByRef dict st objs ref = deflate (st {fontmaps=fontdict, cmaps=cmap}) $ rawStreamByRef objs ref
+  where fontdict = findFontMap dict objs
+        cmap = findCMap dict objs
+
+rawStreamByRef objs x = case findObjsByRef x objs of
+  Just sobjs -> case find isStream sobjs of
+    Just (PdfStream strm) -> decompress strm
+    Nothing               -> error "No stream to be shown"
+  Nothing -> error "No stream to be shown"
   where
     isStream (PdfStream s) = True
     isStream _             = False
-    fontdict = resourcesFont dict objs
-
-parseContentStream :: Dict -> PSR -> [PDFObj] -> PDFStream
-parseContentStream dict st objs = case find content dict of
-  Just (PdfName "/Contents", ObjRef x) -> case findObjsByRef x objs of
-    Just contobjs -> case find isStream contobjs of
-      Just (PdfStream strm) -> deflate (st {fontmaps=fontdict}) strm
-      Nothing               -> ""
-  Nothing -> ""
-  where
-    isStream (PdfStream s) = True
-    isStream _             = False
-    content (PdfName "/Contents", ObjRef x) = True
-    content _                               = False
-    fontdict = resourcesFont dict objs
-
 
 parseRefsArray :: [Obj] -> [Int]
 parseRefsArray (ObjRef x:y) = (x:parseRefsArray y)
@@ -266,43 +274,45 @@ parseRefsArray [] = []
 
 
 
--- make fontmap from /Resources
+-- make fontmap from page's /Resources (see 3.7.2 of PDF Ref.)
 
-resourcesFont :: Dict -> [PDFObj] -> [(String, FontMap)]
-resourcesFont dict objs = case find resources dict of
-  Just (PdfName "/Resources", ObjRef x) -> case findObjThroughDict x "/Font" objs of
-    Just (PdfDict d) -> fonts d objs
-    otherwise -> []
-  otherwise -> []
-  where
-    resources (PdfName "/Resources", ObjRef x) = True
-    resources _                                = False
+findFontMap d os = encoding (getFontObjs d os) os
 
-grubFontDiff :: Int -> [PDFObj] -> [(String, FontMap)]
-grubFontDiff ref objs = case findObjThroughDict ref "/Resources" objs of
-  Just (ObjRef rref) -> case findObjThroughDict rref "/Font" objs of
-    Just (PdfDict d) -> fonts d objs
-    otherwise -> []
-  otherwise -> []
-
-fonts :: Dict -> [PDFObj] -> [(String, FontMap)]
-fonts dict objs = map pairwise dict
+encoding :: Dict -> [PDFObj] -> [(String, FontMap)]
+encoding dict objs = map pairwise dict
   where 
-    pairwise (PdfName n, ObjRef r) = (n, findFontMap r objs)
+    pairwise (PdfName n, ObjRef r) = (n, fontMap r objs)
     pairwise x = ("",[])
 
+findResourcesDict :: Dict -> [PDFObj] -> Maybe Dict
+findResourcesDict dict objs = case find resources dict of
+  Just (_, ObjRef x)  -> findDictByRef x objs
+  Just (_, PdfDict d) -> Just d
+  otherwise -> error (show dict)
+  where
+    resources (PdfName "/Resources", _) = True
+    resources _                         = False
+
+getFontObjs :: Dict -> [PDFObj] -> Dict
+getFontObjs dict objs = case findResourcesDict dict objs of
+  Just d -> case findObjThroughDict d "/Font" of
+    Just (PdfDict d) -> d
+    otherwise -> []
+  Nothing -> []
+
+
 -- Needs rewrite!
-findFontMap :: Int -> [PDFObj] -> FontMap
-findFontMap x objs = case findObjThroughDict x "/Encoding" objs of
-  Just (ObjRef ref) -> case findObjThroughDict ref "/Differences" objs of
+fontMap :: Int -> [PDFObj] -> FontMap
+fontMap x objs = case findObjThroughDictByRef x "/Encoding" objs of
+  Just (ObjRef ref) -> case findObjThroughDictByRef ref "/Differences" objs of
     Just (PdfArray arr) -> charMap arr
     otherwise -> []
   Just (PdfName "/StandardEncoding") -> (trace "standard enc." [])
   Just (PdfName "/MacRomanEncoding") -> (trace "mac roman enc." [])
   Just (PdfName "/MacExpertEncoding") -> (trace "mac expert enc." [])
   Just (PdfName "/WinAnsiEncoding") -> (trace "win ansi enc." [])
-  otherwise -> case findObjThroughDict x "/FontDescriptor" objs of
-    Just (ObjRef ref) -> case findObjThroughDict ref "/CharSet" objs of
+  otherwise -> case findObjThroughDictByRef x "/FontDescriptor" objs of
+    Just (ObjRef ref) -> case findObjThroughDictByRef ref "/CharSet" objs of
       Just (PdfText str) -> []
       otherwise -> []
     otherwise -> []
@@ -317,6 +327,21 @@ charMap objs = fontmap objs 0
         fontmap (PdfName n : xs) i               = (chr i, n) : (fontmap xs $ i+1)
         fontmap [] i                             = []
         incr x = (truncate x) + 1
+
+findCMap d os = cMap (getFontObjs d os) os
+
+cMap :: Dict -> [PDFObj] -> [(String, CMap)]
+cMap dict objs = map pairwise dict
+  where
+    pairwise (PdfName n, ObjRef r) = (n, toUnicode r objs)
+    pairwise x = ("", [])
+
+toUnicode :: Int -> [PDFObj] -> CMap
+toUnicode x objs = case findObjThroughDictByRef x "/Encoding" objs of
+  Just (PdfName "/Identity-H") -> case findObjThroughDictByRef x "/ToUnicode" objs of
+    Just (ObjRef ref) -> (trace (show $ rawStreamByRef objs ref) (parseCMap $ rawStreamByRef objs ref))
+    otherwise -> []
+  otherwise -> []
 
 
 -- find root ref from Trailer

@@ -7,7 +7,7 @@ import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 
--- import Debug.Trace
+import Debug.Trace
 
 -- initstate = (0,0,70,660)
 initstate = PSR { linex=0
@@ -18,7 +18,8 @@ initstate = PSR { linex=0
                 , top=700.0
                 , bottom=0.0
                 , curfont=""
-                , fontmaps=[]}
+                , fontmaps=[]
+                , cmaps=[]}
 
 
 -----------------------------------------------
@@ -30,18 +31,36 @@ objectByRef filename ref = getPdfObjByRef ref (getPDFObjFile filename)
 contentByRef filename ref = do
   objs <- getPDFObjFile filename
   obj <- objectByRef filename ref
-  BSL.putStrLn $ showPageContent obj objs
+  BSL.putStrLn $ contentOfObject obj objs
+  where contentOfObject obj objs =
+          case findDictOfType "/Page" obj of
+            Just dict -> contentsStream dict initstate objs
+            Nothing -> ""
 
-showPageContent obj objs =
-  case findDictOfType "/Page" obj of
-    Just dict -> contentsStream dict initstate objs
-    Nothing -> ""
+rawContentByRef filename ref = do
+  objs <- getPDFObjFile filename
+  obj <- objectByRef filename ref
+  BSL.putStrLn $ rawContentOfObject obj objs
+  where rawContentOfObject obj objs =
+          case findDictOfType "/Page" obj of
+            Just dict -> rawContentsStream dict objs
+            Nothing -> ""
+  
+showPage filename page = do 
+  pagetree <- refByPage filename
+  contentByRef filename $ pagetree !! (page - 1)
+
+showRawPage filename page = do
+  pagetree <- refByPage filename
+  rawContentByRef filename $ pagetree !! (page - 1)
 
 getRootRef filename = do
   n <- getRootRefFile filename
   case n of
     Just i -> return i
     Nothing -> error "Can not find rood object"
+
+
 
 ---------------------------------------
 -- Sort Object References in Page order
@@ -53,7 +72,7 @@ data  PageTree = Nop | Page Int | Pages [PageTree]
 refByPage filename = do
   root <- getRootRef filename
   objs <- getPDFObjFile filename
-  putStrLn $ show $ pageTreeToList $ pageorder root objs
+  return $  pageTreeToList $ pageorder root objs
 
 pageorder :: Int -> [PDFObj] -> PageTree
 pageorder parent objs = 

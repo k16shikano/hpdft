@@ -29,6 +29,8 @@ type Dict =  [(Obj,Obj)]
 
 type FontMap = [(Char,String)]
 
+type CMap = [(Int,String)]
+
 data PSR = PSR { linex      :: Double
                , liney      :: Double
                , absolutex  :: Double
@@ -37,6 +39,7 @@ data PSR = PSR { linex      :: Double
                , top        :: Double
                , bottom     :: Double
                , curfont    :: String
+               , cmaps      :: [(String, CMap)]
                , fontmaps   :: [(String, FontMap)]}
          deriving (Show)
 
