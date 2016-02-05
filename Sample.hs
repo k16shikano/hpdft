@@ -17,6 +17,7 @@ initstate = PSR { linex=0
                 , leftmargin=0.0
                 , top=700.0
                 , bottom=0.0
+                , fontfactor=1.0
                 , curfont=""
                 , fontmaps=[]
                 , cmaps=[]}

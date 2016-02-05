@@ -38,6 +38,7 @@ data PSR = PSR { linex      :: Double
                , leftmargin :: Double
                , top        :: Double
                , bottom     :: Double
+               , fontfactor :: Double
                , curfont    :: String
                , cmaps      :: [(String, CMap)]
                , fontmaps   :: [(String, FontMap)]}

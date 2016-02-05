@@ -36,7 +36,7 @@ import Debug.Trace
 
 import Pdf
 import PdfStream
-
+import PdfCmap
 
 -- IO utilities
 
@@ -248,7 +248,7 @@ contentsStream dict st objs = case find contents dict of
 rawContentsStream :: Dict -> [PDFObj] -> PDFStream
 rawContentsStream dict objs = case find contents dict of
   Just (PdfName "/Contents", PdfArray arr) -> BSL.concat $ map (rawStreamByRef objs) (parseRefsArray arr)
-  Just (PdfName "/Contents", ObjRef x)     -> rawStreamByRef objs (trace (show x) x)
+  Just (PdfName "/Contents", ObjRef x)     -> rawStreamByRef objs x
   Nothing                                  -> error "No content to be shown"
   where
     contents (PdfName "/Contents", _) = True
@@ -339,7 +339,7 @@ cMap dict objs = map pairwise dict
 toUnicode :: Int -> [PDFObj] -> CMap
 toUnicode x objs = case findObjThroughDictByRef x "/Encoding" objs of
   Just (PdfName "/Identity-H") -> case findObjThroughDictByRef x "/ToUnicode" objs of
-    Just (ObjRef ref) -> (trace (show $ rawStreamByRef objs ref) (parseCMap $ rawStreamByRef objs ref))
+    Just (ObjRef ref) -> (parseCMap $ rawStreamByRef objs ref)
     otherwise -> []
   otherwise -> []
 
