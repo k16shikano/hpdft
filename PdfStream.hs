@@ -54,7 +54,6 @@ elems = choice [ try pdfopBT
                , try pdfopTast
                , try letters <* spaces
                , try hexletters <* spaces
---               , try bore <* spaces
                , try array <* spaces
                , unknowns
                ]
@@ -95,7 +94,6 @@ letters = do
   lets <- manyTill psletter (try $ char ')')
   spaces
   return $ T.concat lets
---  return $ if ay > topPt || ay < bottomPt then "" else lets
 
 hexletters :: PSParser T.Text
 hexletters = do
@@ -194,21 +192,19 @@ pdfopTd = do
       ly = liney st
       lm = leftmargin st
       ff = fontfactor st
-      needBreak = abs (ay + t2) < abs ly 
-  updateState (\s -> s { absolutex = ax+t1
-                       , absolutey = ay+t2
+      needBreak = abs t2 > 0 && abs (ly - t2) > 0
+  updateState (\s -> s { absolutex = ax+(ax - t1)
+                       , absolutey = ay+(ay - t2)
+                       , linex = t1
+                       , liney = if abs t2 > 0 then t2 else ly
                        })
-  return $ if needBreak then "\n\n" else desideParagraphBreak t1 t2 lx ly lm
+  return $ if needBreak then "\n" else desideParagraphBreak t1 t2 lx ly lm
 
 desideParagraphBreak :: Double -> Double -> Double -> Double -> Double -> T.Text
 desideParagraphBreak t1 t2 lx ly lm = T.pack $
-  (if t1 <= lx 
+  (if t1 > lm
    then ""
-   else (if abs (t1 - lm) < 1.0
-         then " "
-         else if t2 > ly then "\n\n" else "")
-        ++
-        (if t2 > ly then "\n\n" else ""))
+   else "\n")
 
 pdfopTm :: PSParser T.Text
 pdfopTm = do
@@ -232,15 +228,12 @@ pdfopTm = do
       lx = linex st
       ly = liney st
       ff = fontfactor st
-  updateState (\s -> s { linex     = (ff*a)
-                       , liney     = (ff*d)
-                       , absolutex = ax + (ff*e)
-                       , absolutey = ay + (ff*f)
+  updateState (\s -> s { linex     = lx
+                       , liney     = ly
+                       , absolutex = ax + (ff*a)
+                       , absolutey = ay + (ff*d)
                        })
---  return $ T.pack (show [ay,ly,d])
-  return $ if abs (ff*d - ay) < ly then 
-             if (e)/lx < 1.5*lx then "" else ""
-          else ""
+  return $ ""
 
 pdfopTast :: PSParser T.Text
 pdfopTast = do
