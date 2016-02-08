@@ -154,8 +154,10 @@ pdfopTf = do
   spaces
   string "Tf"
   spaces
+  st <- getState
+  let ff = fontfactor st
   updateState (\s -> s{ curfont = font
-                      , fontfactor = t})
+                      , fontfactor = ff*t})
   return ""
 
 pdfopTD :: PSParser T.Text
@@ -177,9 +179,9 @@ pdfopTD = do
   updateState (\s -> s { absolutex = ax + t1
                        , absolutey = ay + (if needBreak then t2 else 0)
                        , linex = t1
-                       , liney = if abs t2 > 0 then t2 else ly
+                       , liney = if abs t2 > 0 then 2*t2 else ly
                        })
-  return $ if needBreak then T.concat ["\n", (desideParagraphBreak t1 t2 lx ly lm)] else ""
+  return $ if needBreak then T.concat ["\n", (desideParagraphBreak t1 t2 lx ly lm ff)] else ""
 
 pdfopTd :: PSParser T.Text
 pdfopTd = do
@@ -202,12 +204,13 @@ pdfopTd = do
                        , linex = t1
                        , liney = if abs t2 > 0 then t2 else ly
                        })
-  return $ if needBreak then T.concat ["\n", (desideParagraphBreak t1 t2 lx ly lm)] else ""
+  return $ if needBreak then T.concat ["\n", (desideParagraphBreak t1 t2 lx ly lm ff)] else ""
 
-desideParagraphBreak :: Double -> Double -> Double -> Double -> Double -> T.Text
-desideParagraphBreak t1 t2 lx ly lm = T.pack $
+desideParagraphBreak :: Double -> Double -> Double -> Double -> Double -> Double 
+                     -> T.Text
+desideParagraphBreak t1 t2 lx ly lm ff = T.pack $
 --  (if abs t2 < abs ly || (t1 - lm) > 1
-  (if (abs ly > (abs t2 + 1)) || (t1 - lm) > 0.5
+  (if (abs ly > (abs t2 + ff)) || (t1 - lm) > 0.5
    then "\n"
    else "")
 
@@ -235,8 +238,9 @@ pdfopTm = do
       ff = fontfactor st
   updateState (\s -> s { linex     = lx
                        , liney     = ly
-                       , absolutex = ax + (ff*a)
-                       , absolutey = ay + (ff*d)
+                       , absolutex = e
+                       , absolutey = f
+                       , fontfactor = a*ff
                        })
   return $ ""
 
@@ -250,10 +254,10 @@ pdfopTast = do
       ly = liney st
   updateState (\s -> s { linex     = lx
                        , liney     = ly
-                       , absolutex = 70
-                       , absolutey = ay-ly
+                       , absolutex = ax
+                       , absolutey = ay
                        })
-  return " "
+  return "\n"
 
 digitParam :: PSParser Double
 digitParam = do 
