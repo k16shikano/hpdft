@@ -10,6 +10,8 @@ module PdfObj
        , getRootRefFile
        , contentsStream
        , rawContentsStream
+       , rawStreamByRef
+       , toUnicode
        , pagesKids  
        , pages
        , findDictOfType

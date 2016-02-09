@@ -61,6 +61,9 @@ getRootRef filename = do
     Just i -> return i
     Nothing -> error "Can not find rood object"
 
+cmapStreamByRef filename ref = do
+  objs <- getPDFObjFile filename
+  return $ toUnicode ref objs
 
 
 ---------------------------------------
