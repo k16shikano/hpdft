@@ -24,17 +24,19 @@ import Pdf
 import PdfCharDict (pdfchardict)
 
 parseCMap :: BSL.ByteString -> CMap
-parseCMap str = case runParser cmapParser () "" str of
+parseCMap str = case runParser (concat <$> manyTill cmapParser (try $ string "endcmap")) () "" str of
   Left err -> error "Can not parse CMap"
-  Right cmap -> cmap
-  
+  Right cmap -> cmap 
+
 cmapParser :: Parser CMap
 cmapParser = do
+  spaces
   manyTill anyChar (try $ string "beginbfchar")
   spaces
   ms <- many1 (toCmap <$> hexletters <*> hexletters)
   spaces
   string "endbfchar"
+  spaces
   return ms
     where toCmap cid ucs = ((fst.head.readHex) cid, ((:[]).chr.fst.head.readHex) ucs)
 
