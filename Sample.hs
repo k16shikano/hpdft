@@ -2,6 +2,7 @@
 
 import Pdf
 import PdfObj
+import PdfOutlines
 
 import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
