@@ -27,10 +27,10 @@ initstate = PSR { linex=0
 -- Show each PDF Object by its reference number
 -----------------------------------------------
 
-objectByRef filename ref = getPdfObjByRef ref (getPDFObjFile filename)
+objectByRef filename ref = getObjectByRef ref (getPDFObjFromFile filename)
 
 contentByRef filename ref = do
-  objs <- getPDFObjFile filename
+  objs <- getPDFObjFromFile filename
   obj <- objectByRef filename ref
   BSL.putStrLn $ contentOfObject obj objs
   where contentOfObject obj objs =
@@ -39,7 +39,7 @@ contentByRef filename ref = do
             Nothing -> ""
 
 rawContentByRef filename ref = do
-  objs <- getPDFObjFile filename
+  objs <- getPDFObjFromFile filename
   obj <- objectByRef filename ref
   BSL.putStrLn $ rawContentOfObject obj objs
   where rawContentOfObject obj objs =
@@ -55,14 +55,8 @@ showRawPage filename page = do
   pagetree <- refByPage filename
   rawContentByRef filename $ pagetree !! (page - 1)
 
-getRootRef filename = do
-  n <- getRootRefFile filename
-  case n of
-    Just i -> return i
-    Nothing -> error "Can not find rood object"
-
 cmapStreamByRef filename ref = do
-  objs <- getPDFObjFile filename
+  objs <- getPDFObjFromFile filename
   return $ toUnicode ref objs
 
 
@@ -75,7 +69,7 @@ data  PageTree = Nop | Page Int | Pages [PageTree]
 
 refByPage filename = do
   root <- getRootRef filename
-  objs <- getPDFObjFile filename
+  objs <- getPDFObjFromFile filename
   return $  pageTreeToList $ pageorder root objs
 
 pageorder :: Int -> [PDFObj] -> PageTree
