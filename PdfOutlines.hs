@@ -10,6 +10,13 @@ import Data.List (find)
 import Pdf
 import PdfObj
 
+data PDFOutlinesTree = PDFOutlinesChildren [PDFOutlinesTree]
+                     | PDFOutlinesEntry { dest :: Int
+                                        , outlinetext :: String
+                                        , subentries :: PDFOutlinesTree} 
+                     | PDFOutlinesNE
+                       deriving (Show)
+
 outlines :: Dict -> Int
 outlines dict = case find isOutlinesRef dict of
   Just (_, ObjRef x) -> x
@@ -31,22 +38,42 @@ outlineObjFromFile filename = do
   case findObjsByRef outlineref objs of
     Just [PdfDict d] -> return d
     Nothing -> error "Could not get outlines object"
-      
+
 getOutlines filename = do
   dict <- outlineObjFromFile filename
   objs <- getPDFObjFromFile filename  
   firstref <- case findFirst dict of
     Just x -> return x
     Nothing -> error "No top level outline entry."
-  return $ findNext firstref objs
+  firstdict <- case findObjsByRef firstref objs of
+    Just [PdfDict d] -> return $ d
+    Nothing -> error $ "No Object with Ref " ++ show firstref
+  return $ gatherOutlines firstdict objs
 
-findDest ref objs = 
-  case findObjThroughDictByRef ref "/Dest" objs of
+gatherOutlines dict objs =
+  case findNext dict of 
+    Just r -> case findObjsByRef r objs of
+      Just [PdfDict d] -> PDFOutlinesEntry { dest = head $ findDest dict
+                                           , outlinetext = findTitle dict
+                                           , subentries = gatherOutlines d objs}
+      Nothing -> error "?"
+    Nothing -> PDFOutlinesEntry { dest = head $ findDest dict
+                                , outlinetext = findTitle dict
+                                , subentries = PDFOutlinesNE}
+
+
+findTitle dict = 
+  case findObjThroughDict dict "/Title" of
+    Just (PdfText s) -> s
+    Nothing -> error "No title object."
+
+findDest dict = 
+  case findObjThroughDict dict "/Dest" of
     Just (PdfArray a) -> parseRefsArray a
     Nothing -> error "No destination object."
 
-findNext ref objs = 
-  case findObjThroughDictByRef ref "/Next" objs of
+findNext dict = 
+  case findObjThroughDict dict "/Next" of
     Just (ObjRef x) -> Just x
     Nothing -> Nothing
 
