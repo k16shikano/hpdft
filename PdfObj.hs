@@ -392,3 +392,25 @@ getRefs pred (Just objs) = case find pred objs of
   Nothing            -> Nothing
 getRefs _ _ = Nothing
 
+
+-- find root from the end of the file (experimental)
+
+rootR filename = do
+  contents <- BS.readFile filename
+  let reversed = (BS.unlines . reverse . BS.lines) contents
+  let objs = parseTrailerR reversed
+  putStrLn $ show $ objs
+
+parseTrailerR :: BS.ByteString -> Maybe Dict
+parseTrailerR bs = case parse trailerR "" bs of
+  Left  err -> error $ show err
+  Right rlt -> case parse (manyTill anyChar (try $ lookAhead $ string "<<") >> pdfdictionary <* spaces) "" rlt of
+    Left  err  -> error $ show err
+    Right (PdfDict dict) -> Just dict
+    Right other -> Nothing
+
+trailerR :: Parser BS.ByteString
+trailerR = do
+  manyTill anyChar (try $ string "startxref")
+  rts <- manyTill anyChar (try $ string "trailer")
+  return $ BS.pack $ (unlines . reverse . lines) rts
