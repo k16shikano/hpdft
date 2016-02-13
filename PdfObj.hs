@@ -100,7 +100,7 @@ getXref contents = case parse (xref) "" contents of
 pdfObj :: Parser PDFBS
 pdfObj = do
   skipMany (comment <|> oneOf "\r\n")
-  objn <- many1 digit <* string " 0 obj"
+  objn <- many1 digit <* (spaces >> oneOf "0123456789" >> string " obj")
   object <- manyTill anyChar (try $ string "endobj")
   spaces
   skipMany xref
@@ -189,7 +189,8 @@ rrefs :: Parser Obj
 rrefs = do  
   objnum <- many1 digit
   spaces
-  string "0 R"
+  oneOf "0123456789"
+  string " R"
   spaces
   return $ ObjRef (read objnum)
 
