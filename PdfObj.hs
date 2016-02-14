@@ -365,52 +365,44 @@ toUnicode x objs = case findObjThroughDictByRef x "/Encoding" objs of
   otherwise -> []
 
 
--- find root ref from Trailer
+-- find root ref from Trailer or Cross-Reference Dictionary
 
 parseTrailer :: BS.ByteString -> Maybe Dict
 parseTrailer bs = case parse trailer "" bs of
   Left  err -> Nothing
-  Right rlt -> case parse (spaces >> pdfdictionary <* spaces) "" rlt of
-    Left  err  -> Nothing
-    Right (PdfDict dict) -> Just dict
-    Right other -> Nothing
+  Right rlt -> Just (parseCRDict rlt)
+  where trailer :: Parser BS.ByteString
+        trailer = do
+          manyTill anyChar (try $ string "trailer")
+          t <- manyTill anyChar (try $ string "startxref")
+          return $ BS.pack t
 
-trailer :: Parser BS.ByteString
-trailer = do
-  manyTill anyChar (try $ string "trailer")
-  t <- manyTill anyChar (try $ string "startxref")
-  return $ BS.pack t
+parseCRDict :: BS.ByteString -> Dict
+parseCRDict rlt = case parse (spaces >> pdfdictionary <* spaces) "" rlt of
+    Left  err  -> error $ show err
+    Right (PdfDict dict) -> dict
+    Right other -> error "Could not find Cross-Reference dictionary"
 
 rootRef :: BS.ByteString -> Maybe Int
-rootRef bs = getRefs isRootRef $ parseTrailer bs
-  where isRootRef (PdfName "/Root", ObjRef x) = True
-        isRootRef (_,_) = False
+rootRef bs = case parseTrailer bs of
+  Just dict -> getRefs isRootRef dict
+  Nothing   -> rootRefFromCRStream bs
 
-getRefs :: ((Obj,Obj) -> Bool) -> Maybe Dict -> Maybe Int
-getRefs pred (Just objs) = case find pred objs of
+rootRefFromCRStream :: BS.ByteString -> Maybe Int
+rootRefFromCRStream bs =
+  let offset = (read . BS.unpack . head . drop 1 . reverse . BS.lines $ bs) :: Int
+      crstrm = snd . head . getObjs $ BS.drop offset bs
+      crdict = parseCRDict crstrm
+  in getRefs isRootRef $ crdict
+
+
+
+
+isRootRef (PdfName "/Root", ObjRef x) = True
+isRootRef (_,_) = False
+
+getRefs :: ((Obj,Obj) -> Bool) -> Dict -> Maybe Int
+getRefs pred dict = case find pred dict of
   Just (_, ObjRef x) -> Just x
   Nothing            -> Nothing
-getRefs _ _ = Nothing
 
-
--- find root from the end of the file (experimental)
-
-rootR filename = do
-  contents <- BS.readFile filename
-  let reversed = (BS.unlines . reverse . BS.lines) contents
-  let objs = parseTrailerR reversed
-  putStrLn $ show $ objs
-
-parseTrailerR :: BS.ByteString -> Maybe Dict
-parseTrailerR bs = case parse trailerR "" bs of
-  Left  err -> error $ show err
-  Right rlt -> case parse (manyTill anyChar (try $ lookAhead $ string "<<") >> pdfdictionary <* spaces) "" rlt of
-    Left  err  -> error $ show err
-    Right (PdfDict dict) -> Just dict
-    Right other -> Nothing
-
-trailerR :: Parser BS.ByteString
-trailerR = do
-  manyTill anyChar (try $ string "startxref")
-  rts <- manyTill anyChar (try $ string "trailer")
-  return $ BS.pack $ (unlines . reverse . lines) rts
