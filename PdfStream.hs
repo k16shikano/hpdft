@@ -26,10 +26,10 @@ import PdfCharDict (pdfchardict)
 
 type PSParser a = GenParser Char PSR a
 
-parsePage p st = runParser p st ""
+parseContentStream p st = runParser p st ""
 
 parseDeflated :: PSR -> BSL.ByteString -> PDFStream
-parseDeflated psr pdfstream = case parsePage (T.concat <$> many (elems <|> skipOther)) psr pdfstream of
+parseDeflated psr pdfstream = case parseContentStream (T.concat <$> many (elems <|> skipOther)) psr pdfstream of
   Left  err -> error "Nothing to be parsed"
   Right str -> BSL.pack $ BS.unpack $ encodeUtf8 str
 
