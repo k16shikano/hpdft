@@ -56,7 +56,7 @@ getPDFBSFromFile f = do
 getPDFObjFromFile :: String -> IO [PDFObj]
 getPDFObjFromFile f = do
   c <- BS.readFile f
-  let obj = map parsePDFObj $ getObjs c
+  let obj = expandObjStm $ map parsePDFObj $ getObjs c
   return obj
 
 getObjectByRef :: Int -> IO [PDFObj] -> IO [Obj]
@@ -400,9 +400,6 @@ rootRefFromCRStream bs =
       crdict = parseCRDict crstrm
   in getRefs isRootRef $ crdict
 
-
-
-
 isRootRef (PdfName "/Root", ObjRef x) = True
 isRootRef (_,_) = False
 
@@ -411,3 +408,42 @@ getRefs pred dict = case find pred dict of
   Just (_, ObjRef x) -> Just x
   Nothing            -> Nothing
 
+
+-- expand PDF 1.5 Object Stream 
+
+expandObjStm :: [PDFObj] -> [PDFObj]
+expandObjStm os = concat $ map objStm os
+
+objStm :: PDFObj -> [PDFObj]
+objStm (n, obj) = case findDictOfType "/ObjStm" obj of
+  Nothing -> [(n,obj)]
+  Just _  -> getPdfObjStm n $ BS.pack $ BSL.unpack $ rawStream obj
+
+parsePdfObjStm :: Int -> ByteString -> [PDFObj]
+parsePdfObjStm n s = case parse pdfObjStm "" s of
+  Right pdfobjs -> pdfobjs
+  Left  err     -> error $ "Failed to parse Object Stream: "
+
+pdfObjStm :: Parser [PDFObj]
+pdfObjStm = do
+  spaces
+  objnumoffset <- many1 ((,) <$> (many1 digit <* spaces) <*> (many1 digit <* spaces))
+  
+  objs <- many1 (manyTill anyChar (lookAhead $ string "<<") *> pdfdictionary <* spaces)
+  return $ map (\((n,off), obj) -> (read n :: Int, [obj])) (zip objnumoffset objs)
+  
+refOffset :: Parser ([(Int, Int)], String)
+refOffset = spaces *> ((,) 
+                       <$> many1 ((\r o -> (read r :: Int, read o :: Int)) 
+                                  <$> (many1 digit <* spaces) 
+                                  <*> (many1 digit <* spaces))
+                       <*> (manyTill anyChar (lookAhead $ string "<<") *> many1 anyChar))
+
+getPdfObjStm n s = 
+  let (location, objstr) = case parse refOffset "" s of
+        Right val -> val
+        Left err  -> error $ "Failed to parse Object Stream: "
+  in map (\(r,o) -> (r, parseDict $ BS.pack $ drop o objstr)) location
+    where parseDict s' = case parse pdfdictionary "" s' of
+            Right obj -> [obj]
+            Left  err -> error "Failed to parse obj"
