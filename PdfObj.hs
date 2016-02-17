@@ -418,19 +418,6 @@ objStm :: PDFObj -> [PDFObj]
 objStm (n, obj) = case findDictOfType "/ObjStm" obj of
   Nothing -> [(n,obj)]
   Just _  -> getPdfObjStm n $ BS.pack $ BSL.unpack $ rawStream obj
-
-parsePdfObjStm :: Int -> ByteString -> [PDFObj]
-parsePdfObjStm n s = case parse pdfObjStm "" s of
-  Right pdfobjs -> pdfobjs
-  Left  err     -> error $ "Failed to parse Object Stream: "
-
-pdfObjStm :: Parser [PDFObj]
-pdfObjStm = do
-  spaces
-  objnumoffset <- many1 ((,) <$> (many1 digit <* spaces) <*> (many1 digit <* spaces))
-  
-  objs <- many1 (manyTill anyChar (lookAhead $ string "<<") *> pdfdictionary <* spaces)
-  return $ map (\((n,off), obj) -> (read n :: Int, [obj])) (zip objnumoffset objs)
   
 refOffset :: Parser ([(Int, Int)], String)
 refOffset = spaces *> ((,) 
