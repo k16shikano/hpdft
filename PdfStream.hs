@@ -50,6 +50,7 @@ elems = choice [ try pdfopBT
                , try pdfopTD
                , try pdfopTd
                , try pdfopTm
+               , try pdfopTJ
                , try pdfopTj
                , try pdfopTast
                , try letters <* spaces
@@ -68,7 +69,15 @@ pdfopBT = do
 
 pdfopTj :: PSParser T.Text
 pdfopTj = do
-  t <- manyTill (letters <|> hexletters) (try $ (string "Tj" <|> string "TJ"))
+  spaces
+  t <- manyTill (letters <|> hexletters <|> array) (try $ string "Tj")
+  spaces
+  return $ T.concat t
+
+pdfopTJ :: PSParser T.Text
+pdfopTJ = do
+  spaces
+  t <- manyTill (letters <|> hexletters <|> array) (try $ string "TJ")
   spaces
   return $ T.concat t
   
@@ -76,6 +85,7 @@ unknowns :: PSParser T.Text
 unknowns = do 
   ps <- manyTill anyChar (try $ oneOf "\r\n")
   return ""
+--  return $ T.pack (show ps)
 
 skipOther :: PSParser T.Text
 skipOther = do
