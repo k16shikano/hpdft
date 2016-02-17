@@ -12,6 +12,7 @@ module PdfObj
        , contentsStream
        , rawContentsStream
        , rawStreamByRef
+       , rawStream
        , toUnicode
        , pagesKids  
        , pages
@@ -280,11 +281,15 @@ parsedContentStreamByRef dict st objs ref = deflate (st {fontmaps=fontdict, cmap
   where fontdict = findFontMap dict objs
         cmap = findCMap dict objs
 
+rawStreamByRef :: [PDFObj] -> Int -> BSL.ByteString
 rawStreamByRef objs x = case findObjsByRef x objs of
-  Just sobjs -> case find isStream sobjs of
-    Just (PdfStream strm) -> decompress strm
-    Nothing               -> error "No stream to be shown"
-  Nothing -> error "No stream to be shown"
+  Just obj -> rawStream obj
+  Nothing  -> error "No stream to be shown"
+
+rawStream :: [Obj] -> BSL.ByteString
+rawStream objs = case find isStream objs of
+  Just (PdfStream strm) -> decompress strm
+  Nothing               -> error "No stream to be shown"
   where
     isStream (PdfStream s) = True
     isStream _             = False

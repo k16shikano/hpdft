@@ -30,6 +30,10 @@ initstate = PSR { linex=0
 
 objectByRef filename ref = getObjectByRef ref (getPDFObjFromFile filename)
 
+streamByRef filename ref = do
+  obj <- getObjectByRef ref (getPDFObjFromFile filename) 
+  return $ rawStream obj
+
 contentByRef filename ref = do
   objs <- getPDFObjFromFile filename
   obj <- objectByRef filename ref
@@ -125,4 +129,3 @@ linearize parent objs =
           Just dict -> contentsStream dict initstate objs
           Nothing -> ""
     Nothing -> ""
-
