@@ -56,8 +56,37 @@ elems = choice [ try pdfopBT
                , try letters <* spaces
                , try hexletters <* spaces
                , try array <* spaces
+               , try pdfopGraphics
+               , try xObject
                , unknowns
                ]
+
+pdfopGraphics :: PSParser T.Text
+pdfopGraphics = do
+  spaces
+  choice [ try $ T.empty <$ oneOf "qQ" <* spaces
+         , try $ T.empty <$ oneOf "fFbBW" <* (many $ string "*") <* spaces
+         , try $ T.empty <$ oneOf "nsS" <* spaces
+         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "gG" <* spaces
+         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJ" <* spaces
+         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "dwi" <* spaces
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "ml" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "re" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "rg" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "RG" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "cm" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "c" <* spaces)
+         ]
+  return T.empty
+
+xObject :: PSParser T.Text          
+xObject = do
+  file <- (++) <$> string "/" <*> manyTill anyChar (try space)
+  spaces
+  string "Do"
+  spaces
+  return T.empty
+  
 
 pdfopBT :: PSParser T.Text
 pdfopBT = do
@@ -85,7 +114,7 @@ unknowns :: PSParser T.Text
 unknowns = do 
   ps <- manyTill anyChar (try $ oneOf "\r\n")
   return ""
---  return $ T.pack (show ps)
+  return $ T.pack $ "[[[UNNOKWN STREAM:" ++ take 100 (show ps) ++ "]]]"
 
 skipOther :: PSParser T.Text
 skipOther = do
