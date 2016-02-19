@@ -283,7 +283,7 @@ parsedContentStreamByRef dict st objs ref = deflate (st {fontmaps=fontdict, cmap
 
 rawStreamByRef :: [PDFObj] -> Int -> BSL.ByteString
 rawStreamByRef objs x = case findObjsByRef x objs of
-  Just obj -> rawStream obj
+  Just objs -> rawStream objs
   Nothing  -> error "No stream to be shown"
 
 rawStream :: [Obj] -> BSL.ByteString

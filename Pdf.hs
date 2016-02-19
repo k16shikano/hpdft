@@ -1,6 +1,7 @@
 module Pdf where
 
 import Data.ByteString (ByteString)
+import Data.List
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 
@@ -23,9 +24,26 @@ data Obj = PdfDict Dict -- [(Obj, Obj)]
          | ObjRef Int
          | ObjOther String
          | PdfNull
-         deriving (Show, Eq)
+         deriving (Eq)
 
 type Dict =  [(Obj,Obj)]
+
+instance Show Obj where
+  show o = toString 0 o
+  
+toString depth (PdfDict d) = concat $ map dictentry d
+    where dictentry (PdfName n, o) = concat $ ["\n"] ++ replicate depth "  " ++ [n, ": ", toString (depth+1) o]
+          dictentry e = error $ "Illegular dictionary entry "++show e 
+toString depth (PdfText t) = t 
+toString depth (PdfNumber r) = show r
+toString depth (PdfHex h) = h
+toString depth (PdfArray a) = intercalate ", " $ map (toString depth) a
+toString depth (PdfBool b) = show b
+toString depth (PdfName n) = n
+toString depth (ObjRef i) = show i
+toString depth (ObjOther o) = o
+toString depth (PdfNull) = ""
+
 
 type FontMap = [(Char,String)]
 
@@ -43,5 +61,4 @@ data PSR = PSR { linex      :: Double
                , cmaps      :: [(String, CMap)]
                , fontmaps   :: [(String, FontMap)]}
          deriving (Show)
-
 
