@@ -50,6 +50,8 @@ elems = choice [ try pdfopBT
                , try pdfopTD
                , try pdfopTd
                , try pdfopTm
+               , try pdfopTc
+               , try pdfopTw
                , try pdfopTJ
                , try pdfopTj
                , try pdfopTast
@@ -58,6 +60,7 @@ elems = choice [ try pdfopBT
                , try array <* spaces
                , try pdfopGraphics
                , try xObject
+               , try graphicState
                , unknowns
                ]
 
@@ -77,6 +80,14 @@ pdfopGraphics = do
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "cm" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "c" <* spaces)
          ]
+  return T.empty
+
+graphicState :: PSParser T.Text
+graphicState = do
+  gs <- (++) <$> string "/" <*> manyTill anyChar (try space)
+  spaces
+  string "gs"
+  spaces
   return T.empty
 
 xObject :: PSParser T.Text          
@@ -248,6 +259,30 @@ pdfopTd = do
   return $ if needBreak 
            then T.concat ["\n", (desideParagraphBreak t1 t2 lx ly lm ff)] 
            else ""
+
+pdfopTw :: PSParser T.Text
+pdfopTw = do
+  tw <- digitParam
+  spaces
+  string "Tw"
+  spaces
+  st <- getState
+  let ff = fontfactor st
+  updateState (\s -> s { fontfactor = ff
+                       })
+  return $ ""
+
+pdfopTc :: PSParser T.Text
+pdfopTc = do
+  tc <- digitParam
+  spaces
+  string "Tc"
+  spaces
+  st <- getState
+  let ff = fontfactor st
+  updateState (\s -> s { fontfactor = ff
+                       })
+  return $ ""
 
 desideParagraphBreak :: Double -> Double -> Double -> Double -> Double -> Double 
                      -> T.Text
