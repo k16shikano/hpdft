@@ -1,14 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module PdfOutlines
+module PDF.Outlines
        ( getOutlines
        ) where
 
 import Debug.Trace
 
 import Data.List (find)
-import Pdf
-import PdfObj
+import PDF.Definition
+import PDF.Object
+import PDF.PDFIO
 
 data PDFOutlines = PDFOutlinesTree [PDFOutlines]
                  | PDFOutlinesEntry { dest :: Int
