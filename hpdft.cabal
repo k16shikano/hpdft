@@ -1,5 +1,5 @@
 name:                hpdft
-version:             0.1.0.0
+version:             0.1.0.1
 synopsis:            tools to poke pdf using haskell
 -- description:         
 homepage:            https://github.com/k16shikano/hpdft
@@ -12,6 +12,8 @@ category:            Text
 build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
+
+data-dir:            sample/
 
 library
   hs-source-dirs:      src/

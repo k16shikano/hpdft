@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import Pdf
-import PdfObj
-import PdfOutlines
+import PDF.Definition
+import PDF.Object
+import PDF.PDFIO
 
 import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
