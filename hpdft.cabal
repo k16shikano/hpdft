@@ -1,14 +1,14 @@
 name:                hpdft
-version:             0.1.0.1
-synopsis:            tools to poke pdf using haskell
+version:             0.1.0.2
+synopsis:            A tool for looking through PDF file using Haskell
 -- description:         
 homepage:            https://github.com/k16shikano/hpdft
 license:             MIT
 license-file:        LICENSE
-author:              k16.shikano
+author:              Keiichiro Shikano
 maintainer:          k16.shikano@gmail.com
 -- copyright:           
-category:            Text
+category:            PDF
 build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
