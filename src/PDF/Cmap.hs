@@ -21,7 +21,6 @@ import Codec.Compression.Zlib (decompress)
 import Debug.Trace
 
 import PDF.Definition
-import PDF.Character (pdfchardict)
 
 parseCMap :: BSL.ByteString -> CMap
 parseCMap str = case runParser (concat <$> manyTill cmapParser (try $ string "endcmap")) () "" str of

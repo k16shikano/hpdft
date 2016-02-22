@@ -12,6 +12,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.Text as T
+import qualified Data.Map as Map
 import Data.Text.Encoding (encodeUtf8)
 
 import Text.Parsec hiding (many, (<|>))
@@ -22,7 +23,7 @@ import Codec.Compression.Zlib (decompress)
 import Debug.Trace
 
 import PDF.Definition
-import PDF.Character (pdfchardict)
+import PDF.Character (pdfcharmap, adobeJapanOneSixMap)
 
 type PSParser a = GenParser Char PSR a
 
@@ -97,7 +98,6 @@ xObject = do
   string "Do"
   spaces
   return T.empty
-  
 
 pdfopBT :: PSParser T.Text
 pdfopBT = do
@@ -153,7 +153,9 @@ hexletters = do
   return $ T.concat lets
 
 adobeOneSix :: Int -> T.Text
-adobeOneSix  a  = T.pack (show a)
+adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
+  Just cs -> cs
+  Nothing -> T.pack (show a)
 
 toUcs :: CMap -> Int -> T.Text
 toUcs map h = case lookup h map of
@@ -185,7 +187,7 @@ psletter = do
     where replaceWithDiff m c' = case lookup c' m of
             Just s -> replaceWithCharDict s
             Nothing -> T.pack [c']
-          replaceWithCharDict s = case lookup s pdfchardict of
+          replaceWithCharDict s = case Map.lookup s pdfcharmap of
             Just cs -> cs
             Nothing -> T.pack s
           octToString [] = '?'

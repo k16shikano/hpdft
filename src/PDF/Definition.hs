@@ -4,6 +4,7 @@ import Data.ByteString (ByteString)
 import Data.List (replicate, intercalate)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
+import Codec.Compression.Zlib (decompress)
 
 type PDFBS = (Int,BS.ByteString)
 
@@ -35,8 +36,9 @@ toString depth (PdfDict d) = concat $ map dictentry d
     where dictentry (PdfName n, o) = concat $ ["\n"] ++ replicate depth "  " ++ [n, ": ", toString (depth+1) o]
           dictentry e = error $ "Illegular dictionary entry "++show e 
 toString depth (PdfText t) = t 
+toString depth (PdfStream s) = "\n  " ++ (BSL.unpack $ decompress s)
 toString depth (PdfNumber r) = show r
-toString depth (PdfHex h) = h
+toString depth (PdfHex h) = h 
 toString depth (PdfArray a) = intercalate ", " $ map (toString depth) a
 toString depth (PdfBool b) = show b
 toString depth (PdfName n) = n
