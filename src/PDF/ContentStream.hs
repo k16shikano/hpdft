@@ -126,7 +126,7 @@ unknowns :: PSParser T.Text
 unknowns = do 
   ps <- manyTill anyChar (try $ oneOf "\r\n")
   return ""
-  return $ T.pack $ "[[[UNNOKWN STREAM:" ++ take 100 (show ps) ++ "]]]"
+  return $ T.pack $ "[[[UNKNOWN STREAM:" ++ take 100 (show ps) ++ "]]]"
 
 skipOther :: PSParser T.Text
 skipOther = do
