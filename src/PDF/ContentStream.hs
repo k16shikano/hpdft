@@ -156,7 +156,7 @@ hexletters = do
 adobeOneSix :: Int -> T.Text
 adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
   Just cs -> cs
-  Nothing -> T.pack (show a)
+  Nothing -> T.pack $ "[" ++ (show a) ++ "]"
 
 toUcs :: CMap -> Int -> T.Text
 toUcs map h = case lookup h map of

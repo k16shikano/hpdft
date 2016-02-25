@@ -3,6 +3,7 @@
 import PDF.Definition
 import PDF.Object
 import PDF.PDFIO
+import PDF.Outlines
 
 import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
@@ -129,3 +130,9 @@ linearize parent objs =
           Just dict -> contentsStream dict initstate objs
           Nothing -> ""
     Nothing -> ""
+
+
+-------------------
+-- Meta Information    
+-------------------
+
