@@ -67,3 +67,11 @@ getInfo filename = do
   case findDictByRef inforef objs of
     Just os -> return os
     Nothing -> error "Could not get info object"
+
+getTitle filename = do
+  d <- getInfo filename
+  case findObjThroughDict d "/Title" of
+    Just (PdfText s) -> return s
+    Just x -> error $ show x
+    Nothing -> error "No title anyway"
+
