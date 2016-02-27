@@ -55,9 +55,7 @@ getRootObj filename = do
 
 getTrailer filename = do
   c <- BS.readFile filename
-  case parseTrailer c of
-    Just d -> return d
-    Nothing -> return []
+  return $ findTrailer c
 
 getInfo filename = do
   d <- getTrailer filename
@@ -66,6 +64,6 @@ getInfo filename = do
                   Just (ObjRef ref) -> ref
                   Just _ -> error "There seems to be no Info"
                   Nothing -> error "There seems to be no Info"
-  case findObjsByRef inforef objs of
+  case findDictByRef inforef objs of
     Just os -> return os
     Nothing -> error "Could not get info object"

@@ -2,22 +2,24 @@
 
 module PDF.Object
        ( parseTrailer
+       , findTrailer
        , rootRef
        , contentsStream
        , rawContentsStream
        , rawStreamByRef
        , rawStream
        , toUnicode
-       , pagesKids  
+       , pagesKids
        , pages
        , findDict
+       , findDictByRef
        , findDictOfType
        , findObjThroughDict
        , findObjThroughDictByRef
        , findObjsByRef
        , parsePDFObj
        , parseRefsArray
-       , getObjs 
+       , getObjs
        , pdfObj
        , getRefs
        , getXref
@@ -363,6 +365,20 @@ getRefs :: ((Obj,Obj) -> Bool) -> Dict -> Maybe Int
 getRefs pred dict = case find pred dict of
   Just (_, ObjRef x) -> Just x
   Nothing            -> Nothing
+
+-- find Info
+
+findTrailer bs = do
+  case parseTrailer bs of
+    Just d -> d
+    Nothing -> []
+
+infoRef bs = case parseTrailer bs of
+  Just dict -> getRefs isInfoRef dict
+  Nothing -> error "No ref for info"
+
+isInfoRef (PdfName "/Info", ObjRef x) = True
+isInfoRef (_,_) = False
 
 
 -- expand PDF 1.5 Object Stream 
