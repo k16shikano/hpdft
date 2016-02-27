@@ -3,6 +3,8 @@ module PDF.PDFIO ( getObjectByRef
                  , getPDFObjFromFile
                  , getRootRef
                  , getRootObj
+                 , getTrailer
+                 , getInfo
                  ) where
 
 import PDF.Definition
@@ -50,3 +52,20 @@ getRootObj filename = do
   case findObjsByRef rootref objs of
     Just os -> return os
     Nothing -> error "Could not get root object"
+
+getTrailer filename = do
+  c <- BS.readFile filename
+  case parseTrailer c of
+    Just d -> return d
+    Nothing -> return []
+
+getInfo filename = do
+  d <- getTrailer filename
+  objs <- getPDFObjFromFile filename
+  let inforef = case findObjThroughDict d "/Info" of
+                  Just (ObjRef ref) -> ref
+                  Just _ -> error "There seems to be no Info"
+                  Nothing -> error "There seems to be no Info"
+  case findObjsByRef inforef objs of
+    Just os -> return os
+    Nothing -> error "Could not get info object"
