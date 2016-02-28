@@ -8,9 +8,11 @@ module PDF.ContentStream
 import Data.Char (chr)
 import Numeric (readOct, readHex)
 
+import Data.Binary (decode)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
-import qualified Data.ByteString.Lazy.Char8 as BSL
+import qualified Data.ByteString.Lazy.Char8 as BSC
+import qualified Data.ByteString.Lazy.UTF8 as BSL
 import qualified Data.Text as T
 import qualified Data.Map as Map
 import Data.Text.Encoding (encodeUtf8)
@@ -29,17 +31,17 @@ type PSParser a = GenParser Char PSR a
 
 parseContentStream p st = runParser p st ""
 
-parseDeflated :: PSR -> BSL.ByteString -> PDFStream
+parseDeflated :: PSR -> BSC.ByteString -> PDFStream
 parseDeflated psr pdfstream = case parseContentStream (T.concat <$> many (elems <|> skipOther)) psr pdfstream of
   Left  err -> error "Nothing to be parsed"
-  Right str -> BSL.pack $ BS.unpack $ encodeUtf8 str
+  Right str -> BSC.pack $ BS.unpack $ encodeUtf8 str
 
 deflate :: PSR -> PDFStream -> PDFStream
 deflate = parseDeflated
 
 decompressStream :: PDFBS -> PDFStream
 decompressStream (n,pdfobject) = 
-  case parse (BSL.pack <$> 
+  case parse (BSC.pack <$> 
               (manyTill anyChar (try $ (string "stream" >> oneOf "\n\r")) >> spaces
                *> manyTill anyChar (try $ string "endstream"))) "" pdfobject of
     Left err -> "err"
@@ -154,8 +156,8 @@ hexletters = do
   return $ T.concat lets
 
 adobeOneSix :: Int -> T.Text
-adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
-  Just cs -> cs
+adobeOneSix a = case Map.lookup a (adobeJapanOneSixMap) of
+  Just cs -> T.pack $ BSL.toString cs
   Nothing -> T.pack $ "[" ++ (show a) ++ "]"
 
 toUcs :: CMap -> Int -> T.Text

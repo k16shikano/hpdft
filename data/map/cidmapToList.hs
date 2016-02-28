@@ -6,6 +6,10 @@ import Numeric (readHex)
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import System.Environment (getArgs)
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Lazy.UTF8 as BSLU
+import Codec.Compression.GZip 
+import Data.Binary (encode, decode)
 
 import Debug.Trace
 
@@ -21,19 +25,19 @@ main = do
   cont <- readFile f
   let ffmap = tail $ lines cont
       expanded = nub $ concatMap (fromFF . expandEntry ffmap) ffmap 
-  putStrLn $ unlines $ map ((" , "++) . show) $ expanded ++ redundantKana expanded
+  BSL.putStr $ compress . encode $ Map.fromList $ expanded ++ redundantKana expanded
   return ()
 
-fromFF :: (FFE, FFC) -> [(Int, T.Text)]
+fromFF :: (FFE, FFC) -> [(Int, BSLU.ByteString)]
 fromFF (Range begin end, Uni code) = zipWith
                                        (\cid unicode -> (cid, textize $ chr unicode))
                                        [begin..end] [(ord code)..]
 fromFF (Range _ _, _) = error ""
 fromFF (CID cid, Variation vs) = map (\v -> (cid, textize v)) vs
-fromFF (CID cid, NOTDEF) = [(cid, T.pack "[NOTDEF]")]
+fromFF (CID cid, NOTDEF) = [(cid, BSLU.fromString "[NOTDEF]")]
 fromFF (CID cid, a) = [(cid, textize $ fromFFC a)]
 
-textize chrcode = T.pack [chrcode]
+textize chrcode = BSLU.fromString [chrcode]
 
 fromFFC :: FFC -> Char
 fromFFC (Uni code) = code
@@ -94,7 +98,7 @@ readFFValue ffmap s
         jpncode = cidcode . takeWhile isDigit . (\\ "/Japan1.")
 
 
-fromKana :: [(Int, T.Text)] -> (Int, [Int]) -> [(Int, T.Text)]
+fromKana :: [(Int, BSLU.ByteString)] -> (Int, [Int]) -> [(Int, BSLU.ByteString)]
 fromKana expandedMap (maybeExist, cs) = nub $ map (\c -> (c, extraKana expandedMap maybeExist)) cs
 
 extraKana emap v = case lookup v emap of
