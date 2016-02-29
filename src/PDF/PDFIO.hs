@@ -27,6 +27,14 @@ getPDFObjFromFile f = do
   let obj = expandObjStm $ map parsePDFObj $ getObjs c
   return obj
 
+getRawObjFromFile :: String -> Int -> IO BS.ByteString
+getRawObjFromFile f r = do
+  c <- BS.readFile f
+  let objs = getObjs c
+  case lookup r objs of
+    Just obj -> return obj
+    Nothing -> error $ "No object with ref "++show r
+
 getObjectByRef :: Int -> IO [PDFObj] -> IO [Obj]
 getObjectByRef ref pdfobjs = do
   objs <- pdfobjs
