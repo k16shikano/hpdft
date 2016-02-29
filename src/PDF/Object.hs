@@ -94,7 +94,7 @@ stream = do
   return stm
 
 pdfdictionary :: Parser Obj
-pdfdictionary = PdfDict <$> (string "<<" >> spaces *> manyTill dictEntry (try $ spaces >> string ">>"))
+pdfdictionary = PdfDict <$> (spaces >> string "<<" >> spaces *> manyTill dictEntry (try $ spaces >> string ">>"))
 
 dictEntry :: Parser (Obj, Obj)
 dictEntry = (,) <$> pdfname <*> pdfobj
@@ -106,8 +106,11 @@ pdfname :: Parser Obj
 pdfname = PdfName <$> ((++) <$> string "/" <*> manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/")) <* spaces
 
 pdfletters :: Parser Obj
-pdfletters = PdfText <$> (char '(' *> manyTill pdfletter (try $ char ')'))
-  where pdfletter  =  (char '\\' >> oneOf "\\()") <|> noneOf "\\"
+pdfletters = PdfText <$> (concat <$> (char '(' *> manyTill pdfletter (try $ char ')')))
+  where pdfletter = choice [ return <$> try (char '\\' >> oneOf "\\()") 
+                           , (++) <$> ("(" <$ char '(') <*> ((++")") . concat <$> manyTill pdfletter (try $ char ')'))
+                           , return <$> (noneOf "\\")
+                           ]
 
 pdfstream :: Parser Obj
 pdfstream = PdfStream <$> stream
@@ -142,7 +145,8 @@ pdfobj = choice [ try rrefs <* spaces
                 , try pdfname <* spaces, try pdfnumber <* spaces, try pdfhex <* spaces
                 , try pdfbool <* spaces, try pdfnull <* spaces
                 , try pdfarray <* spaces, try pdfdictionary <* spaces, try pdfstream <* spaces
-                , pdfletters <* spaces]
+                , pdfletters <* spaces
+                ]
 
 rrefs :: Parser Obj
 rrefs = do  
