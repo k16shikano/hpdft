@@ -359,20 +359,34 @@ toUnicode x objs = case findObjThroughDictByRef x "/Encoding" objs of
 -- find root ref from Trailer or Cross-Reference Dictionary
 
 parseTrailer :: BS.ByteString -> Maybe Dict
-parseTrailer bs = case parse trailer "" bs of
-  Left  err -> Nothing
+parseTrailer bs = case parse (try trailer <|> xref) "" bs of
+  Left  err -> (trace (show err) Nothing)
   Right rlt -> Just (parseCRDict rlt)
   where trailer :: Parser BS.ByteString
         trailer = do
           manyTill anyChar (try $ string "trailer")
           t <- manyTill anyChar (try $ string "startxref")
           return $ BS.pack t
+        xref :: Parser BS.ByteString
+        xref = do
+          manyTill anyChar (try $ string "startxref")
+          offset <- spaces *> many1 digit
+          return $ BS.drop (read offset :: Int) bs
 
 parseCRDict :: BS.ByteString -> Dict
-parseCRDict rlt = case parse (spaces >> pdfdictionary <* spaces) "" rlt of
+parseCRDict rlt = case parse crdict "" rlt of
     Left  err  -> error $ show err
     Right (PdfDict dict) -> dict
     Right other -> error "Could not find Cross-Reference dictionary"
+
+crdict :: Parser Obj
+crdict = do 
+  spaces
+  (many1 digit >> (spaces >> oneOf "0123456789" >> string " obj"))
+  space
+  d <- pdfdictionary 
+  spaces
+  return d
 
 rootRef :: BS.ByteString -> Maybe Int
 rootRef bs = case parseTrailer bs of
