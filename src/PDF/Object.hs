@@ -31,6 +31,10 @@ import Data.List (find)
 import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
+import qualified Data.Text as T
+import Data.Text.Encoding (decodeUtf16BE)
+import Numeric (readHex)
+import Data.ByteString.Builder (toLazyByteString, word16BE)
 
 import Text.Parsec hiding (many, (<|>))
 import Control.Applicative
@@ -106,11 +110,19 @@ pdfname :: Parser Obj
 pdfname = PdfName <$> ((++) <$> string "/" <*> manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/")) <* spaces
 
 pdfletters :: Parser Obj
-pdfletters = PdfText <$> (concat <$> (char '(' *> manyTill pdfletter (try $ char ')')))
-  where pdfletter = choice [ return <$> try (char '\\' >> oneOf "\\()") 
-                           , (++) <$> ("(" <$ char '(') <*> ((++")") . concat <$> manyTill pdfletter (try $ char ')'))
-                           , return <$> (noneOf "\\")
-                           ]
+pdfletters = PdfText <$> (concat <$> (char '(' *> manyTill (choice [try pdfutf, pdfletter]) (try $ char ')')))
+  where pdfletter = do
+          str <- choice [ return <$> try (char '\\' >> oneOf "\\()") 
+                        , (++) <$> ("(" <$ char '(') <*> ((++")") . concat <$> manyTill pdfletter (try $ char ')'))
+                        , return <$> (noneOf "\\")
+                        ]
+          return $ str
+        pdfutf :: Parser String
+        pdfutf = do 
+          str <- string "\254\255" *> manyTill anyChar (lookAhead $ string ")")
+          return $ utf16be str
+
+utf16be = T.unpack . decodeUtf16BE . BS.pack 
 
 pdfstream :: Parser Obj
 pdfstream = PdfStream <$> stream
@@ -126,11 +138,23 @@ pdfnumber = PdfNumber <$> pdfdigit
           return $ read $ sign ++ num
 
 pdfhex :: Parser Obj
-pdfhex = PdfHex <$> hex  
+pdfhex = PdfHex <$> hex
   where hex = do
           char '<'
           lets <- manyTill (oneOf "0123456789abcdefABCDEF") (try $ char '>')
-          return $ lets
+          case parse ((try $ string "feff" <|> string "FEFF") *> many1 anyChar) "" lets of
+            Right s -> return $ pdfhexletter $ BS.pack s
+            Left e -> return $ lets
+
+pdfhexletter s = case parse (concat <$> many1 pdfhexutf16be) "" s of
+  Right t -> utf16be t
+  Left e -> BS.unpack s
+
+pdfhexutf16be :: Parser String
+pdfhexutf16be = do
+  c <- count 4 $ oneOf "0123456789ABCDEFabcdef"
+  let b = BSL.unpack . toLazyByteString . word16BE $ fst . head . readHex $ c
+  return $ b
 
 pdfbool :: Parser Obj
 pdfbool = PdfBool <$> (True <$ string "true"
