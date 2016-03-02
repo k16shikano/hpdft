@@ -183,7 +183,7 @@ psletter = do
         Nothing -> []
   c <- try (char '\\' >> oneOf "\\()")
        <|>
-       try (octToString . readOct <$> (char '\\' >> (count 3 $ oneOf "01234567")))
+       try (octToChar . readOct <$> (char '\\' >> (count 3 $ oneOf "01234567")))
        <|>
        noneOf "\\"
   return $ replaceWithDiff fontmap c
@@ -193,8 +193,8 @@ psletter = do
           replaceWithCharDict s = case Map.lookup s pdfcharmap of
             Just cs -> cs
             Nothing -> T.pack s
-          octToString [] = '?'
-          octToString [(o,_)] = chr o
+          octToChar [] = '?'
+          octToChar [(o,_)] = chr o
 
 kern :: PSParser T.Text
 kern = do
