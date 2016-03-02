@@ -33,7 +33,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf16BE)
-import Numeric (readHex)
+import Numeric (readOct, readHex)
 import Data.ByteString.Builder (toLazyByteString, word16BE)
 
 import Text.Parsec hiding (many, (<|>))
@@ -113,6 +113,12 @@ pdfletters :: Parser Obj
 pdfletters = PdfText <$> (concat <$> (char '(' *> manyTill (choice [try pdfutf, pdfletter]) (try $ char ')')))
   where pdfletter = do
           str <- choice [ return <$> try (char '\\' >> oneOf "\\()") 
+                        , "\n" <$ try (string "\n")
+                        , "\r" <$ try (string "\r")
+                        , "\t" <$ try (string "\t")
+                        , "\b" <$ try (string "\b")
+                        , "\f" <$ try (string "\f")
+                        , octToString . readOct <$> try (char '\\' >> many1 digit)
                         , (++) <$> ("(" <$ char '(') <*> ((++")") . concat <$> manyTill pdfletter (try $ char ')'))
                         , return <$> (noneOf "\\")
                         ]
@@ -121,6 +127,9 @@ pdfletters = PdfText <$> (concat <$> (char '(' *> manyTill (choice [try pdfutf, 
         pdfutf = do 
           str <- string "\254\255" *> manyTill anyChar (lookAhead $ string ")")
           return $ utf16be str
+        
+        octToString [] = "????"
+        octToString [(o,_)] = show $ chr o
 
 utf16be = T.unpack . decodeUtf16BE . BS.pack 
 
