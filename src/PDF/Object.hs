@@ -392,8 +392,8 @@ crdict :: Parser Obj
 crdict = do 
   spaces
   (many1 digit >> (spaces >> oneOf "0123456789" >> string " obj"))
-  space
-  d <- pdfdictionary 
+  spaces
+  d <- pdfdictionary
   spaces
   return d
 
@@ -456,4 +456,4 @@ getPdfObjStm n s =
   in map (\(r,o) -> (r, parseDict $ BS.pack $ drop o objstr)) location
     where parseDict s' = case parse pdfdictionary "" s' of
             Right obj -> [obj]
-            Left  err -> error "Failed to parse obj"
+            Left  err -> error $ "Failed to parse obj " ++ (show s') ++ (show err)
