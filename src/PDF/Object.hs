@@ -384,18 +384,15 @@ parseTrailer bs = case parse (try trailer <|> xref) "" bs of
 
 parseCRDict :: BS.ByteString -> Dict
 parseCRDict rlt = case parse crdict "" rlt of
-    Left  err  -> error $ show err
-    Right (PdfDict dict) -> dict
-    Right other -> error "Could not find Cross-Reference dictionary"
-
-crdict :: Parser Obj
-crdict = do 
-  spaces
-  (many1 digit >> (spaces >> oneOf "0123456789" >> string " obj"))
-  spaces
-  d <- pdfdictionary
-  spaces
-  return d
+  Left  err  -> error $ show rlt
+  Right (PdfDict dict) -> dict
+  Right other -> error "Could not find Cross-Reference dictionary"
+  where crdict :: Parser Obj
+        crdict = do 
+          spaces
+          many (many1 digit >> spaces >> digit >> string " obj" >> spaces)
+          d <- pdfdictionary <* spaces
+          return d
 
 rootRef :: BS.ByteString -> Maybe Int
 rootRef bs = case parseTrailer bs of
