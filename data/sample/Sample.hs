@@ -136,3 +136,8 @@ linearize parent objs =
 -- Meta Information    
 -------------------
 
+showOutlines filename = do
+  d <- getOutlines filename
+  putStrLn $ show d
+  return ()
+

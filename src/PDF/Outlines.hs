@@ -7,7 +7,7 @@ module PDF.Outlines
 import Debug.Trace
 
 import Data.List (find)
-import PDF.Definition
+import PDF.Definition hiding (toString)
 import PDF.Object
 import PDF.PDFIO
 
@@ -17,8 +17,16 @@ data PDFOutlines = PDFOutlinesTree [PDFOutlines]
                                     , subs :: PDFOutlines
                                     }
                  | PDFOutlinesNE
-                 deriving (Show)
 
+instance Show PDFOutlines where
+  show o = toString 0 o
+
+toString :: Int -> PDFOutlines -> String
+toString depth (PDFOutlinesEntry {dest=d, text=t, subs=s}) = (replicate depth ' ' ++ t) ++ toString (depth+1) s ++ "\n"
+toString depth (PDFOutlinesTree os) = concatMap (toString depth) os
+toString depth PDFOutlinesNE = ""
+
+getOutlines :: FilePath -> IO PDFOutlines
 getOutlines filename = do
   dict <- outlineObjFromFile filename
   objs <- getPDFObjFromFile filename  
@@ -28,7 +36,7 @@ getOutlines filename = do
   firstdict <- case findObjsByRef firstref objs of
     Just [PdfDict d] -> return $ d
     Nothing -> error $ "No Object with Ref " ++ show firstref
-  showOutlines 0 $ gatherOutlines firstdict objs
+  return $ gatherOutlines firstdict objs
 
 gatherChildren dict objs = case findFirst dict of
   Just r -> case findObjsByRef r objs of
@@ -48,11 +56,6 @@ gatherOutlines dict objs =
     Nothing -> PDFOutlinesEntry { dest = head $ findDest dict
                                 , text = findTitle dict objs
                                 , subs = PDFOutlinesNE}
-
-showOutlines :: Int -> PDFOutlines -> IO ()
-showOutlines depth (PDFOutlinesEntry {dest=d, text=t, subs=s}) = putStrLn (replicate depth ' ' ++ t) >> showOutlines (depth+1) s
-showOutlines depth (PDFOutlinesTree os) = mapM_ (showOutlines (depth)) os
-showOutlines depth PDFOutlinesNE = putStr ""
 
 outlines :: Dict -> Int
 outlines dict = case find isOutlinesRef dict of
