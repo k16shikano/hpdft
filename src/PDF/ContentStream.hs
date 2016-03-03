@@ -57,13 +57,18 @@ elems = choice [ try pdfopBT
                , try pdfopTw
                , try pdfopTJ
                , try pdfopTj
+               , try pdfQuote
+               , try pdfDoubleQuote
                , try pdfopTast
                , try letters <* spaces
                , try hexletters <* spaces
                , try array <* spaces
                , try pdfopGraphics
+               , try dashPattern
+               , try pathConstructor
                , try xObject
                , try graphicState
+               , try colorSpace
                , unknowns
                ]
 
@@ -74,13 +79,17 @@ pdfopGraphics = do
          , try $ T.empty <$ oneOf "fFbBW" <* (many $ string "*") <* spaces
          , try $ T.empty <$ oneOf "nsS" <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "gG" <* spaces
-         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJ" <* spaces
+         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJM" <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "dwi" <* spaces
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "ml" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "kK" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "re" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "rg" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "RG" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SCN" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "scn" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SC" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "sc" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "cm" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "c" <* spaces)
          ]
@@ -92,6 +101,28 @@ graphicState = do
   spaces
   string "gs"
   spaces
+  return T.empty
+
+colorSpace :: PSParser T.Text
+colorSpace = do
+  gs <- (++) <$> string "/" <*> manyTill anyChar (try space)
+  spaces
+  try $ string "CS" <|> string "cs"
+  spaces
+  return T.empty
+
+dashPattern :: PSParser T.Text
+dashPattern = do
+  char '[' >> many digit >> char ']' >> spaces >> many1 digit >> spaces >> string "d"
+  return T.empty
+  
+pathConstructor :: PSParser T.Text
+pathConstructor = do
+  choice [ try $ T.empty <$ (digitParam <* spaces) <* oneOf "ml" <* spaces
+         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "cvy" <* spaces
+         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "re" <* spaces
+         , try $ T.empty <$ oneOf "h" <* spaces
+         ]
   return T.empty
 
 xObject :: PSParser T.Text          
@@ -124,11 +155,26 @@ pdfopTJ = do
   spaces
   return $ T.concat t
   
+pdfDoubleQuote :: PSParser T.Text
+pdfDoubleQuote = do
+  spaces
+  t <- manyTill (letters <|> hexletters <|> array) (try $ string "\"")
+  spaces
+  return $ T.concat t
+  
+pdfQuote :: PSParser T.Text
+pdfQuote = do
+  spaces
+  t <- manyTill (letters <|> hexletters <|> array) (try $ string "\'")
+  spaces
+  return $ T.concat t
+
 unknowns :: PSParser T.Text
 unknowns = do 
   ps <- manyTill anyChar (try $ oneOf "\r\n")
-  return ""
-  return $ T.pack $ "[[[UNKNOWN STREAM:" ++ take 100 (show ps) ++ "]]]"
+  return $ if ps=="" 
+           then "" 
+           else T.pack $ "[[[UNKNOWN STREAM:" ++ take 100 (show ps) ++ "]]]"
 
 skipOther :: PSParser T.Text
 skipOther = do
