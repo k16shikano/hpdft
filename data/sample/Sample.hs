@@ -136,6 +136,21 @@ linearize parent objs =
 -- Meta Information    
 -------------------
 
+showTitle filename = do
+  d <- getInfo filename
+  let title = 
+        case findObjThroughDict d "/Title" of
+          Just (PdfText s) -> s
+          Just x -> show x
+          Nothing -> error "No title anyway"
+  putStrLn title
+  return ()
+
+showInfo filename = do
+  d <- getInfo filename
+  putStrLn $ toString 0 (PdfDict d)
+  return ()
+
 showOutlines filename = do
   d <- getOutlines filename
   putStrLn $ show d
