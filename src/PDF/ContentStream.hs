@@ -340,7 +340,7 @@ pdfopTc = do
 desideParagraphBreak :: Double -> Double -> Double -> Double -> Double -> Double 
                      -> T.Text
 desideParagraphBreak t1 t2 lx ly lm ff = T.pack $
-  (if abs t2 > ff*ly || (t1 - lm) > 0.5
+  (if abs t2 > 1.8*ly || (t1 - lm) > 0.5
    then "\n"
    else "")
 
