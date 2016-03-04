@@ -258,7 +258,9 @@ pdfopTf = do
   st <- getState
   let ff = fontfactor st
   updateState (\s -> s{ curfont = font
-                      , fontfactor = ff*t})
+                      , fontfactor = t
+                      , linex = t
+                      , liney = t})
   return ""
 
 pdfopTD :: PSParser T.Text
@@ -276,15 +278,15 @@ pdfopTD = do
       ly = liney st
       lm = leftmargin st
       ff = fontfactor st
-      needBreak = abs t2 > 0 && abs (ly - t2) > 0
-  updateState (\s -> s { absolutex = ax + t1
-                       , absolutey = ay + (if needBreak then 2*t2 else 0)
-                       , linex = if abs t1 > 0 then t1 else lx
-                       , liney = if abs t2 > 0 then 2*t2 else ly
+      needBreak = t2 < 0
+  updateState (\s -> s { absolutex = ax - lx
+                       , absolutey = ay - ly
+                       , linex = lx
+                       , liney = -t2*ff
                        })
   return $ if needBreak 
-           then T.concat ["\n", (desideParagraphBreak t1 t2 lx ly lm ff)] 
-           else ""
+           then T.concat ["\n", (desideParagraphBreak (t1*ff) (t2*ff) lx (-t2*ff) lm ff)]
+           else if t1 > ff then " " else ""
 
 pdfopTd :: PSParser T.Text
 pdfopTd = do
@@ -301,15 +303,15 @@ pdfopTd = do
       ly = liney st
       lm = leftmargin st
       ff = fontfactor st
-      needBreak = abs t2 > 0 && abs (ly - t2) > 0
-  updateState (\s -> s { absolutex = ax + t1
-                       , absolutey = ay + (if needBreak then t2 else 0)
-                       , linex = if abs t1 > 0 then t1 else lx
-                       , liney = if abs t2 > 0 then t2 else ly
+      needBreak = t2 < 0 && abs t2 > ly
+  updateState (\s -> s { absolutex = ax - lx
+                       , absolutey = ay - ly
+                       , linex = lx
+                       , liney = ly
                        })
   return $ if needBreak 
            then T.concat ["\n", (desideParagraphBreak t1 t2 lx ly lm ff)] 
-           else ""
+           else if t1 > ff then " " else ""
 
 pdfopTw :: PSParser T.Text
 pdfopTw = do
@@ -338,7 +340,7 @@ pdfopTc = do
 desideParagraphBreak :: Double -> Double -> Double -> Double -> Double -> Double 
                      -> T.Text
 desideParagraphBreak t1 t2 lx ly lm ff = T.pack $
-  (if abs ly > abs ff || abs t2 > abs ff || (t1 - lm) > 0.5
+  (if abs t2 > ff*ly || (t1 - lm) > 0.5
    then "\n"
    else "")
 
@@ -365,16 +367,17 @@ pdfopTm = do
       ly = liney st
       lm = leftmargin st
       ff = fontfactor st
-      needBreak = abs d*f > 0 && ly >= 0
-  updateState (\s -> s { linex     = lx
-                       , liney     = ly
-                       , absolutex = a*e
-                       , absolutey = d*f
-                       , fontfactor = a*e*d*f*ff
+      newff = (a+d)/2
+      needBreak = ay - f/newff > (ly/newff)
+  updateState (\s -> s { linex     = lx/newff
+                       , liney     = ly/newff
+                       , absolutex = e/newff
+                       , absolutey = f/newff
+                       , fontfactor = newff
                        })
   return $ if needBreak 
-           then T.concat ["\n", desideParagraphBreak (d*f) (d*f) lx ly lm ff]
-           else if a*e > lx then " " else ""
+           then T.concat ["\n", desideParagraphBreak (e*newff) (f*newff) lx ly lm newff]
+           else if e > newff then " " else ""
 
 pdfopTast :: PSParser T.Text
 pdfopTast = do
@@ -386,8 +389,8 @@ pdfopTast = do
       ly = liney st
   updateState (\s -> s { linex     = lx
                        , liney     = ly
-                       , absolutex = ax
-                       , absolutey = ay
+                       , absolutex = ax - lx
+                       , absolutey = ay - ly
                        })
   return "\n"
 

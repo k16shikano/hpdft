@@ -11,15 +11,14 @@ import qualified Data.ByteString.Lazy.Char8 as BSL
 
 import Debug.Trace
 
--- initstate = (0,0,70,660)
 initstate = PSR { linex=0
                 , liney=0
                 , absolutex=0
-                , absolutey=700
+                , absolutey=0
                 , leftmargin=0.0
-                , top=700.0
+                , top=0.0
                 , bottom=0.0
-                , fontfactor=1.0
+                , fontfactor=1
                 , curfont=""
                 , fontmaps=[]
                 , cmaps=[]}
