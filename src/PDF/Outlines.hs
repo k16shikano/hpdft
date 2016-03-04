@@ -22,7 +22,7 @@ instance Show PDFOutlines where
   show o = toString 0 o
 
 toString :: Int -> PDFOutlines -> String
-toString depth (PDFOutlinesEntry {dest=d, text=t, subs=s}) = (replicate depth ' ' ++ t) ++ toString (depth+1) s ++ "\n"
+toString depth (PDFOutlinesEntry {dest=d, text=t, subs=s}) = (replicate depth ' ' ++ t) ++ toString (depth+1) s
 toString depth (PDFOutlinesTree os) = concatMap (toString depth) os
 toString depth PDFOutlinesNE = ""
 
@@ -49,12 +49,12 @@ gatherOutlines dict objs =
   in case findNext dict of 
     Just r -> case findObjsByRef r objs of
       Just [PdfDict d] -> PDFOutlinesTree (PDFOutlinesEntry { dest = head $ findDest dict
-                                                            , text = findTitle dict objs
+                                                            , text = findTitle dict objs ++ "\n"
                                                             , subs = c}
                                            : [gatherOutlines d objs])
       Nothing -> error $ "No Object with Ref " ++ show r
     Nothing -> PDFOutlinesEntry { dest = head $ findDest dict
-                                , text = findTitle dict objs
+                                , text = findTitle dict objs ++ "\n"
                                 , subs = PDFOutlinesNE}
 
 outlines :: Dict -> Int
