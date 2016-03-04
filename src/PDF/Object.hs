@@ -155,7 +155,7 @@ pdfhex = PdfHex <$> hex
   where hex = do
           char '<'
           lets <- manyTill (oneOf "0123456789abcdefABCDEF") (try $ char '>')
-          case parse ((try $ string "feff" <|> string "FEFF") *> many1 anyChar) "" lets of
+          case parse ((try $ string "feff" <|> string "FEFF") *> many1 (oneOf "0123456789abcdefABCDEF")) "" lets of
             Right s -> return $ pdfhexletter $ BS.pack s
             Left e -> return $ lets
 
