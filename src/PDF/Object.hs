@@ -19,6 +19,7 @@ module PDF.Object
        , findObjsByRef
        , parsePDFObj
        , parseRefsArray
+       , parsePdfLetters
        , getObjs
        , pdfObj
        , getRefs
@@ -110,7 +111,10 @@ pdfname :: Parser Obj
 pdfname = PdfName <$> ((++) <$> string "/" <*> manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/")) <* spaces
 
 pdfletters :: Parser Obj
-pdfletters = PdfText <$> (concat <$> (char '(' *> manyTill (choice [try pdfutf, pdfletter]) (try $ char ')')))
+pdfletters = PdfText <$> parsePdfLetters
+
+parsePdfLetters :: Parser String
+parsePdfLetters = (concat <$> (char '(' *> manyTill (choice [try pdfutf, pdfletter]) (try $ char ')')))
   where pdfletter = do
           str <- choice [ return <$> try (char '\\' >> oneOf "\\()") 
                         , "\n" <$ try (string "\n")
