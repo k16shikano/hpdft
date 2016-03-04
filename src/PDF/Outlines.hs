@@ -7,6 +7,8 @@ module PDF.Outlines
 import Debug.Trace
 
 import Data.List (find)
+import Text.Parsec hiding (many, (<|>))
+import Text.Parsec.ByteString
 import PDF.Definition hiding (toString)
 import PDF.Object
 import PDF.PDFIO
@@ -81,10 +83,13 @@ outlineObjFromFile filename = do
 
 findTitle dict objs = 
   case findObjThroughDict dict "/Title" of
-    Just (PdfText s) -> s
+    Just (PdfText s) -> case parse parsePdfLetters s "" of
+      Right t -> t
+      Left err -> s -- error $ "Not like a PDF Text String: "++(show err)
     Just (ObjRef r) -> case findObjsByRef r objs of
       Just [PdfText s] -> s
       Nothing -> error $ "No title object in "++(show r)
+    Just x -> show x
     Nothing -> error "No title object."
 
 findDest dict = 
