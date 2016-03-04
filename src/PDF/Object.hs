@@ -437,14 +437,14 @@ expandObjStm os = concat $ map objStm os
 objStm :: PDFObj -> [PDFObj]
 objStm (n, obj) = case findDictOfType "/ObjStm" obj of
   Nothing -> [(n,obj)]
-  Just _  -> getPdfObjStm n $ BS.pack $ BSL.unpack $ rawStream obj
+  Just _  -> getPdfObjStm n $ BSL.toStrict $ rawStream obj
   
 refOffset :: Parser ([(Int, Int)], String)
 refOffset = spaces *> ((,) 
-                       <$> many1 ((\r o -> (read r :: Int, read o :: Int)) 
+                       <$> many1 ((\r o -> (read r :: Int, read o :: Int))
                                   <$> (many1 digit <* spaces) 
                                   <*> (many1 digit <* spaces))
-                       <*> (manyTill anyChar (lookAhead $ string "<<") *> many1 anyChar))
+                       <*> many1 anyChar)
 
 getPdfObjStm n s = 
   let (location, objstr) = case parse refOffset "" s of
