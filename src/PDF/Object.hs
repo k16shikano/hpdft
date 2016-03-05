@@ -132,8 +132,17 @@ parsePdfLetters = (concat <$> (char '(' *> manyTill (choice [try pdfutf, pdflett
           str <- string "\254\255" *> manyTill anyChar (lookAhead $ string ")")
           return $ utf16be str
         
+        pdfoctutf :: Parser String
+        pdfoctutf = do
+          string "\\376\\377" 
+          octstr <- manyTill (choice [ try (return . chr . fst . head . readOct <$> (char '\\' *> count 3 (oneOf "01234567")))
+                                     , return <$> anyChar
+                                     ])
+                    (lookAhead $ string ")")
+          return $ utf16be $ concat octstr
+
         octToString [] = "????"
-        octToString [(o,_)] = show $ chr o
+        octToString [(o,_)] = [chr o]
 
 utf16be = T.unpack . decodeUtf16BE . BS.pack 
 
