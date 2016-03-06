@@ -114,15 +114,14 @@ pdfletters :: Parser Obj
 pdfletters = PdfText <$> parsePdfLetters
 
 parsePdfLetters :: Parser String
-parsePdfLetters = (concat <$> (char '(' *> manyTill (choice [try pdfutf, pdfletter]) (try $ char ')')))
+parsePdfLetters = (concat <$> (char '(' *> manyTill (choice [try pdfutf, try pdfoctutf, pdfletter]) (try $ char ')')))
   where pdfletter = do
-          str <- choice [ return <$> try (char '\\' >> oneOf "\\()") 
+          str <- choice [ return <$> try (char '\\' >> oneOf "\\()")
                         , "\n" <$ try (string "\n")
                         , "\r" <$ try (string "\r")
                         , "\t" <$ try (string "\t")
                         , "\b" <$ try (string "\b")
                         , "\f" <$ try (string "\f")
-                        , octToString . readOct <$> try (char '\\' >> many1 digit)
                         , (++) <$> ("(" <$ char '(') <*> ((++")") . concat <$> manyTill pdfletter (try $ char ')'))
                         , return <$> (noneOf "\\")
                         ]
@@ -136,7 +135,8 @@ parsePdfLetters = (concat <$> (char '(' *> manyTill (choice [try pdfutf, pdflett
         pdfoctutf = do
           string "\\376\\377" 
           octstr <- manyTill (choice [ try (return . chr . fst . head . readOct <$> (char '\\' *> count 3 (oneOf "01234567")))
-                                     , return <$> anyChar
+                                     , try ("\92" <$ string "\\\\")
+                                     , return <$> noneOf "\\"
                                      ])
                     (lookAhead $ string ")")
           return $ utf16be $ concat octstr
@@ -144,7 +144,7 @@ parsePdfLetters = (concat <$> (char '(' *> manyTill (choice [try pdfutf, pdflett
         octToString [] = "????"
         octToString [(o,_)] = [chr o]
 
-utf16be = T.unpack . decodeUtf16BE . BS.pack 
+utf16be = T.unpack . decodeUtf16BE . BS.pack
 
 pdfstream :: Parser Obj
 pdfstream = PdfStream <$> stream
