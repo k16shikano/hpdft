@@ -8,6 +8,7 @@ module PDF.Object
        , rawContentsStream
        , rawStreamByRef
        , rawStream
+       , contentsColorSpace
        , toUnicode
        , pagesKids
        , pages
@@ -306,6 +307,16 @@ parseRefsArray :: [Obj] -> [Int]
 parseRefsArray (ObjRef x:y) = (x:parseRefsArray y)
 parseRefsArray (x:y)  = (parseRefsArray y)
 parseRefsArray [] = []
+
+contentsColorSpace :: Dict -> PSR -> [PDFObj] -> [T.Text]
+contentsColorSpace dict st objs = case find contents dict of
+  Just (PdfName "/Contents", PdfArray arr) -> concat $ map (parseColorSpace st . rawStreamByRef objs) (parseRefsArray arr)
+  Just (PdfName "/Contents", ObjRef x)     -> parseColorSpace st $ rawStreamByRef objs x
+  Nothing                                  -> error "No content to be shown"
+  where
+    contents (PdfName "/Contents", _) = True
+    contents _                        = False
+
 
 
 -- make fontmap from page's /Resources (see 3.7.2 of PDF Ref.)

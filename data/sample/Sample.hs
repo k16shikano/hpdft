@@ -8,6 +8,7 @@ import PDF.Outlines
 import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
+import Data.List (nub)
 
 import Debug.Trace
 
@@ -21,7 +22,8 @@ initstate = PSR { linex=0
                 , fontfactor=1
                 , curfont=""
                 , fontmaps=[]
-                , cmaps=[]}
+                , cmaps=[]
+                , colorspace=""}
 
 
 -----------------------------------------------
@@ -154,4 +156,19 @@ showOutlines filename = do
   d <- getOutlines filename
   putStrLn $ show d
   return ()
+
+
+--------------
+-- Color Space 
+--------------
+
+contentColorSpaceByRef filename ref = do
+  objs <- getPDFObjFromFile filename
+  obj <- objectByRef filename ref
+  putStrLn $ show $ filter (/="") $ nub $ csOfObject obj objs
+  where csOfObject obj objs =
+          case findDictOfType "/Page" obj of
+            Just dict -> contentsColorSpace dict initstate objs
+            Nothing -> error "Seems to be no color space in content stream"
+
 

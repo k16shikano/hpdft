@@ -61,6 +61,7 @@ data PSR = PSR { linex      :: Double
                , fontfactor :: Double
                , curfont    :: String
                , cmaps      :: [(String, CMap)]
-               , fontmaps   :: [(String, FontMap)]}
+               , fontmaps   :: [(String, FontMap)]
+               , colorspace :: String}
          deriving (Show)
 

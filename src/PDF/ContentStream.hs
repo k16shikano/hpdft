@@ -3,6 +3,7 @@
 module PDF.ContentStream 
        ( deflate
        , decompressStream
+       , parseColorSpace
        ) where
 
 import Data.Char (chr)
@@ -47,6 +48,14 @@ decompressStream (n,pdfobject) =
     Left err -> "err"
     Right bs -> decompress bs
 
+parseColorSpace :: PSR -> BSC.ByteString -> [T.Text]
+parseColorSpace psr pdfstream = case parseContentStream (many (try colorSpace <|> (T.empty <$ elems))) psr pdfstream of
+  Left  err -> error "Nothing to be parsed"
+  Right str -> str
+
+
+-- | Parsers for Content Stream
+
 elems :: PSParser T.Text
 elems = choice [ try pdfopBT 
                , try pdfopTf
@@ -68,7 +77,7 @@ elems = choice [ try pdfopBT
                , try pathConstructor
                , try xObject
                , try graphicState
-               , try colorSpace
+               , try $ T.empty <$ colorSpace
                , unknowns
                ]
 
@@ -78,14 +87,10 @@ pdfopGraphics = do
   choice [ try $ T.empty <$ oneOf "qQ" <* spaces
          , try $ T.empty <$ oneOf "fFbBW" <* (many $ string "*") <* spaces
          , try $ T.empty <$ oneOf "nsS" <* spaces
-         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "gG" <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJM" <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "dwi" <* spaces
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "ml" <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "kK" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "re" <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "rg" <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "RG" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SCN" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "scn" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SC" <* spaces)
@@ -105,11 +110,14 @@ graphicState = do
 
 colorSpace :: PSParser T.Text
 colorSpace = do
-  gs <- (++) <$> string "/" <*> manyTill anyChar (try space)
-  spaces
-  try $ string "CS" <|> string "cs"
-  spaces
-  return T.empty
+  gs <- choice [ try $ string "/" *> manyTill anyChar (try space) <* string "CS" <|> string "cs" <* spaces
+               , try $ "DeviceRGB" <$ (many1 (digitParam <* spaces) <* string "rg" <* spaces)
+               , try $ "DeviceRGB" <$ (many1 (digitParam <* spaces) <* string "RG" <* spaces)
+               , try $ "DeviceGray" <$ (digitParam <* spaces) <* oneOf "gG" <* spaces
+               , try $ "DeviceCMYK" <$ (many1 (digitParam <* spaces) <* oneOf "kK" <* spaces)
+               ] 
+  updateState (\s -> s {colorspace = gs})
+  return $ T.pack gs
 
 dashPattern :: PSParser T.Text
 dashPattern = do
