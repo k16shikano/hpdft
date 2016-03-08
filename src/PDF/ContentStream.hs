@@ -33,9 +33,10 @@ type PSParser a = GenParser Char PSR a
 parseContentStream p st = runParser p st ""
 
 parseDeflated :: PSR -> BSC.ByteString -> PDFStream
-parseDeflated psr pdfstream = case parseContentStream (T.concat <$> many (elems <|> skipOther)) psr pdfstream of
-  Left  err -> error "Nothing to be parsed"
-  Right str -> BSC.pack $ BS.unpack $ encodeUtf8 str
+parseDeflated psr pdfstream = 
+  case parseContentStream (T.concat <$> many (elems <|> skipOther)) psr pdfstream of
+    Left  err -> error "Nothing to be parsed"
+    Right str -> BSC.pack $ BS.unpack $ encodeUtf8 str
 
 deflate :: PSR -> PDFStream -> PDFStream
 deflate = parseDeflated

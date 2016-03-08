@@ -286,7 +286,8 @@ rawContentsStream dict objs = case find contents dict of
     contents _                        = False
 
 parsedContentStreamByRef :: Dict -> PSR -> [PDFObj] -> Int -> PDFStream
-parsedContentStreamByRef dict st objs ref = deflate (st {fontmaps=fontdict, cmaps=cmap}) $ rawStreamByRef objs ref
+parsedContentStreamByRef dict st objs ref = 
+  deflate (st {fontmaps=fontdict, cmaps=cmap}) $ rawStreamByRef objs ref
   where fontdict = findFontMap dict objs
         cmap = findCMap dict objs
 
