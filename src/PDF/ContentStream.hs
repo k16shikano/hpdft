@@ -49,9 +49,13 @@ decompressStream (n,pdfobject) =
     Right bs -> decompress bs
 
 parseColorSpace :: PSR -> BSC.ByteString -> [T.Text]
-parseColorSpace psr pdfstream = case parseContentStream (many (try colorSpace <|> (T.empty <$ elems))) psr pdfstream of
-  Left  err -> error "Nothing to be parsed"
-  Right str -> str
+parseColorSpace psr pdfstream = 
+  case parseContentStream (many (choice [ try colorSpace
+                                        , try $ T.concat <$> xObject
+                                        , (T.empty <$ elems)
+                                        ])) psr pdfstream of
+    Left  err -> error "Nothing to be parsed"
+    Right str -> str
 
 
 -- | Parsers for Content Stream
@@ -75,7 +79,7 @@ elems = choice [ try pdfopBT
                , try pdfopGraphics
                , try dashPattern
                , try pathConstructor
-               , try xObject
+               , try $ T.empty <$ xObject
                , try graphicState
                , try $ T.empty <$ colorSpace
                , unknowns
@@ -133,13 +137,16 @@ pathConstructor = do
          ]
   return T.empty
 
-xObject :: PSParser T.Text          
+xObject :: PSParser [T.Text]
 xObject = do
-  file <- (++) <$> string "/" <*> manyTill anyChar (try space)
+  n <- (++) <$> string "/" <*> manyTill anyChar (try space)
   spaces
   string "Do"
   spaces
-  return T.empty
+  st <- getState
+  let xobjcs = xcolorspaces st
+--  updateState (\s -> s {colorspace = xobjcs})
+  return $ map T.pack xobjcs
 
 pdfopBT :: PSParser T.Text
 pdfopBT = do

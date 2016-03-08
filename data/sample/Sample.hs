@@ -23,7 +23,9 @@ initstate = PSR { linex=0
                 , curfont=""
                 , fontmaps=[]
                 , cmaps=[]
-                , colorspace=""}
+                , colorspace=""
+                , xcolorspaces=[]
+                }
 
 
 -----------------------------------------------

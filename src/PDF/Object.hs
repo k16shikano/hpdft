@@ -310,13 +310,13 @@ parseRefsArray [] = []
 
 contentsColorSpace :: Dict -> PSR -> [PDFObj] -> [T.Text]
 contentsColorSpace dict st objs = case find contents dict of
-  Just (PdfName "/Contents", PdfArray arr) -> concat $ map (parseColorSpace st . rawStreamByRef objs) (parseRefsArray arr)
-  Just (PdfName "/Contents", ObjRef x)     -> parseColorSpace st $ rawStreamByRef objs x
+  Just (PdfName "/Contents", PdfArray arr) -> concat $ map (parseColorSpace (st {xcolorspaces=xobjcs}) . rawStreamByRef objs) (parseRefsArray arr)
+  Just (PdfName "/Contents", ObjRef x)     -> parseColorSpace (st {xcolorspaces=xobjcs}) $ rawStreamByRef objs x
   Nothing                                  -> error "No content to be shown"
   where
     contents (PdfName "/Contents", _) = True
     contents _                        = False
-
+    xobjcs = findXObjectColorSpace dict objs
 
 
 -- make fontmap from page's /Resources (see 3.7.2 of PDF Ref.)
@@ -387,6 +387,27 @@ toUnicode x objs = case findObjThroughDictByRef x "/Encoding" objs of
     Just (ObjRef ref) -> (parseCMap $ rawStreamByRef objs ref)
     otherwise -> []
   otherwise -> []
+
+
+-- find XObject
+
+findXObjectColorSpace d os = xobjColorSpaceMap (getXObject d os) os
+
+xobjColorSpaceMap dict objs = map pairwise dict
+  where
+    pairwise (PdfName n, ObjRef r) = xobjColorSpace r objs
+    pairwise x = ""
+
+getXObject dict objs = case findResourcesDict dict objs of
+  Just d -> case findObjThroughDict d "/XObject" of
+    Just (PdfDict d) -> d
+    otherwise -> []
+  Nothing -> []
+
+xobjColorSpace :: Int -> [PDFObj] -> String
+xobjColorSpace x objs = case findObjThroughDictByRef x "/ColorSpace" objs of
+  Just (PdfName cs) -> cs
+  otherwise -> ""
 
 
 -- find root ref from Trailer or Cross-Reference Dictionary
