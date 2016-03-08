@@ -173,4 +173,8 @@ contentColorSpaceByRef filename ref = do
             Just dict -> contentsColorSpace dict initstate objs
             Nothing -> error "Seems to be no color space in content stream"
 
-
+showColorSpaces filename = do
+  pages <- refByPage filename
+  pagescs <- mapM (contentColorSpaceByRef filename) pages
+  mapM (putStrLn . show) $ zip [1..] pagescs
+  return ()
