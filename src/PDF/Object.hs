@@ -38,9 +38,10 @@ import Data.Text.Encoding (decodeUtf16BE)
 import Numeric (readOct, readHex)
 import Data.ByteString.Builder (toLazyByteString, word16BE)
 
-import Text.Parsec hiding (many, (<|>))
+import Data.Attoparsec.ByteString hiding (inClass, notInClass, satisfy)
+import Data.Attoparsec.ByteString.Char8
+import Data.Attoparsec.Combinator
 import Control.Applicative
-import Text.Parsec.ByteString
 import Codec.Compression.Zlib (decompress)
 
 import Debug.Trace
@@ -49,16 +50,19 @@ import PDF.Definition
 import PDF.ContentStream
 import PDF.Cmap
 
+spaces = skipSpace
+oneOf = satisfy . inClass
+noneOf = satisfy . notInClass
 
 -- parse pdf objects
 
 getObjs :: BS.ByteString -> [PDFBS]
-getObjs contents = case parse (many1 pdfObj) "" contents of
+getObjs contents = case parseOnly (many1 pdfObj) contents of
   Left  err -> []
-  Right rlt -> rlt
+  Right rlt -> {-# SCC getObjs #-} rlt
 
 getXref :: BS.ByteString -> String
-getXref contents = case parse (xref) "" contents of
+getXref contents = case parseOnly (xref) contents of
   Left  err -> []
   Right rlt -> rlt
 
@@ -72,7 +76,7 @@ pdfObj = do
   return $ (read objn, BS.pack object)
 
 parsePDFObj :: PDFBS -> PDFObj
-parsePDFObj (n,pdfobject) = case parse (spaces >> many1 (pdfobj <|> objother)) "" pdfobject of
+parsePDFObj (n,pdfobject) = case parseOnly (spaces >> many1 (pdfobj <|> objother)) pdfobject of
   Left  err -> (n,[PdfNull])
   Right obj -> (n,obj)
 
@@ -109,7 +113,7 @@ pdfarray :: Parser Obj
 pdfarray = PdfArray <$> (string "[" >> spaces *> manyTill pdfobj (try $ spaces >> string "]"))
 
 pdfname :: Parser Obj
-pdfname = PdfName <$> ((++) <$> string "/" <*> manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/")) <* spaces
+pdfname = PdfName . BS.unpack <$> (BS.append <$> string "/" <*> (BS.pack <$> (manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/")))) <* spaces
 
 pdfletters :: Parser Obj
 pdfletters = PdfText <$> parsePdfLetters
@@ -154,7 +158,7 @@ pdfnumber :: Parser Obj
 pdfnumber = PdfNumber <$> pdfdigit
   where pdfdigit = do 
           sign <- many $ char '-'
-          num <- ((++) <$> (("0"++) <$> string ".") <*> many1 digit)
+          num <- ((++) <$> (("0"++) . BS.unpack <$> string ".") <*> (many1 digit))
                  <|>
                  ((++) <$> (many1 digit) <*> ((++) <$> (many $ char '.') <*> many digit))
           spaces        
@@ -164,12 +168,12 @@ pdfhex :: Parser Obj
 pdfhex = PdfHex <$> hex
   where hex = do
           char '<'
-          lets <- manyTill (oneOf "0123456789abcdefABCDEF") (try $ char '>')
-          case parse ((try $ string "feff" <|> string "FEFF") *> many1 (oneOf "0123456789abcdefABCDEF")) "" lets of
+          lets <- BS.pack <$> manyTill (oneOf "0123456789abcdefABCDEF") (try $ char '>')
+          case parseOnly ((try $ string "feff" <|> string "FEFF") *> (many1 (oneOf "0123456789abcdefABCDEF"))) lets of
             Right s -> return $ pdfhexletter $ BS.pack s
-            Left e -> return $ lets
+            Left e -> return . BS.unpack $ lets
 
-pdfhexletter s = case parse (concat <$> many1 pdfhexutf16be) "" s of
+pdfhexletter s = case parseOnly (concat <$> many1 pdfhexutf16be) s of
   Right t -> utf16be t
   Left e -> BS.unpack s
 
@@ -189,9 +193,14 @@ pdfnull = PdfNull <$ string "null"
 
 pdfobj :: Parser Obj
 pdfobj = choice [ try rrefs <* spaces
-                , try pdfname <* spaces, try pdfnumber <* spaces, try pdfhex <* spaces
-                , try pdfbool <* spaces, try pdfnull <* spaces
-                , try pdfarray <* spaces, try pdfdictionary <* spaces, try pdfstream <* spaces
+                , try pdfname <* spaces
+                , try pdfnumber <* spaces
+                , try pdfhex <* spaces
+                , try pdfbool <* spaces
+                , try pdfnull <* spaces
+                , try pdfarray <* spaces
+                , try pdfdictionary <* spaces
+                , {-# SCC pdfstream #-} try pdfstream <* spaces
                 , pdfletters <* spaces
                 ]
 
@@ -414,7 +423,7 @@ xobjColorSpace x objs = case findObjThroughDictByRef x "/ColorSpace" objs of
 -- find root ref from Trailer or Cross-Reference Dictionary
 
 parseTrailer :: BS.ByteString -> Maybe Dict
-parseTrailer bs = case parse (try trailer <|> xref) "" bs of
+parseTrailer bs = case parseOnly (try trailer <|> xref) bs of
   Left  err -> (trace (show err) Nothing)
   Right rlt -> Just (parseCRDict rlt)
   where trailer :: Parser BS.ByteString
@@ -429,7 +438,7 @@ parseTrailer bs = case parse (try trailer <|> xref) "" bs of
           return $ BS.drop (read offset :: Int) bs
 
 parseCRDict :: BS.ByteString -> Dict
-parseCRDict rlt = case parse crdict "" rlt of
+parseCRDict rlt = case parseOnly crdict rlt of
   Left  err  -> error $ show rlt
   Right (PdfDict dict) -> dict
   Right other -> error "Could not find Cross-Reference dictionary"
@@ -493,10 +502,10 @@ refOffset = spaces *> ((,)
                        <*> many1 anyChar)
 
 getPdfObjStm n s = 
-  let (location, objstr) = case parse refOffset "" s of
+  let (location, objstr) = case parseOnly refOffset s of
         Right val -> val
         Left err  -> error $ "Failed to parse Object Stream: "
   in map (\(r,o) -> (r, parseDict $ BS.pack $ drop o objstr)) location
-    where parseDict s' = case parse pdfdictionary "" s' of
+    where parseDict s' = case parseOnly pdfdictionary s' of
             Right obj -> [obj]
             Left  err -> error $ "Failed to parse obj " ++ (show s') ++ (show err)

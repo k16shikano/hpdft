@@ -24,7 +24,7 @@ getPDFBSFromFile f = do
 getPDFObjFromFile :: String -> IO [PDFObj]
 getPDFObjFromFile f = do
   c <- BS.readFile f
-  let obj = expandObjStm $ map parsePDFObj $ getObjs c
+  let obj =  {-# SCC expandObjStm #-} expandObjStm $ {-# SCC parsePDFObj #-} map parsePDFObj $ getObjs c
   return obj
 
 getRawObjFromFile :: String -> Int -> IO BS.ByteString
