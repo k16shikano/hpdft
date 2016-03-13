@@ -389,7 +389,6 @@ pdfopTm = do
                        , liney     = ly/newff
                        , absolutex = e/newff
                        , absolutey = f/newff
-                       , fontfactor = newff
                        })
   return $ if needBreak 
            then T.concat ["\n", desideParagraphBreak (e*newff) (f*newff) lx ly lm newff]
