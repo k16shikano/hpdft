@@ -82,6 +82,7 @@ elems = choice [ try pdfopBT
                , try pathConstructor
                , try $ T.empty <$ xObject
                , try graphicState
+               , try pdfopcm
                , try $ T.empty <$ colorSpace
                , unknowns
                ]
@@ -89,19 +90,18 @@ elems = choice [ try pdfopBT
 pdfopGraphics :: PSParser T.Text
 pdfopGraphics = do
   spaces
-  choice [ try $ T.empty <$ oneOf "qQ" <* spaces
+  choice [ try $ T.empty <$ oneOf "qQ" <* space <* spaces
          , try $ T.empty <$ oneOf "fFbBW" <* (many $ string "*") <* spaces
-         , try $ T.empty <$ oneOf "nsS" <* spaces
-         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJM" <* spaces
-         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "dwi" <* spaces
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "ml" <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "re" <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SCN" <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "scn" <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SC" <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "sc" <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "cm" <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "c" <* spaces)
+         , try $ T.empty <$ oneOf "nsS" <* space <* spaces
+         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJM" <* space <* spaces
+         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "dwi" <* space <* spaces
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "ml" <* space <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "re " <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SCN " <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "scn " <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SC " <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "sc " <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "c" <* space <* spaces)
          ]
   return T.empty
 
@@ -393,6 +393,37 @@ pdfopTm = do
   return $ if needBreak 
            then T.concat ["\n", desideParagraphBreak (e*newff) (f*newff) lx ly lm newff]
            else if e > newff then " " else ""
+
+pdfopcm :: PSParser T.Text
+pdfopcm = do
+  a <- digitParam
+  spaces
+  b <- digitParam
+  spaces
+  c <- digitParam
+  spaces
+  d <- digitParam
+  spaces
+  e <- digitParam
+  spaces
+  f <- digitParam
+  spaces
+  string "cm"
+  spaces
+  st <- getState
+  let ax = absolutex st
+      ay = absolutey st
+      lx = linex st
+      ly = liney st
+      lm = leftmargin st
+      ff = fontfactor st
+      newff = (a+d)/2
+  updateState (\s -> s { linex     = lx/newff
+                       , liney     = ly/newff
+                       , absolutex = e/newff
+                       , absolutey = f/newff
+                       })
+  return T.empty
 
 pdfopTast :: PSParser T.Text
 pdfopTast = do
