@@ -1,3 +1,12 @@
+{-|
+Module      : PDF.PDFIO
+Description : IO utilities for hpdft
+Copyright   : (c) Keiichiro Shikano, 2016
+License     : MIT
+Maintainer  : k16.shikano@gmail.com
+
+Functions for use within IO. 
+-}
 module PDF.PDFIO ( getObjectByRef
                  , getPDFBSFromFile
                  , getPDFObjFromFile
@@ -12,41 +21,34 @@ import PDF.Object
 
 import qualified Data.ByteString.Char8 as BS
 
+-- | Get PDF objects as a whole bytestring. Use 'getPDFObjFromFile' instead if there's no reason to see a raw bytestring. 
 
--- IO utilities
-
-getPDFBSFromFile :: String -> IO [PDFBS]
+getPDFBSFromFile :: FilePath -> IO [PDFBS]
 getPDFBSFromFile f = do
   c <- BS.readFile f
   let bs = getObjs c
   return bs
 
-getPDFObjFromFile :: String -> IO [PDFObj]
+-- | Get PDF objects each parsed as 'PDFObj' without being sorted. 
+
+getPDFObjFromFile :: FilePath -> IO [PDFObj]
 getPDFObjFromFile f = do
   c <- BS.readFile f
-  let obj =  {-# SCC expandObjStm #-} expandObjStm $ {-# SCC parsePDFObj #-} map parsePDFObj $ getObjs c
+  let obj = expandObjStm $ map parsePDFObj $ getObjs c
   return obj
 
-getRawObjFromFile :: String -> Int -> IO BS.ByteString
-getRawObjFromFile f r = do
-  c <- BS.readFile f
-  let objs = getObjs c
-  case lookup r objs of
-    Just obj -> return obj
-    Nothing -> error $ "No object with ref "++show r
+-- | Get a PDF object from a whole 'PDFObj' by specifying 'ref :: Int'
 
 getObjectByRef :: Int -> IO [PDFObj] -> IO [Obj]
 getObjectByRef ref pdfobjs = do
   objs <- pdfobjs
   case findObjsByRef ref objs of
-    Just os -> return $ os
+    Just os -> return os
     Nothing -> error $ "No Object with Ref " ++ show ref
 
-getRootRefFromFile :: String -> IO (Maybe Int)
-getRootRefFromFile f = do
-  c <- BS.readFile f
-  return $ rootRef c
+-- | The reference number of /Root in 'filename'.
 
+getRootRef :: FilePath -> IO Int
 getRootRef filename = do
   c <- BS.readFile filename
   let n = rootRef c
@@ -54,6 +56,9 @@ getRootRef filename = do
     Just i -> return i
     Nothing -> error "Could not find rood object"
     
+-- | The /Root object in 'filename'.
+
+getRootObj :: FilePath -> IO [Obj]
 getRootObj filename = do
   rootref <- getRootRef filename
   objs <- getPDFObjFromFile filename
@@ -61,10 +66,16 @@ getRootObj filename = do
     Just os -> return os
     Nothing -> error "Could not get root object"
 
+-- | The trailer of 'filename'.
+
+getTrailer :: FilePath -> IO Dict
 getTrailer filename = do
   c <- BS.readFile filename
   return $ findTrailer c
 
+-- | /Info of 'filename'.
+
+getInfo :: FilePath -> IO Dict
 getInfo filename = do
   d <- getTrailer filename
   objs <- getPDFObjFromFile filename
