@@ -1,5 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+{-|
+Module      : PDF.Outlines
+Description : Function to get /Outlines object
+Copyright   : (c) Keiichiro Shikano, 2016
+License     : MIT
+Maintainer  : k16.shikano@gmail.com
+
+Function to grub /Outlines in PDF trailer. It mainly provides texts for Table of Contents.
+-}
+
 module PDF.Outlines
        ( getOutlines
        ) where
@@ -24,12 +34,14 @@ data PDFOutlines = PDFOutlinesTree [PDFOutlines]
                  | PDFOutlinesNE
 
 instance Show PDFOutlines where
-  show o = toString 0 o
+  show = toString 0
 
 toString :: Int -> PDFOutlines -> String
-toString depth (PDFOutlinesEntry {dest=d, text=t, subs=s}) = (replicate depth ' ' ++ t) ++ toString (depth+1) s
+toString depth PDFOutlinesEntry {dest=d, text=t, subs=s} = (replicate depth ' ' ++ t) ++ toString (depth+1) s
 toString depth (PDFOutlinesTree os) = concatMap (toString depth) os
 toString depth PDFOutlinesNE = ""
+
+-- | Get information of \/Outlines from 'filename'
 
 getOutlines :: FilePath -> IO PDFOutlines
 getOutlines filename = do
@@ -39,7 +51,7 @@ getOutlines filename = do
     Just r -> return r
     Nothing -> error "No top level outline entry."
   firstdict <- case findObjsByRef firstref objs of
-    Just [PdfDict d] -> return $ d
+    Just [PdfDict d] -> return d
     Nothing -> error $ "No Object with Ref " ++ show firstref
   return $ gatherOutlines firstdict objs
 
@@ -88,10 +100,10 @@ findTitle dict objs =
   case findObjThroughDict dict "/Title" of
     Just (PdfText s) -> case parseOnly parsePdfLetters (BS.pack s) of
       Right t -> t
-      Left err -> s -- error $ "Not like a PDF Text String: "++(show err)
+      Left err -> s
     Just (ObjRef r) -> case findObjsByRef r objs of
       Just [PdfText s] -> s
-      Nothing -> error $ "No title object in "++(show r)
+      Nothing -> error $ "No title object in " ++ show r
     Just x -> show x
     Nothing -> error "No title object."
 
