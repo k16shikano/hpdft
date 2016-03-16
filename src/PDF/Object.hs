@@ -1,5 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+{-|
+Module      : PDF.Object
+Description : Function to parse objects in a PDF file
+Copyright   : (c) Keiichiro Shikano, 2016
+License     : MIT
+Maintainer  : k16.shikano@gmail.com
+
+Functions to parsea and show objects in a PDF file. 
+It provides a basic way to get information from a PDF file.
+-}
+
 module PDF.Object
        ( parseTrailer
        , findTrailer
@@ -59,7 +70,7 @@ noneOf = satisfy . notInClass
 getObjs :: BS.ByteString -> [PDFBS]
 getObjs contents = case parseOnly (many1 pdfObj) contents of
   Left  err -> []
-  Right rlt -> {-# SCC getObjs #-} rlt
+  Right rlt -> rlt
 
 getXref :: BS.ByteString -> String
 getXref contents = case parseOnly (xref) contents of
