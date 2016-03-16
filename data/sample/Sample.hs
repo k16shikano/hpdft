@@ -28,15 +28,17 @@ initstate = PSR { linex=0
                 }
 
 
------------------------------------------------
--- Show each PDF Object by its reference number
------------------------------------------------
+-- | Show bare data in 'ref'ed-object.
 
 objectByRef filename ref = getObjectByRef ref (getPDFObjFromFile filename)
 
-streamByRef filename ref = do
-  obj <- getObjectByRef ref (getPDFObjFromFile filename) 
-  return $ rawStream obj
+-- | Show contents of page 'page' in 'filename'.
+
+showPage filename page = do 
+  pagetree <- refByPage filename
+  contentByRef filename $ pagetree !! (page - 1)
+  
+-- | Show /Content referenced from the 'ref'ed-object in 'filename'.
 
 contentByRef filename ref = do
   objs <- getPDFObjFromFile filename
@@ -47,6 +49,20 @@ contentByRef filename ref = do
             Just dict -> contentsStream dict initstate objs
             Nothing -> ""
 
+-- | Show raw bytestring stream (without deflated) of page 'page' in 'filename'.
+
+showRawPage filename page = do
+  pagetree <- refByPage filename
+  rawContentByRef filename $ pagetree !! (page - 1)
+
+-- | Show raw bytestring stream (without deflated) of 'ref'ed-object.
+
+streamByRef filename ref = do
+  obj <- getObjectByRef ref (getPDFObjFromFile filename) 
+  return $ rawStream obj
+
+-- | Show raw bytestring stream (without deflated) in a /Content referenced from the 'ref'ed-object in 'filename'.
+
 rawContentByRef filename ref = do
   objs <- getPDFObjFromFile filename
   obj <- objectByRef filename ref
@@ -55,26 +71,20 @@ rawContentByRef filename ref = do
           case findDictOfType "/Page" obj of
             Just dict -> rawContentsStream dict objs
             Nothing -> ""
-  
-showPage filename page = do 
-  pagetree <- refByPage filename
-  contentByRef filename $ pagetree !! (page - 1)
 
-showRawPage filename page = do
-  pagetree <- refByPage filename
-  rawContentByRef filename $ pagetree !! (page - 1)
+-- | Show CMap information in object 'ref' in 'filename'.
 
 cmapStreamByRef filename ref = do
   objs <- getPDFObjFromFile filename
   return $ toUnicode ref objs
 
 
----------------------------------------
--- Sort Object References in Page order
----------------------------------------
+
 
 data  PageTree = Nop | Page Int | Pages [PageTree]
                  deriving Show
+
+-- | Sort object references in page order.
 
 refByPage filename = do
   root <- getRootRef filename
@@ -103,12 +113,10 @@ pageTreeToList (Page n) = [n]
 pageTreeToList Nop = []
 
 
---------------------------
--- Get Whole Text from PDF
---------------------------
--- First: grub objects
--- Second: parse within each object, deflating its stream
--- Third: linearize stream
+-- | Get a whole text from 'filename'. It works as:
+--    (1) grub objects
+--    (2) parse within each object, deflating its stream
+--    (3) linearize stream
 
 pdfToText filename = do
   contents <- BS.readFile filename
@@ -135,9 +143,7 @@ linearize parent objs =
     Nothing -> ""
 
 
--------------------
--- Meta Information    
--------------------
+-- | Show /Title from meta information in 'filename'
 
 showTitle filename = do
   d <- getInfo filename
@@ -149,10 +155,14 @@ showTitle filename = do
   putStrLn title
   return ()
 
+-- | Show /Info from meta information in 'filename'
+
 showInfo filename = do
   d <- getInfo filename
   putStrLn $ toString 0 (PdfDict d)
   return ()
+
+-- | Show /Outlines from meta information in 'filename'
 
 showOutlines filename = do
   d <- getOutlines filename
@@ -160,9 +170,7 @@ showOutlines filename = do
   return ()
 
 
---------------
--- Color Space 
---------------
+-- | Show device color spaces of each page.
 
 contentColorSpaceByRef filename ref = do
   objs <- getPDFObjFromFile filename
@@ -172,6 +180,8 @@ contentColorSpaceByRef filename ref = do
           case findDictOfType "/Page" obj of
             Just dict -> contentsColorSpace dict initstate objs
             Nothing -> error "Seems to be no color space in content stream"
+
+-- | Show device color spaces of all pages.
 
 showColorSpaces filename = do
   pages <- refByPage filename
