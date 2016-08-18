@@ -23,12 +23,15 @@ import Debug.Trace
 import PDF.Definition
 
 parseCMap :: BSL.ByteString -> CMap
-parseCMap str = case runParser (concat <$> manyTill cmapParser (try $ string "endcmap")) () "" str of
+parseCMap str = case runParser (concat <$> 
+                                manyTill 
+                                (try bfchar <|> (concat <$> bfrange)) 
+                                (try $ string "endcmap")) () "" str of
   Left err -> error "Can not parse CMap"
   Right cmap -> cmap 
 
-cmapParser :: Parser CMap
-cmapParser = do
+bfchar :: Parser CMap
+bfchar = do
   spaces
   manyTill anyChar (try $ string "beginbfchar")
   spaces
@@ -38,6 +41,23 @@ cmapParser = do
   spaces
   return ms
     where toCmap cid ucs = ((fst.head.readHex) cid, ((:[]).chr.fst.head.readHex) ucs)
+
+bfrange :: Parser [CMap]
+bfrange = do
+  spaces
+  manyTill anyChar (try $ string "beginbfrange")
+  spaces
+  ms <- many1 (toCmap <$> (getRange <$> hexletters <*> hexletters) <*> hexletters)
+  spaces
+  string "endbfrange"
+  spaces
+  return ms
+    where 
+      getRange cid cid' = [gethex cid .. gethex cid']
+      toCmap range ucs = zip range (map ((:[]).chr) [gethex ucs ..])
+
+gethex = fst.head.readHex
+
 
 hexletters :: Parser String
 hexletters = do

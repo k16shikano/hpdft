@@ -1,5 +1,5 @@
 name:                hpdft
-version:             0.1.0.3
+version:             0.1.0.4
 synopsis:            A tool for looking through PDF file using Haskell
 -- description:         
 homepage:            https://github.com/k16shikano/hpdft
