@@ -45,12 +45,13 @@ import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.Text as T
-import Data.Text.Encoding (decodeUtf16BE)
+import Data.Text.Encoding (decodeUtf16BEWith)
+import Data.Text.Encoding.Error (lenientDecode)
 import Numeric (readOct, readHex)
 import Data.ByteString.Builder (toLazyByteString, word16BE)
 
-import Data.Attoparsec.ByteString hiding (inClass, notInClass, satisfy)
-import Data.Attoparsec.ByteString.Char8
+import Data.Attoparsec.ByteString hiding (inClass, notInClass, satisfy, take)
+import Data.Attoparsec.ByteString.Char8 hiding (take)
 import Data.Attoparsec.Combinator
 import Control.Applicative
 import Codec.Compression.Zlib (decompress)
@@ -160,7 +161,7 @@ parsePdfLetters = (concat <$> (char '(' *> manyTill (choice [try pdfutf, try pdf
         octToString [] = "????"
         octToString [(o,_)] = [chr o]
 
-utf16be = T.unpack . decodeUtf16BE . BS.pack
+utf16be = T.unpack . decodeUtf16BEWith lenientDecode . BS.pack
 
 pdfstream :: Parser Obj
 pdfstream = PdfStream <$> stream
