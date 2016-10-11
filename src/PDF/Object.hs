@@ -315,12 +315,12 @@ parsedContentStreamByRef dict st objs ref =
 rawStreamByRef :: [PDFObj] -> Int -> BSL.ByteString
 rawStreamByRef objs x = case findObjsByRef x objs of
   Just objs -> rawStream objs
-  Nothing  -> error "No stream to be shown"
+  Nothing  -> error "No object with stream to be shown"
 
 rawStream :: [Obj] -> BSL.ByteString
 rawStream objs = case find isStream objs of
   Just (PdfStream strm) -> decompress strm
-  Nothing               -> error "No stream to be shown"
+  Nothing               -> error $ (show objs) ++ "\n  No stream to be shown"
   where
     isStream (PdfStream s) = True
     isStream _             = False
@@ -520,4 +520,6 @@ getPdfObjStm n s =
   in map (\(r,o) -> (r, parseDict $ BS.pack $ drop o objstr)) location
     where parseDict s' = case parseOnly pdfdictionary s' of
             Right obj -> [obj]
-            Left  err -> error $ "Failed to parse obj " ++ (show s') ++ (show err)
+            Left  _   -> case parseOnly pdfarray s' of
+              Right obj -> [obj]
+              Left err  -> error $ (show err) ++ ":\n   Failed to parse obj " ++ (show $ BS.take 100 s')
