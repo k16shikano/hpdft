@@ -85,10 +85,11 @@ pdfObj = do
   object <- manyTill anyChar (try $ string "endobj")
   spaces
   skipMany xref
+  skipMany startxref
   return $ (read objn, BS.pack object)
 
 parsePDFObj :: PDFBS -> PDFObj
-parsePDFObj (n,pdfobject) = case parseOnly (spaces >> many1 (pdfobj <|> objother)) pdfobject of
+parsePDFObj (n,pdfobject) = case parseOnly (spaces >> many1 (try pdfobj <|> try objother)) pdfobject of
   Left  err -> (n,[PdfNull])
   Right obj -> (n,obj)
 
@@ -108,6 +109,15 @@ xref = do
   spaces
   return ""
 
+startxref :: Parser String
+startxref = do
+  spaces
+  string "startxref"
+  spaces
+  ref <- manyTill anyChar (try $ string "%%EOF")
+  spaces
+  return ""
+  
 stream :: Parser PDFStream
 stream = do
   string "stream"
@@ -445,13 +455,13 @@ parseTrailer bs = case parseOnly (try trailer <|> xref) bs of
           return $ BS.pack t
         xref :: Parser BS.ByteString
         xref = do
-          manyTill anyChar (try $ string "startxref")
-          offset <- spaces *> many1 digit
+          manyTill anyChar (try $ string "startxref" >> spaces >> lookAhead (oneOf "123456789"))
+          offset <- many1 digit
           return $ BS.drop (read offset :: Int) bs
 
 parseCRDict :: BS.ByteString -> Dict
 parseCRDict rlt = case parseOnly crdict rlt of
-  Left  err  -> error $ show rlt
+  Left  err  -> error $ show (BS.take 100 rlt)
   Right (PdfDict dict) -> dict
   Right other -> error "Could not find Cross-Reference dictionary"
   where crdict :: Parser Obj
@@ -468,7 +478,7 @@ rootRef bs = case parseTrailer bs of
 
 rootRefFromCRStream :: BS.ByteString -> Maybe Int
 rootRefFromCRStream bs =
-  let offset = (read . BS.unpack . head . drop 1 . reverse . BS.lines $ bs) :: Int
+  let offset = (read . BS.unpack . head . drop 1 . reverse . BS.lines $ (trace (show bs) bs)) :: Int
       crstrm = snd . head . getObjs $ BS.drop offset bs
       crdict = parseCRDict crstrm
   in getRefs isRootRef $ crdict
@@ -522,4 +532,5 @@ getPdfObjStm n s =
             Right obj -> [obj]
             Left  _   -> case parseOnly pdfarray s' of
               Right obj -> [obj]
-              Left err  -> error $ (show err) ++ ":\n   Failed to parse obj " ++ (show $ BS.take 100 s')
+              Left err  -> error $ (show err) ++ ":\n   Failed to parse obj around; \n"
+                           ++ (show $ BS.take 100 s')

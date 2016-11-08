@@ -19,6 +19,8 @@ module PDF.PDFIO ( getObjectByRef
 import PDF.Definition
 import PDF.Object
 
+import Debug.Trace
+
 import qualified Data.ByteString.Char8 as BS
 
 -- | Get PDF objects as a whole bytestring. Use 'getPDFObjFromFile' instead if there's no reason to see a raw bytestring. 
