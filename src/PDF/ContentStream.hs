@@ -84,6 +84,7 @@ elems = choice [ try pdfopBT
                , try graphicState
                , try pdfopcm
                , try $ T.empty <$ colorSpace
+               , try $ T.empty <$ renderingIntent
                , unknowns
                ]
 
@@ -91,8 +92,8 @@ pdfopGraphics :: PSParser T.Text
 pdfopGraphics = do
   spaces
   choice [ try $ T.empty <$ oneOf "qQ" <* space <* spaces
-         , try $ T.empty <$ oneOf "fFbBW" <* (many $ string "*") <* spaces
-         , try $ T.empty <$ oneOf "nsS" <* space <* spaces
+         , try $ T.empty <$ oneOf "fFbBW" <* (many $ string "*") <* space <* spaces
+         , try $ T.empty <$ oneOf "nsS" <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJM" <* space <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "dwi" <* space <* spaces
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "ml" <* space <* spaces)
@@ -128,7 +129,14 @@ dashPattern :: PSParser T.Text
 dashPattern = do
   char '[' >> many digit >> char ']' >> spaces >> many1 digit >> spaces >> string "d"
   return T.empty
-  
+
+renderingIntent :: PSParser T.Text
+renderingIntent = do
+  ri <- choice [ try $ string "/" *> manyTill anyChar (try space) <* string "ri " <* spaces
+               , try $ string "/" *> manyTill anyChar (try space) <* string "Intent" <* spaces
+               ]
+  return $ T.pack ri
+
 pathConstructor :: PSParser T.Text
 pathConstructor = do
   choice [ try $ T.empty <$ (digitParam <* spaces) <* oneOf "ml" <* spaces
