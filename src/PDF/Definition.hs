@@ -37,6 +37,7 @@ toString depth (PdfDict d) = concat $ map dictentry d
           dictentry e = error $ "Illegular dictionary entry "++show e 
 toString depth (PdfText t) = t 
 toString depth (PdfStream s) = "\n  " ++ (BSL.unpack $ decompress s)
+--toString depth (PdfStream s) = "\n  " ++ (BSL.unpack $ s)
 toString depth (PdfNumber r) = show r
 toString depth (PdfHex h) = h 
 toString depth (PdfArray a) = intercalate ", " $ map (toString depth) a

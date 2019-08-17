@@ -18,6 +18,7 @@ data-dir:            data/
 data-files:          map/Adobe-Japan1-6.map
 data-files:          sample/Sample.hs
 
+                       
 library
   hs-source-dirs:      src/
   exposed-modules:     PDF.PDFIO

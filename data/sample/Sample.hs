@@ -1,6 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+module Main where
+
 import PDF.Definition
+
 import PDF.Object
 import PDF.PDFIO
 import PDF.Outlines
