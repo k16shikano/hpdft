@@ -329,11 +329,22 @@ rawStreamByRef objs x = case findObjsByRef x objs of
 
 rawStream :: [Obj] -> BSL.ByteString
 rawStream objs = case find isStream objs of
-  Just (PdfStream strm) -> decompress strm
+  Just (PdfStream strm) -> streamFilter strm
   Nothing               -> error $ (show objs) ++ "\n  No stream to be shown"
   where
     isStream (PdfStream s) = True
     isStream _             = False
+
+    streamFilter = case findDict objs of
+                     Just d -> case find withFilter d of
+                                 Just (PdfName "/Filter", PdfName "/FlateDecode")
+                                   -> decompress
+                                 Just _ -> id -- need fix
+                                 Nothing -> id
+                     Nothing -> id
+    withFilter (PdfName "/Filter", _) = True
+    withFilter _                      = False
+
 
 parseRefsArray :: [Obj] -> [Int]
 parseRefsArray (ObjRef x:y) = (x:parseRefsArray y)
