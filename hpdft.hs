@@ -14,6 +14,7 @@ import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import Data.List (nub)
+import Data.Maybe (fromMaybe)
 
 import Debug.Trace
 
@@ -43,10 +44,8 @@ main = do
 
 pdfToText filename = do
   contents <- BS.readFile filename
-  let objs = map parsePDFObj $ getObjs contents
-  let rootref = case rootRef contents of
-                  Just r  -> r
-                  Nothing -> 0
+  let objs = expandObjStm $ map parsePDFObj $ getObjs contents
+  let rootref = fromMaybe 0 (rootRef contents)
   BSL.putStrLn $ linearize rootref objs
 
 linearize :: Int -> [PDFObj] -> PDFStream
