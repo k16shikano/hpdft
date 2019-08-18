@@ -7,7 +7,10 @@ module PDF.ContentStream
        ) where
 
 import Data.Char (chr)
+import Data.String (fromString)
+import Data.List (isPrefixOf)
 import Numeric (readOct, readHex)
+import Data.Maybe (fromMaybe)
 
 import Data.Binary (decode)
 import Data.ByteString (ByteString)
@@ -226,24 +229,22 @@ hexletters = do
   return $ T.concat lets
 
 adobeOneSix :: Int -> T.Text
-adobeOneSix a = case Map.lookup a (adobeJapanOneSixMap) of
+adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
   Just cs -> T.pack $ BSL.toString cs
   Nothing -> T.pack $ "[" ++ (show a) ++ "]"
 
 toUcs :: CMap -> Int -> T.Text
-toUcs map h = case lookup h map of
+toUcs m h = case lookup h m of
   Just ucs -> T.pack ucs
   Nothing -> adobeOneSix h
 
 hexletter :: PSParser T.Text
 hexletter = do
   st <- getState
-  let cmap = case lookup (curfont st) (cmaps st) of
-        Just m -> m
-        Nothing -> []
+  let cmap = fromMaybe [] (lookup (curfont st) (cmaps st))
   (hexToString cmap . readHex) <$> (count 4 $ oneOf "0123456789ABCDEFabcdef")
-  where hexToString map [] = "????"
-        hexToString map [(h,_)] = toUcs map h
+  where hexToString m [(h,"")] = toUcs m h
+        hexToString _ _ = "????"
 
 psletter :: PSParser T.Text
 psletter = do
@@ -262,9 +263,15 @@ psletter = do
             Nothing -> T.pack [c']
           replaceWithCharDict s = case Map.lookup s pdfcharmap of
             Just cs -> cs
-            Nothing -> T.pack s
-          octToChar [] = '?'
-          octToChar [(o,_)] = chr o
+            Nothing -> if "/uni" `isPrefixOf` s
+                       then readUni s
+                       else T.pack s
+          readUni s = case readHex (drop 4 s) of
+            [(i,"")] -> T.singleton $ chr i
+            [(i,x)] -> T.pack (chr i : " ")
+            _ -> T.pack s
+          octToChar [(o,"")] = chr o
+          octToChar _ = '?'
 
 kern :: PSParser T.Text
 kern = do
