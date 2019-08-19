@@ -38,7 +38,7 @@ parseContentStream p st = runParser p st ""
 parseDeflated :: PSR -> BSC.ByteString -> PDFStream
 parseDeflated psr pdfstream = 
   case parseContentStream (T.concat <$> many (elems <|> skipOther)) psr pdfstream of
-    Left  err -> error "Nothing to be parsed"
+    Left  err -> error $ "Nothing to be parsed: " ++ (show err) 
     Right str -> BSC.pack $ BS.unpack $ encodeUtf8 str
 
 deflate :: PSR -> PDFStream -> PDFStream
@@ -94,7 +94,7 @@ elems = choice [ try pdfopBT
 pdfopGraphics :: PSParser T.Text
 pdfopGraphics = do
   spaces
-  choice [ try $ T.empty <$ oneOf "qQ" <* space <* spaces
+  choice [ try $ T.empty <$ oneOf "qQ" <* spaces
          , try $ T.empty <$ oneOf "fFbBW" <* (many $ string "*") <* space <* spaces
          , try $ T.empty <$ oneOf "nsS" <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJM" <* space <* spaces
