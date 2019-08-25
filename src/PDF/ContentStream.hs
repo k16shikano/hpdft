@@ -135,7 +135,7 @@ dashPattern = do
 
 renderingIntent :: PSParser T.Text
 renderingIntent = do
-  ri <- choice [ try $ string "/" *> manyTill anyChar (try space) <* string "ri " <* spaces
+  ri <- choice [ try $ string "/" *> manyTill anyChar (try space) <* string "ri" <* spaces
                , try $ string "/" *> manyTill anyChar (try space) <* string "Intent" <* spaces
                ]
   return $ T.pack ri
