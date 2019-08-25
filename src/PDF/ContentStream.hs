@@ -100,11 +100,11 @@ pdfopGraphics = do
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJM" <* space <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "dwi" <* space <* spaces
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "ml" <* space <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "re " <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SCN " <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "scn " <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SC " <* spaces)
-         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "sc " <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "re" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SCN" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "scn" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SC" <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "sc" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "c" <* space <* spaces)
          ]
   return T.empty
