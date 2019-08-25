@@ -98,8 +98,8 @@ hpdft (CmdOpt 0 0 False True _ _ fn) = showTitle fn
 hpdft (CmdOpt 0 0 False _ True _ fn) = showInfo fn
 hpdft (CmdOpt 0 0 False _ _ True fn) = showOutlines fn
 hpdft (CmdOpt 0 0 True _ _ _ fn) = print =<< refByPage fn
-hpdft (CmdOpt n 0 False _ _ _ fn) = print =<< showPage fn n
-hpdft (CmdOpt 0 r False _ _ _ fn) = print =<< contentByRef fn r
+hpdft (CmdOpt n 0 False _ _ _ fn) = showPage fn n
+hpdft (CmdOpt 0 r False _ _ _ fn) = print =<< objectByRef fn r
 ghpdft _ = return ()
 
 
