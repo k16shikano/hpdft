@@ -1,11 +1,20 @@
-Haskell PDF Tools(hpdft)
-========================
+# hpdft (Haskell PDF Tools)
 
-Tools to poke PDF files using Haskell. 
+hpdft is a PDF parsing tool. It can also be used as a command to grab text, metadata outline (i.e. table of contents) from PDF. 
 
+Command usage: 
 
-Example
--------
-[`Sample.hs`](https://github.com/k16shikano/hpdft/blob/master/data/sample/Sample.hs) has some functions showing how to use hpdft. 
+```
+hpdft [-p|--page PAGE] [-r|--ref REF] [-R|--refs] [-T|--title]
+             [-I|--info] [-O|--toc] FILE
 
-If you want to customize the character sets and encodings other than the Appendix D of the PDF specification, you could modify `PdfCharDict.hs`. For example, you can use ASCII single quote (`U+0027`) instead of `U+2019` by modifying the entry for `/quoteright`.
+Available options:
+  -p,--page PAGE           Page number (nomble)
+  -r,--ref REF             Object reference
+  -R,--refs                Show object references in page order
+  -T,--title               Show title (from metadata)
+  -I,--info                Show PDF metainfo
+  -O,--toc                 Show table of contents (from metadata)
+  FILE                     input pdf file
+  -h,--help                Show this help text
+```
