@@ -9,7 +9,7 @@ hpdft [-p|--page PAGE] [-r|--ref REF] [-R|--refs] [-T|--title]
              [-I|--info] [-O|--toc] FILE
 
 Available options:
-  -p,--page PAGE           Page number (nomble)
+  -p,--page PAGE           Page number
   -r,--ref REF             Object reference
   -R,--refs                Show object references in page order
   -T,--title               Show title (from metadata)
