@@ -119,7 +119,7 @@ graphicState = do
 
 colorSpace :: PSParser T.Text
 colorSpace = do
-  gs <- choice [ try $ string "/" *> manyTill anyChar (try space) <* string "CS" <|> string "cs" <* spaces
+  gs <- choice [ try $ string "/" *> manyTill anyChar (try space) <* (string "CS" <|> string "cs") <* spaces
                , try $ "DeviceRGB" <$ (many1 (digitParam <* spaces) <* string "rg" <* spaces)
                , try $ "DeviceRGB" <$ (many1 (digitParam <* spaces) <* string "RG" <* spaces)
                , try $ "DeviceGray" <$ (digitParam <* spaces) <* oneOf "gG" <* spaces
