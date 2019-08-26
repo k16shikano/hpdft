@@ -207,12 +207,13 @@ unknowns = do
 skipOther :: PSParser T.Text
 skipOther = do
   a <- manyTill anyChar (try $ oneOf "\r\n")
-  return $ ""
+  return ""
 
 array :: PSParser T.Text
 array = do
   char '['
-  str <- (manyTill (letters <|> hexletters <|> kern) (try $ char ']'))
+  spaces
+  str <- manyTill (letters <|> hexletters <|> kern) (try $ char ']')
   return $ T.concat str
 
 letters :: PSParser T.Text
@@ -277,6 +278,7 @@ psletter = do
 kern :: PSParser T.Text
 kern = do
   t <- digitParam
+  spaces
   return $ if t < -60.0 then " " else ""
 
 pdfopTf :: PSParser T.Text
