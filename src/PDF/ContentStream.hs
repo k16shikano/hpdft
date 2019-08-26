@@ -386,7 +386,7 @@ pdfopTr = do
 desideParagraphBreak :: Double -> Double -> Double -> Double -> Double -> Double 
                      -> T.Text
 desideParagraphBreak t1 t2 lx ly lm ff = T.pack $
-  (if abs t2 > 1.8*ly || (t1 - lm) > 0.5
+  (if abs t2 > 1.8*ly || (lx - t1) < lm
    then "\n"
    else "")
 
@@ -413,15 +413,17 @@ pdfopTm = do
       ly = liney st
       lm = leftmargin st
       ff = fontfactor st
-      newff = (a+d)/2
-      needBreak = ay - f/newff > (ly/newff)
-  updateState (\s -> s { linex     = lx/newff
-                       , liney     = ly/newff
-                       , absolutex = e/newff
-                       , absolutey = f/newff
-                       })
-  return $ if needBreak 
-           then T.concat ["\n", desideParagraphBreak (e*newff) (f*newff) lx ly lm newff]
+      newff = abs $ (a-d)/2
+      needBreakByY = abs (ay - f) > ly
+      needBreakByX = ax > e
+      newst = st { linex     = lx
+                 , liney     = ly
+                 , absolutex = e
+                 , absolutey = f
+                 }
+  putState newst
+  return $ if needBreakByX 
+           then T.concat ["\n", if needBreakByY then "" else ""]
            else if e > newff then " " else ""
 
 pdfopcm :: PSParser T.Text
@@ -450,8 +452,8 @@ pdfopcm = do
       newff = (a+d)/2
   updateState (\s -> s { linex     = lx/newff
                        , liney     = ly/newff
-                       , absolutex = e/newff
-                       , absolutey = f/newff
+                       , absolutex = ax -- e/newff
+                       , absolutey = ay -- f/newff
                        })
   return T.empty
 
