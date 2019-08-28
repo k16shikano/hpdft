@@ -414,8 +414,8 @@ pdfopTm = do
       ly = liney st
       lm = leftmargin st
       ff = fontfactor st
-      newff = abs $ (a-d)/2
-      needBreakByY = abs (ay - f) > ly
+      newff = abs $ (a+d)/2
+      needBreakByY = abs (ay - f) > 2*ly
       needBreakByX = ax > e
       newst = st { linex     = lx
                  , liney     = ly
@@ -425,7 +425,7 @@ pdfopTm = do
   putState newst
   return $ if needBreakByX 
            then T.concat ["\n", if needBreakByY then "" else ""]
-           else if e > newff then " " else ""
+           else if ax - e > newff then "\n" else ""
 
 pdfopcm :: PSParser T.Text
 pdfopcm = do
