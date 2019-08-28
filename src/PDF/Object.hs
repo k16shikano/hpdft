@@ -183,7 +183,7 @@ pdfnumber = PdfNumber <$> pdfdigit
           num <- ((++) <$> (("0"++) . BS.unpack <$> string ".") <*> (many1 digit))
                  <|>
                  ((++) <$> (many1 digit) <*> ((++) <$> (many $ char '.') <*> many digit))
-          spaces        
+          spaces
           return $ read $ sign ++ num
 
 pdfhex :: Parser Obj
@@ -231,7 +231,8 @@ rrefs = do
   objnum <- many1 digit
   spaces
   oneOf "0123456789"
-  string " R"
+  spaces
+  string "R"
   spaces
   return $ ObjRef (read objnum)
 
