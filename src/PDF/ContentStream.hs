@@ -107,6 +107,7 @@ pdfopGraphics = do
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SC" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "sc" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "c" <* space <* spaces)
+         
          ]
   return T.empty
 

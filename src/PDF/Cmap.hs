@@ -5,6 +5,7 @@ module PDF.Cmap
        ) where
 
 import Data.Char (chr)
+import Data.List (intercalate)
 import Numeric (readOct, readHex)
 
 import Data.ByteString (ByteString)
@@ -25,7 +26,7 @@ import PDF.Definition
 parseCMap :: BSL.ByteString -> CMap
 parseCMap str = case runParser (concat <$> 
                                 manyTill 
-                                (try bfchar <|> (concat <$> bfrange)) 
+                                (try bfchar <|> (concat <$> bfrange))
                                 (try $ string "endcmap")) () "" str of
   Left err -> error "Can not parse CMap"
   Right cmap -> cmap 
@@ -47,16 +48,15 @@ bfrange = do
   spaces
   manyTill anyChar (try $ string "beginbfrange")
   spaces
-  ms <- many1 (toCmap <$> (getRange <$> hexletters <*> hexletters) <*> hexletters)
+  ms <- many1 (toCmap <$> (getRange <$> hexletters <*> hexletters) <*> (hexletters <|> hexletterArray))
   spaces
   string "endbfrange"
   spaces
   return ms
     where 
+      gethex = fst.head.readHex
       getRange cid cid' = [gethex cid .. gethex cid']
       toCmap range ucs = zip range (map ((:[]).chr) [gethex ucs ..])
-
-gethex = fst.head.readHex
 
 
 hexletters :: Parser String
@@ -68,3 +68,12 @@ hexletters = do
 
 hexletter :: Parser String
 hexletter = (count 4 $ oneOf "0123456789ABCDEFabcdef")
+
+hexletterArray :: Parser String
+hexletterArray = do
+  char '['
+  spaces
+  lets <- manyTill hexletters (try $ spaces >> char ']')
+  spaces
+  return $ intercalate "\n" lets
+
