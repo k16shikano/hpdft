@@ -26,7 +26,9 @@ initstate = PSR { linex=0
                 , absolutex=0
                 , absolutey=0
                 , leftmargin=0.0
-                , text_m=(0.0,0.0)
+                , text_lm=(1,0,0,1,0,0)
+                , text_m=(1,0,0,1,0,0)
+                , text_break=False
                 , top=0.0
                 , bottom=0.0
                 , fontfactor=1
