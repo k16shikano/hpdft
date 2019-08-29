@@ -29,7 +29,7 @@ import Codec.Compression.Zlib (decompress)
 import Debug.Trace
 
 import PDF.Definition
-import PDF.Character (pdfcharmap, adobeJapanOneSixMap)
+import PDF.Character (pdfcharmap, octcharmap, adobeJapanOneSixMap)
 
 type PSParser a = GenParser Char PSR a
 
@@ -264,12 +264,12 @@ psletter = do
   let fontmap = case lookup (curfont st) (fontmaps st) of
         Just m -> m
         Nothing -> []
-  c <- try (char '\\' >> oneOf "\\()")
+  c <- (replaceWithDiff fontmap <$> try (char '\\' >> oneOf "\\()"))
        <|>
-       try (octToChar . readOct <$> (char '\\' >> (count 3 $ oneOf "01234567")))
+       (octToChar . readOct <$> (char '\\' >> (count 3 $ oneOf "01234567")))
        <|>
-       noneOf "\\"
-  return $ replaceWithDiff fontmap c
+       (T.singleton <$> noneOf "\\")
+  return $ c -- replaceWithDiff fontmap c
     where replaceWithDiff m c' = case lookup c' m of
             Just s -> replaceWithCharDict s
             Nothing -> T.pack [c']
@@ -282,8 +282,10 @@ psletter = do
             [(i,"")] -> T.singleton $ chr i
             [(i,x)] -> T.pack (chr i : " ")
             _ -> T.pack s
-          octToChar [(o,"")] = chr o
-          octToChar _ = '?'
+          octToChar [(o,"")] = case Map.lookup o octcharmap of
+            Just cs -> cs
+            Nothing -> T.singleton $ chr o
+          octToChar _ = "?"
 
 kern :: PSParser T.Text
 kern = do

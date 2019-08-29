@@ -3,6 +3,7 @@
 
 module PDF.Character
        ( pdfcharmap
+       , octcharmap
        , adobeJapanOneSixMap) where
 
 import qualified Data.Text as T
@@ -14,6 +15,7 @@ import Codec.Compression.GZip (decompress)
 import Data.Binary (decode)
 
 pdfcharmap = Map.fromList pdfchardict 
+octcharmap = Map.fromList octchardict 
 
 adobeJapanOneSixMap :: Map.Map Int BSLU.ByteString
 adobeJapanOneSixMap = decode . decompress . BSL.fromChunks . (:[]) $ $(embedFile "data/map/Adobe-Japan1-6.map")
@@ -319,4 +321,46 @@ pdfchardict =
  , ("/equal","=")
  , ("/infinity","∞")
  , ("/integral","∫")
+ ]
+
+octchardict :: [(Int, T.Text)]
+octchardict = 
+ [ (0, "Γ")
+ , (1, "Δ")
+ , (2, "Θ")
+ , (3, "Λ")
+ , (4, "Ξ")
+ , (5, "Π")
+ , (6, "Σ")
+ , (7, "Υ")
+ , (8, "Φ")
+ , (9, "Ψ")
+ , (10, "Ω")
+ , (11, "ff")
+ , (12, "fi")
+ , (13, "fl")
+ , (14, "ffi")
+ , (15, "ffl")
+ , (16, "ı")
+ , (17, "ȷ")
+ , (18, "`")
+ , (19, "´")
+ , (20, "ˇ")
+ , (21, "˘")
+ , (22, "¯")
+ , (23, "˚")
+ , (24, "")
+ , (25, "")
+ , (26, "æ")
+ , (27, "oe")
+ , (28, "ø")
+ , (29, "Æ")
+ , (30, "OE")
+ , (31, "Ø")
+ , (32, " ҃")
+ , (123, "-")
+ , (124, "－")
+ , (125, "˝")
+ , (126, "˜")
+ , (127, "¨")
  ]
