@@ -56,6 +56,7 @@ data PSR = PSR { linex      :: Double
                , liney      :: Double
                , absolutex  :: Double
                , absolutey  :: Double
+               , text_m     :: (Double, Double)
                , leftmargin :: Double
                , top        :: Double
                , bottom     :: Double

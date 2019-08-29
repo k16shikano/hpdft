@@ -168,6 +168,7 @@ pdfopBT = do
   spaces
   t <- manyTill elems (try $ string "ET")
   spaces
+  updateState (\s -> s{text_m = (0.0,0.0)})
   return $ T.concat t
 
 pdfopTj :: PSParser T.Text
@@ -338,14 +339,19 @@ pdfopTd = do
       ly = liney st
       lm = leftmargin st
       ff = fontfactor st
-      needBreak = t2 < 0 && abs t2 > ly
-  updateState (\s -> s { absolutex = ax - lx
-                       , absolutey = ay - ly
+      tmx = fst $ text_m st
+      tmy = snd $ text_m st
+      needBreakByX = tmx + t1 < ax
+      needBreakByY = abs (tmy + t2 - ay) > 10
+      needBreak = needBreakByX || needBreakByY
+  updateState (\s -> s { absolutex = if needBreak then 0 else tmx + t1
+                       , absolutey = tmy + t2
                        , linex = lx
                        , liney = ly
+                       , text_m = (tmx + t1, tmy + t2)
                        })
-  return $ if needBreak 
-           then T.concat ["\n", (desideParagraphBreak t1 t2 lx ly lm ff)] 
+  return $ if needBreak
+           then T.concat ["\n", (desideParagraphBreak t1 t2 lx ly lm ff)]
            else if t1 > ff then " " else ""
 
 pdfopTw :: PSParser T.Text
