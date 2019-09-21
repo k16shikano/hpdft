@@ -31,16 +31,16 @@ library
   other-modules:       Paths_hpdft
   other-extensions:    OverloadedStrings
   build-depends:       base >=4.6 && <5
-                     , bytestring >=0.10 && <0.11
+                     , bytestring >=0.10
                      , text >=0.11
                      , parsec >=3.0 && <3.2
-                     , attoparsec >=0.13.0 && <1.0
+                     , attoparsec >=0.13.0
                      , zlib >=0.5
                      , utf8-string >=0.3
                      , directory >=1.2
-                     , containers >=0.5 && <0.6
-                     , file-embed >=0.0.9 && <1.0
-                     , binary >=0.7.5 && <0.8.2
+                     , containers >=0.5
+                     , file-embed >=0.0.9
+                     , binary >=0.7.5
                      , optparse-applicative
                      , semigroups
   autogen-modules:     Paths_hpdft
@@ -53,8 +53,8 @@ executable hpdft
   other-modules:     Paths_hpdft
   other-extensions:    OverloadedStrings
   build-depends:       hpdft
-                     , base >=4.6 && <5
-                     , bytestring >=0.10 && <0.11
+                     , base >=4.6
+                     , bytestring >=0.10
                      , utf8-string >=0.3
                      , optparse-applicative
                      , semigroups

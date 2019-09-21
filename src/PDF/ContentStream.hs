@@ -99,7 +99,7 @@ pdfopGraphics = do
          , try $ T.empty <$ oneOf "fFbBW" <* (many $ string "*") <* space <* spaces
          , try $ T.empty <$ oneOf "nsS" <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJM" <* space <* spaces
-         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "dwi" <* space <* spaces
+         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "dwi" <* spaces
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "ml" <* space <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "re" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SCN" <* spaces)
