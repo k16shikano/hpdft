@@ -57,6 +57,7 @@ data CmdOpt = CmdOpt {
   pdftitle :: Bool,
   pdfinfo :: Bool,
   pdfoutline :: Bool,
+  trailer :: Bool,
   file :: FilePath
   }
 
@@ -90,21 +91,24 @@ options = CmdOpt
           ( long "toc"
             <> short 'O'
             <> help "Show table of contents (from metadata) " )
+          <*> switch
+          ( long "trailer"
+            <> help "Show the trailer of PDF" )
           <*> strArgument
           ( help "input pdf file"
             <> metavar "FILE"
             <> action "file" )
 
 hpdft :: CmdOpt -> IO ()
-hpdft (CmdOpt 0 0 False False False False fn) = pdfToText fn  
-hpdft (CmdOpt 0 0 False True _ _ fn) = showTitle fn
-hpdft (CmdOpt 0 0 False _ True _ fn) = showInfo fn
-hpdft (CmdOpt 0 0 False _ _ True fn) = showOutlines fn
-hpdft (CmdOpt 0 0 True _ _ _ fn) = print =<< refByPage fn
-hpdft (CmdOpt n 0 False _ _ _ fn) = showPage fn n
-hpdft (CmdOpt 0 r False _ _ _ fn) = print =<< objectByRef fn r
-ghpdft _ = return ()
-
+hpdft (CmdOpt 0 0 False False False False False fn) = pdfToText fn  
+hpdft (CmdOpt 0 0 False True _ _ _ fn) = showTitle fn
+hpdft (CmdOpt 0 0 False _ True _ _ fn) = showInfo fn
+hpdft (CmdOpt 0 0 False _ _ True _ fn) = showOutlines fn
+hpdft (CmdOpt 0 0 False _ _ _ True fn) = print =<< getTrailer fn
+hpdft (CmdOpt 0 0 True _ _ _ _ fn) = print =<< refByPage fn
+hpdft (CmdOpt n 0 False _ _ _ _ fn) = showPage fn n
+hpdft (CmdOpt 0 r False _ _ _ _ fn) = print =<< objectByRef fn r
+hpdft _ = return ()
 
 -- | Get a whole text from 'filename'. It works as:
 --    (1) grub objects

@@ -544,5 +544,7 @@ getPdfObjStm n s =
             Right obj -> [obj]
             Left  _   -> case parseOnly pdfarray s' of
               Right obj -> [obj]
-              Left err  -> error $ (show err) ++ ":\n   Failed to parse obj around; \n"
-                           ++ (show $ BS.take 100 s')
+              Left _ -> case parseOnly pdfletters s' of
+                Right obj -> [obj]
+                Left err -> error $ (show err) ++ ":\n   Failed to parse obj around; \n"
+                              ++ (show $ BS.take 100 s')
