@@ -85,7 +85,6 @@ elems = choice [ try pdfopBT
                , try array <* spaces
                , try pdfopGraphics
                , try dashPattern
-               , try pathConstructor
                , try $ T.empty <$ xObject
                , try graphicState
                , try pdfopcm
@@ -103,13 +102,14 @@ pdfopGraphics = do
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJM" <* space <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "dwi" <* spaces
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "ml" <* space <* spaces)
+         , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "vy" <* space <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "re" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SCN" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "scn" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "SC" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "sc" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "c" <* space <* spaces)
-         
+         , try $ T.empty <$ oneOf "h" <* spaces         
          ]
   return T.empty
 
@@ -143,15 +143,6 @@ renderingIntent = do
                , try $ string "/" *> manyTill anyChar (try space) <* string "Intent" <* spaces
                ]
   return $ T.pack ri
-
-pathConstructor :: PSParser T.Text
-pathConstructor = do
-  choice [ try $ T.empty <$ (digitParam <* spaces) <* oneOf "ml" <* spaces
-         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "cvy" <* spaces
-         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "re" <* spaces
-         , try $ T.empty <$ oneOf "h" <* spaces
-         ]
-  return T.empty
 
 xObject :: PSParser [T.Text]
 xObject = do
