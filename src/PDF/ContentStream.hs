@@ -72,6 +72,8 @@ elems = choice [ try pdfopBT
                , try pdfopTm
                , try pdfopTc
                , try pdfopTw
+               , try pdfopTL
+               , try pdfopTz
                , try pdfopTJ
                , try pdfopTj
                , try pdfopTr
@@ -400,6 +402,30 @@ pdfopTw = do
   st <- getState
   let ff = fontfactor st
   updateState (\s -> s { fontfactor = tw
+                       })
+  return $ ""
+
+pdfopTL :: PSParser T.Text
+pdfopTL = do
+  tl <- digitParam
+  spaces
+  string "TL"
+  spaces
+  st <- getState
+  let ff = fontfactor st
+  updateState (\s -> s { liney = tl
+                       })
+  return $ ""
+
+pdfopTz :: PSParser T.Text
+pdfopTz = do
+  tz <- digitParam
+  spaces
+  string "Tz"
+  spaces
+  st <- getState
+  let ff = fontfactor st
+  updateState (\s -> s { linex = tz
                        })
   return $ ""
 
