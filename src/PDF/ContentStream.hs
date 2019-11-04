@@ -90,6 +90,9 @@ elems = choice [ try pdfopBT
                , try pdfopcm
                , try $ T.empty <$ colorSpace
                , try $ T.empty <$ renderingIntent
+               , try pdfopBDC
+               , try pdfopBMC
+               , try pdfopEMC
                , unknowns
                ]
 
@@ -163,6 +166,36 @@ pdfopBT = do
   spaces
   updateState (\s -> s{text_m = (1,0,0,1,0,0)})
   return $ T.concat t
+
+-- should have refined according to the section 10.5 of PDF reference
+
+pdfopBMC :: PSParser T.Text
+pdfopBMC = do
+  n <- (++) <$> string "/" <*> manyTill anyChar (try space)
+  spaces
+  string "BMC"
+  spaces
+  manyTill elems (try $ string "EMC")
+  spaces
+  return T.empty
+
+pdfopBDC :: PSParser T.Text
+pdfopBDC = do
+  n1 <- (++) <$> string "/" <*> manyTill anyChar (try space)
+  spaces
+  n2 <- (++) <$> string "/" <*> manyTill anyChar (try space)
+  spaces
+  string "BDC"
+  spaces
+  return T.empty
+
+pdfopEMC :: PSParser T.Text
+pdfopEMC = do
+  spaces
+  string "EMC"
+  spaces
+  return T.empty
+
 
 pdfopTj :: PSParser T.Text
 pdfopTj = do
