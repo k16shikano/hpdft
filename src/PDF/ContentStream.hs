@@ -6,7 +6,7 @@ module PDF.ContentStream
        , parseColorSpace
        ) where
 
-import Data.Char (chr)
+import Data.Char (chr, ord)
 import Data.String (fromString)
 import Data.List (isPrefixOf)
 import Numeric (readOct, readHex)
@@ -229,7 +229,13 @@ array = do
 letters :: PSParser T.Text
 letters = do
   char '('
-  lets <- manyTill psletter (try $ char ')')
+  st <- getState
+  let letterParser = case lookup (curfont st) (fontmaps st) of
+        Just (FontMap m) -> psletter m
+        Just (CIDmap s) -> cidletter s
+        Just NullMap -> error "No Parser for each letter"
+        Nothing -> cidletter "Adobe-Japan1" -- as a defalt map
+  lets <- manyTill letterParser (try $ char ')')
   spaces
   return $ T.concat lets
 
@@ -258,12 +264,8 @@ hexletter = do
   where hexToString m [(h,"")] = toUcs m h
         hexToString _ _ = "????"
 
-psletter :: PSParser T.Text
-psletter = do
-  st <- getState
-  let fontmap = case lookup (curfont st) (fontmaps st) of
-        Just m -> m
-        Nothing -> []
+psletter :: [(Char,String)] -> PSParser T.Text
+psletter fontmap = do
   c <- try (char '\\' >> oneOf "\\()")
        <|>
        try (octToChar . readOct <$> (char '\\' >> (count 3 $ oneOf "01234567")))
@@ -284,6 +286,33 @@ psletter = do
             _ -> T.pack s
           octToChar [(o,"")] = chr o
           octToChar _ = '?'
+
+cidletter :: String -> PSParser T.Text
+cidletter cidmapName = do
+  o1 <- octletter
+  o2 <- octletter
+  let d = 256 * o1 + o2
+  return $
+    if cidmapName == "Adobe-Japan1"
+    then adobeOneSix d
+    else error $ "Unknown cidmap" ++ cidmapName
+
+octletter :: PSParser Int
+octletter = do
+  d <- choice [ try $ escapedToDec <$> (char '\\' >> oneOf "nrtbf()\\")
+              , try $ octToDec . readOct <$> (char '\\' >> (count 3 $ oneOf "01234567"))
+              , try $ ord <$> noneOf "\\"
+              ]
+  return $ d
+  where
+    octToDec [(o, "")] = o
+    octToDec _ = error "Unable to take Character in Octet"
+    escapedToDec 'n' = ord '\n'
+    escapedToDec 'r' = ord '\r'
+    escapedToDec 't' = ord '\t'
+    escapedToDec 'b' = ord '\b'
+    escapedToDec 'f' = ord '\f'
+    escapedToDec _ = 0
 
 kern :: PSParser T.Text
 kern = do

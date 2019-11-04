@@ -365,13 +365,13 @@ contentsColorSpace dict st objs = case find contents dict of
 
 -- make fontmap from page's /Resources (see 3.7.2 of PDF Ref.)
 
-findFontMap d os = encoding (getFontObjs d os) os
+findFontMap d os = findEncoding (getFontObjs d os) os
 
-encoding :: Dict -> [PDFObj] -> [(String, FontMap)]
-encoding dict objs = map pairwise dict
+findEncoding :: Dict -> [PDFObj] -> [(String, FontMap)]
+findEncoding dict objs = map pairwise dict
   where 
     pairwise (PdfName n, ObjRef r) = (n, fontMap r objs)
-    pairwise x = ("",[])
+    pairwise x = ("", NullMap)
 
 findResourcesDict :: Dict -> [PDFObj] -> Maybe Dict
 findResourcesDict dict objs = case find resources dict of
@@ -395,26 +395,42 @@ fontMap :: Int -> [PDFObj] -> FontMap
 fontMap x objs = case findObjThroughDictByRef x "/Encoding" objs of
   Just (ObjRef ref) -> case findObjThroughDictByRef ref "/Differences" objs of
     Just (PdfArray arr) -> charMap arr
-    otherwise -> []
-  Just (PdfName "/StandardEncoding") -> (trace "standard enc." [])
-  Just (PdfName "/MacRomanEncoding") -> (trace "mac roman enc." [])
-  Just (PdfName "/MacExpertEncoding") -> (trace "mac expert enc." [])
-  Just (PdfName "/WinAnsiEncoding") -> (trace "win ansi enc." [])
+    otherwise -> trace "no /differences" NullMap
+  Just (PdfName "/StandardEncoding") -> (trace "standard enc." NullMap)
+  Just (PdfName "/MacRomanEncoding") -> (trace "mac roman enc." NullMap)
+  Just (PdfName "/MacExpertEncoding") -> (trace "mac expert enc." NullMap)
+  Just (PdfName "/WinAnsiEncoding") -> (trace "win ansi enc." NullMap)
   otherwise -> case findObjThroughDictByRef x "/FontDescriptor" objs of
     Just (ObjRef ref) -> case findObjThroughDictByRef ref "/CharSet" objs of
-      Just (PdfText str) -> []
-      otherwise -> []
-    otherwise -> []
+      Just (PdfText str) -> trace "no /charset" NullMap
+      otherwise -> trace "no /charset" NullMap
+    otherwise -> case findObjThroughDictByRef x "/DescendantFonts" objs of -- Type 0
+      Just (ObjRef ref) -> case findObjsByRef ref objs of
+        Just [(PdfArray ((ObjRef subref):_))] -> case findObjThroughDictByRef subref "/CIDSystemInfo" objs of
+          Just (ObjRef inforef) -> case findObjThroughDictByRef inforef "/Registry" objs of
+            Just (PdfText "Adobe") -> case findObjThroughDictByRef inforef "/Ordering" objs of
+              Just (PdfText "Japan1") -> case findObjThroughDictByRef inforef "/Supplement" objs of
+                Just (PdfNumber _) -> CIDmap "Adobe-Japan1"
+                _ -> trace (show inforef) NullMap
+              _ -> trace (show inforef) NullMap
+            _ -> trace (show inforef) NullMap
+          _ -> trace ("no /cidsysteminfo "++(show subref)) NullMap
+        _ -> trace ("no array in /descendantfonts "++(show ref)) NullMap
+      _ -> trace ("no /descendantfonts "++(show x)) NullMap
+
+  where
+    registry (PdfName "/Registry", _) = True
+    registry _ = False
 
 charMap :: [Obj] -> FontMap
-charMap objs = fontmap objs 0
+charMap objs = FontMap $ fontmap objs 0
   where fontmap (PdfNumber x : PdfName n : xs) i = 
           if i < truncate x then 
             (chr $ truncate x, n) : (fontmap xs $ incr x)
           else 
             (chr $ i, n) : (fontmap xs $ i+1)
-        fontmap (PdfName n : xs) i               = (chr i, n) : (fontmap xs $ i+1)
-        fontmap [] i                             = []
+        fontmap (PdfName n : xs) i = (chr i, n) : (fontmap xs $ i+1)
+        fontmap [] i               = []
         incr x = (truncate x) + 1
 
 findCMap d os = cMap (getFontObjs d os) os

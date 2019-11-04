@@ -48,7 +48,12 @@ toString depth (ObjOther o) = o
 toString depth (PdfNull) = ""
 
 
-type FontMap = [(Char,String)]
+data FontMap = CIDmap String | FontMap [(Char,String)] | NullMap
+
+instance Show FontMap where
+  show (CIDmap s) = s
+  show (FontMap a) = show a
+  show NullMap = []
 
 type CMap = [(Int,String)]
 
