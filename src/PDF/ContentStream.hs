@@ -338,6 +338,7 @@ octletter = do
     escapedToDec 't' = ord '\t'
     escapedToDec 'b' = ord '\b'
     escapedToDec 'f' = ord '\f'
+    escapedToDec '\\' = ord '\\'
     escapedToDec _ = 0
 
 kern :: PSParser T.Text
