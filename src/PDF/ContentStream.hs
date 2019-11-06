@@ -259,7 +259,7 @@ letters = do
   let letterParser = case lookup (curfont st) (fontmaps st) of
         Just (FontMap m) -> psletter m
         Just (CIDmap s) -> cidletter s
-        Just NullMap -> error "No Parser for each letter"
+        Just NullMap -> psletter []
         Nothing -> cidletter "Adobe-Japan1" -- as a defalt map
   lets <- manyTill letterParser (try $ char ')')
   spaces
