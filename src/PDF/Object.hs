@@ -301,7 +301,7 @@ pagesKids dict = case find isKidsRefs dict of
 
 contentsStream :: Dict -> PSR -> [PDFObj] -> PDFStream
 contentsStream dict st objs = case find contents dict of
-  Just (PdfName "/Contents", PdfArray arr) -> BSL.concat $ map (parsedContentStreamByRef dict st objs) (parseRefsArray arr)
+  Just (PdfName "/Contents", PdfArray arr) -> parseContentStream dict st objs $ BSL.concat $ map (rawStreamByRef objs) (parseRefsArray arr)
   Just (PdfName "/Contents", ObjRef x)     -> parsedContentStreamByRef dict st objs x
   Nothing                                  -> error "No content to be shown"
   where
@@ -320,6 +320,12 @@ rawContentsStream dict objs = case find contents dict of
 parsedContentStreamByRef :: Dict -> PSR -> [PDFObj] -> Int -> PDFStream
 parsedContentStreamByRef dict st objs ref = 
   deflate (st {fontmaps=fontdict, cmaps=cmap}) $ rawStreamByRef objs ref
+  where fontdict = findFontMap dict objs
+        cmap = findCMap dict objs
+
+parseContentStream :: Dict -> PSR -> [PDFObj] -> BSL.ByteString -> PDFStream
+parseContentStream dict st objs s = 
+  deflate (st {fontmaps=fontdict, cmaps=cmap}) s
   where fontdict = findFontMap dict objs
         cmap = findCMap dict objs
 
