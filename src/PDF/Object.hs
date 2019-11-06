@@ -410,23 +410,22 @@ fontMap x objs = case findObjThroughDictByRef x "/Encoding" objs of
     Just (ObjRef ref) -> case findObjThroughDictByRef ref "/CharSet" objs of
       Just (PdfText str) -> trace "no /charset" NullMap
       otherwise -> trace "no /charset" NullMap
-    otherwise -> case findObjThroughDictByRef x "/DescendantFonts" objs of -- Type 0
+    otherwise -> case findObjThroughDictByRef x "/DescendantFonts" objs of -- needs CID to Unicode map
       Just (ObjRef ref) -> case findObjsByRef ref objs of
         Just [(PdfArray ((ObjRef subref):_))] -> case findObjThroughDictByRef subref "/CIDSystemInfo" objs of
           Just (ObjRef inforef) -> case findObjThroughDictByRef inforef "/Registry" objs of
             Just (PdfText "Adobe") -> case findObjThroughDictByRef inforef "/Ordering" objs of
               Just (PdfText "Japan1") -> case findObjThroughDictByRef inforef "/Supplement" objs of
                 Just (PdfNumber _) -> CIDmap "Adobe-Japan1"
-                _ -> trace (show inforef) NullMap
-              _ -> trace (show inforef) NullMap
-            _ -> trace (show inforef) NullMap
-          _ -> trace ("no /cidsysteminfo "++(show subref)) NullMap
-        _ -> trace ("no array in /descendantfonts "++(show ref)) NullMap
-      _ -> trace ("no /descendantfonts "++(show x)) NullMap
+                _ -> trace (show inforef) defaultCIDMap
+              _ -> trace (show inforef) defaultCIDMap
+            _ -> trace (show inforef) defaultCIDMap
+          _ -> trace (show subref ++ " no /cidsysteminfoy. using Adobe-Japan1...") defaultCIDMap
+        _ -> trace (show ref ++ " no array in /descendantfonts. using Adobe-Japan1...") defaultCIDMap
+      _ -> trace (show x ++ " no /descendantfonts. using Adobe-Japan1...") defaultCIDMap
 
   where
-    registry (PdfName "/Registry", _) = True
-    registry _ = False
+    defaultCIDMap = CIDmap "Adobe-Japan1"
 
 charMap :: [Obj] -> FontMap
 charMap objs = FontMap $ fontmap objs 0
