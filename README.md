@@ -18,3 +18,9 @@ Available options:
   FILE                     input pdf file
   -h,--help                Show this help text
 ```
+
+## install
+
+```
+$ cabal install
+```
