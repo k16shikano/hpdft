@@ -15,6 +15,7 @@ Available options:
   -T,--title               Show title (from metadata)
   -I,--info                Show PDF metainfo
   -O,--toc                 Show table of contents (from metadata)
+  --trailer                Show trailer object
   FILE                     input pdf file
   -h,--help                Show this help text
 ```
