@@ -74,8 +74,8 @@ elems = choice [ try pdfopBT
                , try pdfopTw
                , try pdfopTL
                , try pdfopTz
-               , try pdfopTJ
                , try pdfopTj
+               , try pdfopTJ
                , try pdfopTr
                , try pdfQuote
                , try pdfDoubleQuote
@@ -205,20 +205,20 @@ pdfopTj = do
   st <- getState
   let needBreak = text_break st
       t' = (if needBreak then ("\n":t) else t)
---  updateState (\s -> s{text_break = False})
+  updateState (\s -> s{text_break = False})
   return $ T.concat t'
 
 pdfopTJ :: PSParser T.Text
 pdfopTJ = do
   spaces
-  t <- manyTill (letters <|> hexletters <|> array) (try $ string "TJ")
+  t <- manyTill array (try $ string "TJ")
   spaces
   st <- getState
   let needBreak = text_break st
       t' = (if needBreak then ("\n":t) else t)
---  updateState (\s -> s{text_break = False})
+  updateState (\s -> s{text_break = False})
   return $ T.concat t'
-  
+
 pdfDoubleQuote :: PSParser T.Text
 pdfDoubleQuote = do
   spaces
@@ -250,7 +250,12 @@ array = do
   char '['
   spaces
   str <- manyTill (letters <|> hexletters <|> kern) (try $ char ']')
-  return $ T.concat str
+  st <- getState
+  -- for TJ
+  let needBreak = text_break st
+      t' = (if needBreak then "\n":str else str)
+  updateState (\s -> s{text_break = False})
+  return $ T.concat t'
 
 letters :: PSParser T.Text
 letters = do
@@ -380,15 +385,15 @@ pdfopTD = do
       ff = fontfactor st
       (a,b,c,d,tmx,tmy) = text_m st
       needBreakByX = a*t1 + c*t2 + tmx < ax
-      needBreakByY = abs (b*t1 + d*t2 + tmy - ay) > ly
+      needBreakByY = t2 > -t2
       needBreak = (needBreakByX || needBreakByY) && not (text_break st)
   updateState (\s -> s { absolutex = if needBreak then 0 else a*t1 + c*t2 + tmx
                        , absolutey = b*t1 + d*t2 + tmy
                        , liney = -t2
                        , text_m = (a,b,c,d, a*t1 + c*t2 + tmx, b*t1 + d*t2 + tmy)
-                       , text_break = False
+                       , text_break = needBreak
                        })
-  return $ if needBreak then T.concat ["\n", (desideParagraphBreak t1 t2 lx ly lm ff)] else ""
+  return $ if needBreak then (desideParagraphBreak t1 t2 lx ly lm ff) else ""
 
 pdfopTd :: PSParser T.Text
 pdfopTd = do
@@ -407,16 +412,16 @@ pdfopTd = do
       ff = fontfactor st
       (a,b,c,d,tmx,tmy) = text_m st
       needBreakByX = a*t1 + c*t2 + tmx < ax
-      needBreakByY = abs (b*t1 + d*t2 + tmy - ay) > ly
+      needBreakByY = t2 > ly
       needBreak = (needBreakByX || needBreakByY) && not (text_break st)
   updateState (\s -> s { absolutex = if needBreak then 0 else a*t1 + c*t2 + tmx
                        , absolutey = b*t1 + d*t2 + tmy
                        , linex = lx
                        , liney = ly
                        , text_m = (a,b,c,d, a*t1 + c*t2 + tmx, b*t1 + d*t2 + tmy)
-                       , text_break = False
+                       , text_break = needBreak
                        })
-  return $ if needBreak then T.concat ["\n", (desideParagraphBreak t1 t2 lx ly lm ff)] else ""
+  return $ if needBreak then (desideParagraphBreak t1 t2 lx ly lm ff) else ""
 
 pdfopTw :: PSParser T.Text
 pdfopTw = do
@@ -438,7 +443,7 @@ pdfopTL = do
   spaces
   st <- getState
   let ff = fontfactor st
-  updateState (\s -> s { liney = tl
+  updateState (\s -> s { liney = ff + tl
                        })
   return $ ""
 
@@ -450,7 +455,7 @@ pdfopTz = do
   spaces
   st <- getState
   let ff = fontfactor st
-  updateState (\s -> s { linex = tz
+  updateState (\s -> s { linex = ff + tz
                        })
   return $ ""
 
@@ -460,10 +465,6 @@ pdfopTc = do
   spaces
   string "Tc"
   spaces
-  st <- getState
-  let ff = fontfactor st
-  updateState (\s -> s { fontfactor = tc
-                       })
   return $ ""
 
 pdfopTr :: PSParser T.Text
@@ -509,10 +510,10 @@ pdfopTm = do
       (_,_,_,_,tmx,tmy) = text_m st
       newff = abs $ (a+d)/2
       needBreakByX = a*tmx + c*tmy + e < ax
-      needBreakByY = abs (b*tmx + d*tmy + f - ay) > ly
+      needBreakByY = abs (tmy - f) > ly || tmy < f
       needBreak = needBreakByX || needBreakByY
-      newst = st { absolutex = a*tmx + c*tmy + e
-                 , absolutey = b*tmx + d*tmy + f
+      newst = st { absolutex = e
+                 , absolutey = f
                  , linex = lx
                  , liney = ly
                  , text_lm = (a,b,c,d,e,f)
@@ -520,7 +521,7 @@ pdfopTm = do
                  , text_break = needBreak
                  }
   putState newst
-  return $ ""
+  return $ T.empty
 
 pdfopcm :: PSParser T.Text
 pdfopcm = do
@@ -547,13 +548,18 @@ pdfopcm = do
       lm = leftmargin st
       ff = fontfactor st
       (_,_,_,_,tmx,tmy) = text_m st
+      needBreakByX = a*tmx + c*tmy + e < ax
+      needBreakByY = abs (tmy - f) > ly
+      needBreak = needBreakByX || needBreakByY
       newst = st { absolutex = ax
                  , absolutey = ay
                  , linex = lx
                  , liney = ly
                  , text_lm = (a,b,c,d,e,f)
                  , text_m = (a,b,c,d,e,f)
+                 , text_break = needBreak
                  }
+  putState newst
   return T.empty
 
 pdfopTast :: PSParser T.Text
@@ -568,18 +574,16 @@ pdfopTast = do
       ff = fontfactor st
       (a,b,c,d,tmx,tmy) = text_m st
       needBreakByX = tmx < ax
-      needBreakByY = abs (tmy - ay) > 0
+      needBreakByY = d*ly + tmy > ly
       needBreak = needBreakByX || needBreakByY
   updateState (\s -> s { absolutex = if needBreak then 0 else tmx
                        , absolutey = tmy + ly
                        , linex = lx
                        , liney = ly
-                       , text_m = (a,b,c,d, c*ly + tmx, d*ly + tmy) -- (tmx + t1, tmy + t2)
+                       , text_m = (a,b,c,d, c*ly + tmx, d*ly + tmy)
                        , text_break = needBreak
                        })
-  return $ if needBreak
-           then T.concat ["\n", (desideParagraphBreak 0 ly lx ly lm ff)]
-           else if 0 > ff then " " else ""
+  return ""
 
 digitParam :: PSParser Double
 digitParam = do 
