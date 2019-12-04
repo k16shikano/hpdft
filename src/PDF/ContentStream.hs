@@ -160,12 +160,15 @@ xObject = do
 
 pdfopBT :: PSParser T.Text
 pdfopBT = do
+  st <- getState
+  updateState (\s -> s{text_m = (1,0,0,1,0,0), text_break = False})
   string "BT"
   spaces
   t <- manyTill elems (try $ string "ET")
   spaces
-  updateState (\s -> s{text_m = (1,0,0,1,0,0)})
-  return $ T.concat t
+  let needBreak = text_break st
+      t' = (if needBreak then ("\n":t) else t)
+  return $ T.concat t'
 
 -- should have refined according to the section 10.5 of PDF reference
 
@@ -247,10 +250,10 @@ skipOther = do
 
 array :: PSParser T.Text
 array = do
+  st <- getState
   char '['
   spaces
   str <- manyTill (letters <|> hexletters <|> kern) (try $ char ']')
-  st <- getState
   -- for TJ
   let needBreak = text_break st
       t' = (if needBreak then "\n":str else str)
@@ -264,6 +267,7 @@ letters = do
   let letterParser = case lookup (curfont st) (fontmaps st) of
         Just (FontMap m) -> psletter m
         Just (CIDmap s) -> cidletter s
+        Just (WithCharSet s) -> octletter
         Just NullMap -> psletter []
         Nothing -> cidletter "Adobe-Japan1" -- as a defalt map
   lets <- manyTill letterParser (try $ char ')')
@@ -274,6 +278,13 @@ hexletters :: PSParser T.Text
 hexletters = do
   char '<'
   lets <- manyTill hexletter (try $ char '>')
+  spaces
+  return $ T.concat lets
+
+octletters :: PSParser T.Text
+octletters = do
+  char '('
+  lets <- manyTill octletter (try $ char ')')
   spaces
   return $ T.concat lets
 
@@ -294,6 +305,13 @@ hexletter = do
   (hexToString cmap . readHex) <$> (count 4 $ oneOf "0123456789ABCDEFabcdef")
   where hexToString m [(h,"")] = toUcs m h
         hexToString _ _ = "????"
+
+octletter :: PSParser T.Text
+octletter = do
+  st <- getState
+  let cmap = fromMaybe [] (lookup (curfont st) (cmaps st))
+  o <- octnum
+  return $ toUcs cmap o
 
 psletter :: [(Char,String)] -> PSParser T.Text
 psletter fontmap = do
@@ -320,16 +338,16 @@ psletter fontmap = do
 
 cidletter :: String -> PSParser T.Text
 cidletter cidmapName = do
-  o1 <- octletter
-  o2 <- octletter
+  o1 <- octnum
+  o2 <- octnum
   let d = 256 * o1 + o2
   return $
     if cidmapName == "Adobe-Japan1"
     then adobeOneSix d
     else error $ "Unknown cidmap" ++ cidmapName
 
-octletter :: PSParser Int
-octletter = do
+octnum :: PSParser Int
+octnum = do
   d <- choice [ try $ escapedToDec <$> (char '\\' >> oneOf "nrtbf()\\")
               , try $ octToDec . readOct <$> (char '\\' >> (count 3 $ oneOf "01234567"))
               , try $ ord <$> noneOf "\\"
@@ -385,7 +403,7 @@ pdfopTD = do
       ff = fontfactor st
       (a,b,c,d,tmx,tmy) = text_m st
       needBreakByX = a*t1 + c*t2 + tmx < ax
-      needBreakByY = t2 > -t2
+      needBreakByY = abs (b*t1 + d*t2 + tmy - ay) > ff
       needBreak = (needBreakByX || needBreakByY) && not (text_break st)
   updateState (\s -> s { absolutex = if needBreak then 0 else a*t1 + c*t2 + tmx
                        , absolutey = b*t1 + d*t2 + tmy
@@ -393,7 +411,10 @@ pdfopTD = do
                        , text_m = (a,b,c,d, a*t1 + c*t2 + tmx, b*t1 + d*t2 + tmy)
                        , text_break = needBreak
                        })
-  return $ if needBreak then (desideParagraphBreak t1 t2 lx ly lm ff) else ""
+  return $ if needBreak 
+           then (desideParagraphBreak t1 t2 lx ly lm ff)
+           else if a*t1 + c*t2 + tmx > ax + 2*ff
+                then " " else ""
 
 pdfopTd :: PSParser T.Text
 pdfopTd = do
@@ -412,7 +433,7 @@ pdfopTd = do
       ff = fontfactor st
       (a,b,c,d,tmx,tmy) = text_m st
       needBreakByX = a*t1 + c*t2 + tmx < ax
-      needBreakByY = t2 > ly
+      needBreakByY = abs (b*t1 + d*t2 + tmy - ay) > ff
       needBreak = (needBreakByX || needBreakByY) && not (text_break st)
   updateState (\s -> s { absolutex = if needBreak then 0 else a*t1 + c*t2 + tmx
                        , absolutey = b*t1 + d*t2 + tmy
@@ -421,7 +442,10 @@ pdfopTd = do
                        , text_m = (a,b,c,d, a*t1 + c*t2 + tmx, b*t1 + d*t2 + tmy)
                        , text_break = needBreak
                        })
-  return $ if needBreak then (desideParagraphBreak t1 t2 lx ly lm ff) else ""
+  return $ if needBreak 
+           then (desideParagraphBreak t1 t2 lx ly lm ff)
+           else if a*t1 + c*t2 + tmx > ax + 2*ff
+                then " " else ""
 
 pdfopTw :: PSParser T.Text
 pdfopTw = do
@@ -481,7 +505,7 @@ desideParagraphBreak :: Double -> Double -> Double -> Double -> Double -> Double
                      -> T.Text
 desideParagraphBreak t1 t2 lx ly lm ff = T.pack $
   (if abs t2 > 1.8*ly || (lx - t1) < lm
-   then "\n"
+   then " "
    else "")
 
 pdfopTm :: PSParser T.Text

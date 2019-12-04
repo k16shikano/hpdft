@@ -402,13 +402,13 @@ fontMap x objs = case findObjThroughDictByRef x "/Encoding" objs of
   Just (ObjRef ref) -> case findObjThroughDictByRef ref "/Differences" objs of
     Just (PdfArray arr) -> charMap arr
     otherwise -> trace "no /differences" NullMap
-  Just (PdfName "/StandardEncoding") -> (trace "standard enc." NullMap)
-  Just (PdfName "/MacRomanEncoding") -> (trace "mac roman enc." NullMap)
-  Just (PdfName "/MacExpertEncoding") -> (trace "mac expert enc." NullMap)
-  Just (PdfName "/WinAnsiEncoding") -> (trace "win ansi enc." NullMap)
+  Just (PdfName "/StandardEncoding") -> NullMap
+  Just (PdfName "/MacRomanEncoding") -> NullMap
+  Just (PdfName "/MacExpertEncoding") -> NullMap
+  Just (PdfName "/WinAnsiEncoding") -> NullMap
   otherwise -> case findObjThroughDictByRef x "/FontDescriptor" objs of
     Just (ObjRef ref) -> case findObjThroughDictByRef ref "/CharSet" objs of
-      Just (PdfText str) -> trace "no /charset" NullMap
+      Just (PdfText str) -> WithCharSet str
       otherwise -> trace "no /charset" NullMap
     otherwise -> case findObjThroughDictByRef x "/DescendantFonts" objs of -- needs CID to Unicode map
       Just (ObjRef ref) -> case findObjsByRef ref objs of
