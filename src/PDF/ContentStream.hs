@@ -532,8 +532,8 @@ pdfopTm = do
       (_,_,_,_,tmx,tmy) = text_m st
       newff = abs $ (a+d)/2
       needBreakByX = a*tmx + c*tmy + e < ax
-      needBreakByY = abs (tmy - f) > ly || tmy < f
-      needBreak = needBreakByX || needBreakByY
+      needBreakByY = abs (b*tmx + d*tmy + f - ay) > ff
+      needBreak = (needBreakByX || needBreakByY) && not (text_break st)
       newst = st { absolutex = e
                  , absolutey = f
                  , linex = lx
@@ -571,8 +571,8 @@ pdfopcm = do
       ff = fontfactor st
       (_,_,_,_,tmx,tmy) = text_m st
       needBreakByX = a*tmx + c*tmy + e < ax
-      needBreakByY = abs (tmy - f) > ly
-      needBreak = needBreakByX || needBreakByY
+      needBreakByY = abs (b*tmx + d*tmy + f - ay) > ff
+      needBreak = (needBreakByX || needBreakByY) && not (text_break st)
       newst = st { absolutex = ax
                  , absolutey = ay
                  , linex = lx
