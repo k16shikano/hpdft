@@ -447,12 +447,13 @@ cMap dict objs = map pairwise dict
     pairwise x = ("", [])
 
 toUnicode :: Int -> [PDFObj] -> CMap
-toUnicode x objs = case findObjThroughDictByRef x "/Encoding" objs of
-  Just (PdfName "/Identity-H") -> case findObjThroughDictByRef x "/ToUnicode" objs of
-    Just (ObjRef ref) -> (parseCMap $ rawStreamByRef objs ref)
+toUnicode x objs = case findObjThroughDictByRef x "/ToUnicode" objs of
+  Just (ObjRef ref) -> parseCMap $ rawStreamByRef objs ref
+  otherwise -> case findObjThroughDictByRef x "/Encoding" objs of
+    Just (PdfName "/Identity-H") -> case findObjThroughDictByRef x "/ToUnicode" objs of
+      Just (ObjRef ref) -> parseCMap $ rawStreamByRef objs ref
+      otherwise -> []
     otherwise -> []
-  otherwise -> []
-
 
 -- find XObject
 

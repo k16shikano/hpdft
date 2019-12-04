@@ -33,7 +33,7 @@ parseCMap str = case runParser (skipHeader >>
                                  ])
                                  (try $ string "endcmap"))
                                () "" str of
-  Left err -> error "Can not parse CMap"
+  Left err -> error $ "Can not parse CMap " ++ (show err)
   Right cmap -> cmap
 
 skipHeader :: Parser ()
@@ -75,12 +75,14 @@ bfrange = do
 hexletters :: Parser String
 hexletters = do
   char '<'
-  lets <- manyTill hexletter (try $ char '>')
+  lets <- choice [ try $ manyTill (count 4 $ hexletter) (try $ char '>')
+                 , (:[]) <$> (count 2 $ hexletter) <* char '>'
+                 ]
   spaces
   return $ concat lets
 
-hexletter :: Parser String
-hexletter = (count 4 $ oneOf "0123456789ABCDEFabcdef")
+hexletter :: Parser Char
+hexletter = oneOf "0123456789ABCDEFabcdef"
 
 hexletterArray :: Parser String
 hexletterArray = do
