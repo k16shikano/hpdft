@@ -319,4 +319,5 @@ pdfchardict =
  , ("/equal","=")
  , ("/infinity","∞")
  , ("/integral","∫")
+ , ("/sharp","♯")
  ]
