@@ -166,9 +166,7 @@ pdfopBT = do
   spaces
   t <- manyTill elems (try $ string "ET")
   spaces
-  let needBreak = text_break st
-      t' = (if needBreak then ("\n":t) else t)
-  return $ T.concat t'
+  return $ T.concat t
 
 -- should have refined according to the section 10.5 of PDF reference
 
@@ -218,7 +216,7 @@ pdfopTJ = do
   spaces
   st <- getState
   let needBreak = text_break st
-      t' = (if needBreak then ("\n":t) else t)
+      t' = (if needBreak then ("":t) else t)
   updateState (\s -> s{text_break = False})
   return $ T.concat t'
 
