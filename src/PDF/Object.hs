@@ -443,7 +443,7 @@ findCMap d os = cMap (getFontObjs d os) os
 cMap :: Dict -> [PDFObj] -> [(String, CMap)]
 cMap dict objs = map pairwise dict
   where
-    pairwise (PdfName n, ObjRef r) = trace (show (n, toUnicode r objs)) (n, toUnicode r objs)
+    pairwise (PdfName n, ObjRef r) = (n, toUnicode r objs)
     pairwise x = ("", [])
 
 toUnicode :: Int -> [PDFObj] -> CMap
