@@ -265,7 +265,7 @@ letters = do
   let letterParser = case lookup (curfont st) (fontmaps st) of
         Just (FontMap m) -> psletter m
         Just (CIDmap s) -> cidletter s
-        Just (WithCharSet s) -> octletter
+        Just (WithCharSet s) -> cidletters
         Just NullMap -> psletter []
         Nothing -> cidletter "Adobe-Japan1" -- as a defalt map
   lets <- manyTill letterParser (try $ char ')')
@@ -295,6 +295,8 @@ toUcs :: CMap -> Int -> T.Text
 toUcs m h = case lookup h m of
   Just ucs -> T.pack ucs
   Nothing -> adobeOneSix h
+
+cidletters = choice [try hexletter, octletter]
 
 hexletter :: PSParser T.Text
 hexletter = do

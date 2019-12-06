@@ -406,10 +406,10 @@ fontMap x objs = case findObjThroughDictByRef x "/Encoding" objs of
   Just (PdfName "/MacRomanEncoding") -> NullMap
   Just (PdfName "/MacExpertEncoding") -> NullMap
   Just (PdfName "/WinAnsiEncoding") -> NullMap
-  otherwise -> case findObjThroughDictByRef x "/FontDescriptor" objs of
+  otherwise -> case findObjThroughDictByRef x "/ToUnicode" objs of
     Just (ObjRef ref) -> case findObjThroughDictByRef ref "/CharSet" objs of
       Just (PdfText str) -> WithCharSet str
-      otherwise -> trace "no /charset" NullMap
+      otherwise -> WithCharSet ""
     otherwise -> case findObjThroughDictByRef x "/DescendantFonts" objs of -- needs CID to Unicode map
       Just (ObjRef ref) -> case findObjsByRef ref objs of
         Just [(PdfArray ((ObjRef subref):_))] -> case findObjThroughDictByRef subref "/CIDSystemInfo" objs of
@@ -443,7 +443,7 @@ findCMap d os = cMap (getFontObjs d os) os
 cMap :: Dict -> [PDFObj] -> [(String, CMap)]
 cMap dict objs = map pairwise dict
   where
-    pairwise (PdfName n, ObjRef r) = (n, toUnicode r objs)
+    pairwise (PdfName n, ObjRef r) = trace (show (n, toUnicode r objs)) (n, toUnicode r objs)
     pairwise x = ("", [])
 
 toUnicode :: Int -> [PDFObj] -> CMap
