@@ -23,5 +23,5 @@ Available options:
 ## install
 
 ```
-$ cabal install
+$ cabal install hpdft
 ```
