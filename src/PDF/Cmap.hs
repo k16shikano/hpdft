@@ -48,7 +48,7 @@ bfchar = do
   spaces 
   string "beginbfchar"
   spaces
-  ms <- many1 (toCmap <$> hexletters <*> hexletters)
+  ms <- many (toCmap <$> hexletters <*> hexletters)
   spaces
   string "endbfchar"
   spaces
@@ -61,7 +61,7 @@ bfrange = do
   spaces 
   string "beginbfrange"
   spaces
-  ms <- many1 (toCmap <$> (getRange <$> hexletters <*> hexletters) <*> (hexletters <|> hexletterArray))
+  ms <- many (toCmap <$> (getRange <$> hexletters <*> hexletters) <*> (hexletters <|> hexletterArray))
   spaces
   string "endbfrange"
   spaces
