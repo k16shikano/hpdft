@@ -28,6 +28,9 @@ initstate = PSR { linex=0
                 , cmaps=[]
                 , colorspace=""
                 , xcolorspaces=[]
+                , text_lm = (0,0,0,0,0,0)
+                , text_m = (0,0,0,0,0,0)
+                , text_break=True
                 }
 
 

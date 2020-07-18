@@ -17,7 +17,7 @@ import Data.List (nub)
 import Data.Maybe (fromMaybe)
 
 import Options.Applicative
--- import Data.Semigroup ((<>))
+import Data.Semigroup ((<>))
 
 import Debug.Trace
 
