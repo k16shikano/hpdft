@@ -182,9 +182,9 @@ pdfopBMC = do
 
 pdfopBDC :: PSParser T.Text
 pdfopBDC = do
-  n1 <- (++) <$> string "/" <*> manyTill anyChar (try space)
+  n1 <- (++) <$> string "/" <*> manyTill anyChar (try $ lookAhead propertyList)
   spaces
-  n2 <- (++) <$> string "/" <*> manyTill anyChar (try space)
+  n2 <- propertyList
   spaces
   string "BDC"
   spaces
@@ -196,6 +196,11 @@ pdfopEMC = do
   string "EMC"
   spaces
   return T.empty
+
+propertyList :: PSParser T.Text
+propertyList = do
+  plist <- spaces >> string "<<" >> spaces *> manyTill anyChar (try $ spaces >> string ">>")
+  return $ T.pack plist
 
 
 pdfopTj :: PSParser T.Text
