@@ -23,7 +23,8 @@ import Data.Attoparsec.Combinator
 import qualified Data.ByteString.Char8 as BS
 
 import PDF.Definition hiding (toString)
-import PDF.Object
+import PDF.DocumentStructure
+import PDF.Object (parseRefsArray, parsePdfLetters)
 import PDF.PDFIO
 
 data PDFOutlines = PDFOutlinesTree [PDFOutlines]

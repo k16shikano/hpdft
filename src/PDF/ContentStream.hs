@@ -1,8 +1,7 @@
 {-# LANGUAGE OverloadedStrings, FlexibleContexts #-}
 
 module PDF.ContentStream 
-       ( deflate
-       , decompressStream
+       ( parseStream
        , parseColorSpace
        ) where
 
@@ -22,35 +21,24 @@ import qualified Data.Map as Map
 import Data.Text.Encoding (encodeUtf8)
 
 import Text.Parsec hiding (many, (<|>))
-import Control.Applicative
 import Text.Parsec.ByteString.Lazy
-import Codec.Compression.Zlib (decompress) 
+import Control.Applicative
 
 import Debug.Trace
 
 import PDF.Definition
+import PDF.Object
 import PDF.Character (pdfcharmap, adobeJapanOneSixMap)
 
 type PSParser a = GenParser Char PSR a
 
 parseContentStream p st = runParser p st ""
 
-parseDeflated :: PSR -> BSC.ByteString -> PDFStream
-parseDeflated psr pdfstream = 
+parseStream :: PSR -> PDFStream -> PDFStream
+parseStream psr pdfstream = 
   case parseContentStream (T.concat <$> many (elems <|> skipOther)) psr pdfstream of
     Left  err -> error $ "Nothing to be parsed: " ++ (show err) 
     Right str -> BSC.pack $ BS.unpack $ encodeUtf8 str
-
-deflate :: PSR -> PDFStream -> PDFStream
-deflate = parseDeflated
-
-decompressStream :: PDFBS -> PDFStream
-decompressStream (n,pdfobject) = 
-  case parse (BSC.pack <$> 
-              (manyTill anyChar (try $ (string "stream" >> oneOf "\n\r")) >> spaces
-               *> manyTill anyChar (try $ string "endstream"))) "" pdfobject of
-    Left err -> "err"
-    Right bs -> decompress bs
 
 parseColorSpace :: PSR -> BSC.ByteString -> [T.Text]
 parseColorSpace psr pdfstream = 

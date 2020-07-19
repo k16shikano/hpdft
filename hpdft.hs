@@ -5,6 +5,7 @@ module Main where
 import PDF.Definition
 
 import PDF.Object
+import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Outlines
 
@@ -107,7 +108,7 @@ hpdft (CmdOpt 0 0 False _ _ True _ fn) = showOutlines fn
 hpdft (CmdOpt 0 0 False _ _ _ True fn) = print =<< getTrailer fn
 hpdft (CmdOpt 0 0 True _ _ _ _ fn) = print =<< refByPage fn
 hpdft (CmdOpt n 0 False _ _ _ _ fn) = showPage fn n
-hpdft (CmdOpt 0 r False _ _ _ _ fn) = print =<< objectByRef fn r
+hpdft (CmdOpt 0 r False _ _ _ _ fn) = print =<< getObjectByRef r =<< getPDFObjFromFile fn
 hpdft _ = return ()
 
 -- | Get a whole text from 'filename'. It works as:
@@ -116,24 +117,23 @@ hpdft _ = return ()
 --    (3) linearize stream
 
 pdfToText filename = do
-  contents <- BS.readFile filename
-  let objs = expandObjStm $ map parsePDFObj $ getObjs contents
-  let rootref = fromMaybe 0 (rootRef contents)
-  BSL.putStrLn $ linearize rootref objs
+  objs <- getPDFObjFromFile filename
+  rootref <- getRootRef filename
+  BSL.putStrLn $ walkdown initstate rootref objs
 
-linearize :: Int -> [PDFObj] -> PDFStream
-linearize parent objs = 
+walkdown :: PSR -> Int -> [PDFObj] -> PDFStream
+walkdown st parent objs = 
   case findObjsByRef parent objs of
     Just os -> case findDictOfType "/Catalog" os of
-      Just dict -> case pages dict of 
-        Just pr -> linearize pr objs
+      Just dict -> case findPages dict of 
+        Just pr -> walkdown st pr objs
         Nothing -> ""
       Nothing -> case findDictOfType "/Pages" os of
-        Just dict -> case pagesKids dict of
-          Just kidsrefs -> BSL.concat $ map ((\f -> f objs) . linearize) kidsrefs
+        Just dict -> case findKids dict of
+          Just kidsrefs -> BSL.concat $ map ((\f -> f objs) . (walkdown st)) kidsrefs
           Nothing -> ""
         Nothing -> case findDictOfType "/Page" os of
-          Just dict -> contentsStream dict initstate objs
+          Just dict -> contentsStream dict st objs
           Nothing -> ""
     Nothing -> ""
 
@@ -151,11 +151,11 @@ pageorder :: Int -> [PDFObj] -> PageTree
 pageorder parent objs = 
   case findObjsByRef parent objs of
     Just os -> case findDictOfType "/Catalog" os of
-      Just dict -> case pages dict of 
+      Just dict -> case findPages dict of 
         Just pr -> pageorder pr objs
         Nothing -> Nop
       Nothing -> case findDictOfType "/Pages" os of
-        Just dict -> case pagesKids dict of
+        Just dict -> case findKids dict of
           Just kidsrefs -> Pages $ map (\f -> f objs) (map pageorder kidsrefs)
           Nothing -> Nop
         Nothing -> case findDictOfType "/Page" os of
@@ -178,14 +178,12 @@ showPage filename page = do
 
 contentByRef filename ref = do
   objs <- getPDFObjFromFile filename
-  obj <- objectByRef filename ref
-  BSL.putStrLn $ contentOfObject obj objs
-  where contentOfObject obj objs =
+  obj <- getObjectByRef ref objs
+  BSL.putStrLn $ contentInObject obj objs
+  where contentInObject obj objs =
           case findDictOfType "/Page" obj of
             Just dict -> contentsStream dict initstate objs
             Nothing -> ""
-
-objectByRef filename ref = getObjectByRef ref (getPDFObjFromFile filename)
 
 -- | Show /Title from meta information in 'filename'
 
@@ -212,3 +210,4 @@ showOutlines filename = do
   d <- getOutlines filename
   putStrLn $ show d
   return ()
+  

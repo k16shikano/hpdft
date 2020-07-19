@@ -7,6 +7,7 @@ Maintainer  : k16.shikano@gmail.com
 
 Functions for use within IO. 
 -}
+
 module PDF.PDFIO ( getObjectByRef
                  , getPDFBSFromFile
                  , getPDFObjFromFile
@@ -17,7 +18,8 @@ module PDF.PDFIO ( getObjectByRef
                  ) where
 
 import PDF.Definition
-import PDF.Object
+import PDF.DocumentStructure (findObjs, findObjsByRef, findDictByRef, findObjThroughDict, rootRef, findTrailer, expandObjStm)
+import PDF.Object (parsePDFObj)
 
 import Debug.Trace
 
@@ -28,7 +30,7 @@ import qualified Data.ByteString.Char8 as BS
 getPDFBSFromFile :: FilePath -> IO [PDFBS]
 getPDFBSFromFile f = do
   c <- BS.readFile f
-  let bs = getObjs c
+  let bs = findObjs c
   return bs
 
 -- | Get PDF objects each parsed as 'PDFObj' without being sorted. 
@@ -36,15 +38,14 @@ getPDFBSFromFile f = do
 getPDFObjFromFile :: FilePath -> IO [PDFObj]
 getPDFObjFromFile f = do
   c <- BS.readFile f
-  let obj = expandObjStm $ map parsePDFObj $ getObjs c
+  let obj = expandObjStm $ map parsePDFObj $ findObjs c
   return obj
 
 -- | Get a PDF object from a whole 'PDFObj' by specifying 'ref :: Int'
 
-getObjectByRef :: Int -> IO [PDFObj] -> IO [Obj]
+getObjectByRef :: Int -> [PDFObj] -> IO [Obj]
 getObjectByRef ref pdfobjs = do
-  objs <- pdfobjs
-  case findObjsByRef ref objs of
+  case findObjsByRef ref pdfobjs of
     Just os -> return os
     Nothing -> error $ "No Object with Ref " ++ show ref
 
