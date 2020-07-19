@@ -2,6 +2,7 @@ module PDF.Definition where
 
 import Data.ByteString (ByteString)
 import Data.List (replicate, intercalate)
+import Data.Word
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import Codec.Compression.Zlib (decompress)
@@ -74,6 +75,24 @@ data PSR = PSR { linex      :: Double
                , fontmaps   :: [(String, FontMap)]
                , colorspace :: String
                , xcolorspaces :: [String]
+               , decryption :: ENC
                }
          deriving (Show)
 
+data ENC = ENC { pass :: [Word8]
+               , filter :: Obj -- PdfName
+               , subfilter :: Obj -- PdfName 
+               , v :: Int
+               , length :: Int
+               , cf :: Obj -- PdfDict
+               , stfm :: Obj -- PdfName
+               , strm :: Obj -- PdfName
+               , eff :: Obj
+               , r :: Int
+               , o :: [Word8]
+               , u :: [Word8]
+               , p :: Int
+               , meta :: Bool
+               }
+           | NoENCRYPT
+         deriving (Show)

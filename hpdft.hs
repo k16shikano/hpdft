@@ -38,8 +38,8 @@ initstate = PSR { linex=0
                 , cmaps=[]
                 , colorspace=""
                 , xcolorspaces=[]
+                , decryption = NoENCRYPT
                 }
-
 
 main :: IO ()
 main = hpdft =<< execParser opts

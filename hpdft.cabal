@@ -36,6 +36,7 @@ library
                      , binary >=0.7.5
                      , bytestring >=0.10
                      , containers >=0.5
+                     , cryptonite >= 0.23
                      , directory >=1.2
                      , file-embed >=0.0.9
                      , memory >= 0.14.5
@@ -56,6 +57,7 @@ executable hpdft
   other-extensions:    OverloadedStrings
   build-depends:       base >=4.6
                      , bytestring >=0.10
+                     , cryptonite >= 0.23
                      , hpdft
                      , memory >= 0.14.5
                      , optparse-applicative
