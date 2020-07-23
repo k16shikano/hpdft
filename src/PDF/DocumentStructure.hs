@@ -13,13 +13,14 @@ module PDF.DocumentStructure
        , expandObjStm
        , rootRef
        , contentsStream
+       , rawStreamByRef
        , findKids
        , findPages
        , findDict
        , findDictByRef
        , findDictOfType
-       , findObjThroughDict
-       , findObjThroughDictByRef
+       , findObjFromDict
+       , findObjFromDictWithRef
        , findObjsByRef
        , findObjs
        , findTrailer
@@ -30,6 +31,7 @@ import Data.Char (chr)
 import Data.List (find)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
+import qualified Data.ByteString.Lazy.Builder as B
 import qualified Data.Text as T
 
 import Data.Attoparsec.ByteString.Char8 hiding (take)
@@ -69,13 +71,13 @@ findObjsByRef x pdfobjs = case find (isRefObj (Just x)) pdfobjs of
     isRefObj (Just x) (y, objs) = if x==y then True else False
     isRefObj _ _ = False
 
-findObjThroughDictByRef :: Int -> String -> [PDFObj] -> Maybe Obj
-findObjThroughDictByRef ref name objs = case findDictByRef ref objs of 
-  Just d -> findObjThroughDict d name
+findObjFromDictWithRef :: Int -> String -> [PDFObj] -> Maybe Obj
+findObjFromDictWithRef ref name objs = case findDictByRef ref objs of 
+  Just d -> findObjFromDict d name
   Nothing -> Nothing
   
-findObjThroughDict :: Dict -> String -> Maybe Obj
-findObjThroughDict d name = case find isName d of
+findObjFromDict :: Dict -> String -> Maybe Obj
+findObjFromDict d name = case find isName d of
   Just (_, o) -> Just o
   otherwise -> Nothing
   where isName (PdfName n, _) = if name == n then True else False
@@ -141,18 +143,18 @@ rawStreamByRef pdfobjs x = case findObjsByRef x pdfobjs of
 rawStream :: [Obj] -> BSL.ByteString
 rawStream objs = case find isStream objs of
   Just (PdfStream strm) -> streamFilter strm
-  Nothing               -> error $ (show objs) ++ "\n  No stream to be shown"
+  Nothing               -> BSL.pack $ show objs
   where
     isStream (PdfStream s) = True
     isStream _             = False
 
     streamFilter = case findDict objs of
-                     Just d -> case find withFilter d of
-                                 Just (PdfName "/Filter", PdfName "/FlateDecode")
-                                   -> decompress
-                                 Just _ -> id -- need fix
-                                 Nothing -> id
-                     Nothing -> id
+      Just d -> case find withFilter d of
+        Just (PdfName "/Filter", PdfName "/FlateDecode")
+          -> decompress
+        Just _ -> id -- need fix
+        Nothing -> id
+      Nothing -> id
     withFilter (PdfName "/Filter", _) = True
     withFilter _                      = False
 
@@ -177,13 +179,13 @@ xobjColorSpaceMap dict objs = map pairwise dict
     pairwise x = ""
 
 findXObject dict objs = case findResourcesDict dict objs of
-  Just d -> case findObjThroughDict d "/XObject" of
+  Just d -> case findObjFromDict d "/XObject" of
     Just (PdfDict d) -> d
     otherwise -> []
   Nothing -> []
 
 xobjColorSpace :: Int -> [PDFObj] -> String
-xobjColorSpace x objs = case findObjThroughDictByRef x "/ColorSpace" objs of
+xobjColorSpace x objs = case findObjFromDictWithRef x "/ColorSpace" objs of
   Just (PdfName cs) -> cs
   otherwise -> ""
 
@@ -297,7 +299,7 @@ findEncoding dict objs = map pairwise dict
 
 fontObjs :: Dict -> [PDFObj] -> Dict
 fontObjs dict objs = case findResourcesDict dict objs of
-  Just d -> case findObjThroughDict d "/Font" of
+  Just d -> case findObjFromDict d "/Font" of
     Just (PdfDict d) -> d
     otherwise -> []
   Nothing -> []
@@ -313,34 +315,46 @@ findResourcesDict dict objs = case find resources dict of
 
 -- Needs rewrite!
 fontMap :: Int -> [PDFObj] -> FontMap
-fontMap x objs = case findObjThroughDictByRef x "/Encoding" objs of
-  Just (ObjRef ref) -> case findObjThroughDictByRef ref "/Differences" objs of
+fontMap x objs = case findObjFromDictWithRef x "/Encoding" objs of
+  Just (ObjRef ref) -> case findObjFromDictWithRef ref "/Differences" objs of
     Just (PdfArray arr) -> charMap arr
     otherwise -> trace "no /differences" NullMap
   Just (PdfName "/StandardEncoding") -> NullMap
   Just (PdfName "/MacRomanEncoding") -> NullMap
   Just (PdfName "/MacExpertEncoding") -> NullMap
   Just (PdfName "/WinAnsiEncoding") -> NullMap
-  otherwise -> case findObjThroughDictByRef x "/ToUnicode" objs of
-    Just (ObjRef ref) -> case findObjThroughDictByRef ref "/CharSet" objs of
+
+  otherwise -> case findObjFromDictWithRef x "/ToUnicode" objs of
+    Just (ObjRef ref) -> case findObjFromDictWithRef ref "/CharSet" objs of
       Just (PdfText str) -> WithCharSet str
       otherwise -> WithCharSet ""
-    otherwise -> case findObjThroughDictByRef x "/DescendantFonts" objs of -- needs CID to Unicode map
+    otherwise -> case findObjFromDictWithRef x "/DescendantFonts" objs of -- needs CID to Unicode map
       Just (ObjRef ref) -> case findObjsByRef ref objs of
-        Just [(PdfArray ((ObjRef subref):_))] -> case findObjThroughDictByRef subref "/CIDSystemInfo" objs of
-          Just (ObjRef inforef) -> case findObjThroughDictByRef inforef "/Registry" objs of
-            Just (PdfText "Adobe") -> case findObjThroughDictByRef inforef "/Ordering" objs of
-              Just (PdfText "Japan1") -> case findObjThroughDictByRef inforef "/Supplement" objs of
+        Just [(PdfArray ((ObjRef subref):_))] -> case findObjFromDictWithRef subref "/CIDSystemInfo" objs of
+          Just (ObjRef inforef) -> case findObjFromDictWithRef inforef "/Registry" objs of
+            Just (PdfText "Adobe") -> case findObjFromDictWithRef inforef "/Ordering" objs of
+              Just (PdfText "Japan1") -> case findObjFromDictWithRef inforef "/Supplement" objs of
                 Just (PdfNumber _) -> CIDmap "Adobe-Japan1"
                 _ -> trace (show inforef) defaultCIDMap
               _ -> trace (show inforef) defaultCIDMap
             _ -> trace (show inforef) defaultCIDMap
-          _ -> trace (show subref ++ " no /cidsysteminfoy. using Adobe-Japan1...") defaultCIDMap
-        _ -> trace (show ref ++ " no array in /descendantfonts. using Adobe-Japan1...") defaultCIDMap
-      _ -> trace (show x ++ " no /descendantfonts. using Adobe-Japan1...") defaultCIDMap
-
+          _ -> trace (show subref ++ " no /cidsysteminfoy. using default...") defaultCIDMap
+        _ -> trace (show ref ++ " no array in /descendantfonts. using default...") defaultCIDMap
+      _ -> case findObjFromDictWithRef x "/FontDescriptor" objs of
+        Just (ObjRef ref) -> case findObjFromDictWithRef ref "/FontFile3" objs of
+          Just (ObjRef fontfile) -> NullMap
+          otherwise -> trace (show x ++ " no /descendantfonts. using default...") defaultCIDMap
+        _ -> NullMap
   where
-    defaultCIDMap = CIDmap "Adobe-Japan1"
+    defaultCIDMap = NullMap -- CIDmap "Adobe-Japan1"
+
+showBSL s =
+  let strm' = (B.toLazyByteString . B.lazyByteStringHex) s
+  in if BSL.length strm' > 64
+     then BSL.concat [BSL.take 256 s, "...(omit)"]
+     else strm'
+
+
 
 charMap :: [Obj] -> FontMap
 charMap objs = FontMap $ fontmap objs 0
@@ -381,4 +395,4 @@ toUnicode x objs =
 --          trace (show ref) $           
           parseCMap $ rawStreamByRef objs ref
         otherwise -> []
-  
+

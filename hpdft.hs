@@ -108,7 +108,7 @@ hpdft (CmdOpt 0 0 False _ _ True _ fn) = showOutlines fn
 hpdft (CmdOpt 0 0 False _ _ _ True fn) = print =<< getTrailer fn
 hpdft (CmdOpt 0 0 True _ _ _ _ fn) = print =<< refByPage fn
 hpdft (CmdOpt n 0 False _ _ _ _ fn) = showPage fn n
-hpdft (CmdOpt 0 r False _ _ _ _ fn) = BSL.putStr =<< getStretmByRef r =<< getPDFObjFromFile fn
+hpdft (CmdOpt 0 r False _ _ _ _ fn) = BSL.putStr =<< getStreamByRef r =<< getPDFObjFromFile fn
 hpdft _ = return ()
 
 -- | Get a whole text from 'filename'. It works as:
@@ -190,7 +190,7 @@ contentByRef filename ref = do
 showTitle filename = do
   d <- getInfo filename
   let title = 
-        case findObjThroughDict d "/Title" of
+        case findObjFromDict d "/Title" of
           Just (PdfText s) -> s
           Just x -> show x
           Nothing -> "No title anyway"
@@ -210,4 +210,4 @@ showOutlines filename = do
   d <- getOutlines filename
   putStrLn $ show d
   return ()
-  
+

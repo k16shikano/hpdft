@@ -98,7 +98,7 @@ outlineObjFromFile filename = do
     Nothing -> error "Could not get outlines object"
 
 findTitle dict objs = 
-  case findObjThroughDict dict "/Title" of
+  case findObjFromDict dict "/Title" of
     Just (PdfText s) -> case parseOnly parsePdfLetters (BS.pack s) of
       Right t -> t
       Left err -> s
@@ -109,16 +109,16 @@ findTitle dict objs =
     Nothing -> error "No title object."
 
 findDest dict = 
-  case findObjThroughDict dict "/Dest" of
+  case findObjFromDict dict "/Dest" of
     Just (PdfArray a) -> parseRefsArray a
     Nothing -> error "No destination object."
 
 findNext dict = 
-  case findObjThroughDict dict "/Next" of
+  case findObjFromDict dict "/Next" of
     Just (ObjRef x) -> Just x
     Nothing -> Nothing
 
 findFirst dict =
-  case findObjThroughDict dict "/First" of
+  case findObjFromDict dict "/First" of
     Just (ObjRef x) -> Just x
     Nothing -> Nothing
