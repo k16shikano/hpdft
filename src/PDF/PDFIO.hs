@@ -15,10 +15,11 @@ module PDF.PDFIO ( getObjectByRef
                  , getRootObj
                  , getTrailer
                  , getInfo
+                 , getStretmByRef
                  ) where
 
 import PDF.Definition
-import PDF.DocumentStructure (findObjs, findObjsByRef, findDictByRef, findObjThroughDict, rootRef, findTrailer, expandObjStm)
+import PDF.DocumentStructure (rawStream, findObjs, findObjsByRef, findDictByRef, findObjThroughDict, rootRef, findTrailer, expandObjStm)
 import PDF.Object (parsePDFObj)
 
 import Debug.Trace
@@ -47,6 +48,12 @@ getObjectByRef :: Int -> [PDFObj] -> IO [Obj]
 getObjectByRef ref pdfobjs = do
   case findObjsByRef ref pdfobjs of
     Just os -> return os
+    Nothing -> error $ "No Object with Ref " ++ show ref
+
+--getStretmByRef :: Int -> [PDFObj] -> IO BS.ByteString
+getStretmByRef ref pdfobjs = do
+  case findObjsByRef ref pdfobjs of
+    Just os -> return $ rawStream os
     Nothing -> error $ "No Object with Ref " ++ show ref
 
 -- | The reference number of /Root in 'filename'.

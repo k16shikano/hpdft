@@ -23,6 +23,7 @@ module PDF.DocumentStructure
        , findObjsByRef
        , findObjs
        , findTrailer
+       , rawStream
        ) where
 
 import Data.Char (chr)
