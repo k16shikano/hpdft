@@ -294,7 +294,8 @@ cidletters = choice [try hexletter, octletter]
 hexletter :: PSParser T.Text
 hexletter = do
   st <- getState
-  let cmap = fromMaybe [] (lookup (curfont st) (cmaps st))
+  let font = curfont st
+      cmap = fromMaybe [] (lookup font (cmaps st))
   (hexToString cmap . readHex) <$> (count 4 $ oneOf "0123456789ABCDEFabcdef")
   where hexToString m [(h,"")] = toUcs m h
         hexToString _ _ = "????"

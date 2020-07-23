@@ -190,7 +190,7 @@ contentByRef filename ref = do
 showTitle filename = do
   d <- getInfo filename
   let title = 
-        case findObjThroughDict d "/Title" of
+        case findObjFromDict d "/Title" of
           Just (PdfText s) -> s
           Just x -> show x
           Nothing -> "No title anyway"
@@ -210,4 +210,4 @@ showOutlines filename = do
   d <- getOutlines filename
   putStrLn $ show d
   return ()
-  
+
