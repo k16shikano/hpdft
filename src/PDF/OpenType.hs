@@ -30,15 +30,18 @@ data Table = Table String Integer Integer
 data EncRecord = EncRecord Integer Integer Integer
   deriving (Show)
 
+{-
 test f = do
   c <- BS.readFile f
   let bs = cmap c
   return bs
+-}
 
+cmap :: ByteString -> CMap
 cmap c = case parseOnly (offsetTable >>= tableRecords) c of
   Right b -> let b' = (takeCmap b)
              in case parseOnly cmapEncRecords b' of
-                  Right records -> map (subtable b') records
+                  Right records -> concatMap (subtable b') records
                   Left e -> error e
   Left e -> error e
   where
@@ -70,7 +73,7 @@ parserByFormat 14 = do
   format <- getUint16
   length <- getUint32
   rest <- (AP.take . fromInteger) length
-  return [(2,"hoge")]
+  return $ trace (show 14) $ []
 
 parserByFormat 12 = do
   format <- getUint16
@@ -96,7 +99,10 @@ parserByFormat 4 = do
   format <- getUint16
   length <- getUint16
   rest <- (AP.take . fromInteger) length
-  return [(1,"fuga")]
+  return []
+
+parserByFormat _ = return []
+
 
 -- main tables
 

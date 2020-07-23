@@ -43,6 +43,7 @@ import PDF.Definition
 import PDF.Object
 import PDF.ContentStream (parseStream, parseColorSpace)
 import PDF.Cmap (parseCMap)
+import qualified PDF.OpenType as OpenType
 
 spaces = skipSpace
 oneOf = satisfy . inClass
@@ -361,10 +362,23 @@ cMap dict objs = map pairwise dict
     pairwise x = ("", [])
 
 toUnicode :: Int -> [PDFObj] -> CMap
-toUnicode x objs = case findObjThroughDictByRef x "/ToUnicode" objs of
-  Just (ObjRef ref) -> parseCMap $ rawStreamByRef objs ref
-  otherwise -> case findObjThroughDictByRef x "/Encoding" objs of
-    Just (PdfName "/Identity-H") -> case findObjThroughDictByRef x "/ToUnicode" objs of
-      Just (ObjRef ref) -> parseCMap $ rawStreamByRef objs ref
-      otherwise -> []
-    otherwise -> []
+toUnicode x objs =
+  case findObjFromDictWithRef x "/DescendantFonts" objs of
+    Just (ObjRef ref) ->
+      case findObjsByRef ref objs of
+        Just [(PdfArray ((ObjRef subref):_))] ->
+          case findObjFromDictWithRef subref "/FontDescriptor" objs of
+            Just (ObjRef desc) ->
+              case findObjFromDictWithRef desc "/FontFile2" objs of
+                Just (ObjRef fontfile) ->
+                  OpenType.cmap $ BSL.toStrict $ rawStreamByRef objs fontfile
+                otherwise -> []
+            otherwise -> []
+        otherwise -> []
+    otherwise -> 
+      case findObjFromDictWithRef x "/ToUnicode" objs of
+        Just (ObjRef ref) ->
+--          trace (show ref) $           
+          parseCMap $ rawStreamByRef objs ref
+        otherwise -> []
+  
