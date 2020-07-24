@@ -59,6 +59,7 @@ elems = choice [ try pdfopBT
                , try pdfopTd
                , try pdfopTm
                , try pdfopTc
+               , try pdfopTs
                , try pdfopTw
                , try pdfopTL
                , try pdfopTz
@@ -510,6 +511,14 @@ pdfopTr = do
   spaces
   st <- getState
   let ff = fontfactor st
+  return $ ""
+
+pdfopTs :: PSParser T.Text
+pdfopTs = do
+  tc <- digitParam
+  spaces
+  string "Ts"
+  spaces
   return $ ""
 
 desideParagraphBreak :: Double -> Double -> Double -> Double -> Double -> Double 
