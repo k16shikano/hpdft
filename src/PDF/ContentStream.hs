@@ -7,7 +7,7 @@ module PDF.ContentStream
 
 import Data.Char (chr, ord)
 import Data.String (fromString)
-import Data.List (isPrefixOf)
+import Data.List (isPrefixOf, dropWhileEnd)
 import Numeric (readOct, readHex)
 import Data.Maybe (fromMaybe)
 
@@ -170,9 +170,7 @@ pdfopBMC = do
 
 pdfopBDC :: PSParser T.Text
 pdfopBDC = do
-  n1 <- (++) <$> string "/" <*> manyTill anyChar (try $ lookAhead propertyList)
-  spaces
-  n2 <- propertyList
+  n1 <- name *> propertyList
   spaces
   string "BDC"
   spaces
@@ -186,9 +184,19 @@ pdfopEMC = do
   return T.empty
 
 propertyList :: PSParser T.Text
-propertyList = do
-  plist <- spaces >> string "<<" >> spaces *> manyTill anyChar (try $ spaces >> string ">>")
-  return $ T.pack plist
+propertyList = spaces >> choice [try dictionary, try name]
+
+dictionary :: PSParser T.Text
+dictionary = T.concat <$> (spaces >> string "<<" >> spaces
+                            *> manyTill dictEntry (try (string ">>" >> (notFollowedBy $ string ">"))))
+
+dictEntry :: PSParser T.Text
+dictEntry = choice [try name, T.pack <$> try hex, T.pack <$> try (many1 digit)] <* spaces
+  where
+    hex = string "<" >> (manyTill (oneOf "0123456789abcdefABCDEF") (try $ string ">"))
+
+name :: PSParser T.Text
+name = T.pack <$> ((++) <$> string "/" <*> (manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/")) <* spaces)
 
 
 pdfopTj :: PSParser T.Text
@@ -230,9 +238,15 @@ pdfQuote = do
 unknowns :: PSParser T.Text
 unknowns = do 
   ps <- manyTill anyChar (try $ oneOf "\r\n")
-  return $ if ps=="" 
-           then "" 
-           else T.pack $ "[[[UNKNOWN STREAM:" ++ take 100 (show ps) ++ "]]]"
+  st <- getState
+  -- linebreak within (...) is parsed as Tj
+  return $ case runParser elems st "" $ BSC.pack ((Data.List.dropWhileEnd (=='\\') ps)++")Tj") of
+             Right xs -> xs
+             Left e -> case runParser elems st "" $ BSC.pack ("("++ps) of
+               Right xs -> xs
+               Left e -> case ps of
+                 "" -> ""
+                 otherwise -> T.pack $ "[[[UNKNOWN STREAM:" ++ take 100 (show ps) ++ "]]]"
 
 skipOther :: PSParser T.Text
 skipOther = do
@@ -260,7 +274,10 @@ letters = do
         Just (CIDmap s) -> cidletter s
         Just (WithCharSet s) -> cidletters
         Just NullMap -> psletter []
-        Nothing -> cidletter "Adobe-Japan1" -- as a defalt map
+        Nothing -> T.pack <$> (many1 $ choice [ try $ ')' <$ (string "\\)")
+                                              , try $ '(' <$ (string "\\(")
+                                              , try $ noneOf ")"
+                                              ])
   lets <- manyTill letterParser (try $ char ')')
   spaces
   return $ T.concat lets
@@ -289,7 +306,7 @@ toUcs m h = case lookup h m of
   Just ucs -> T.pack ucs
   Nothing -> adobeOneSix h
 
-cidletters = choice [try hexletter, octletter]
+cidletters = choice [try hexletter, try octletter]
 
 hexletter :: PSParser T.Text
 hexletter = do

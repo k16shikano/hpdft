@@ -122,12 +122,20 @@ findKids dict = case find isKidsRefs dict of
 
 contentsStream :: Dict -> PSR -> [PDFObj] -> PDFStream
 contentsStream dict st objs = case find contents dict of
-  Just (PdfName "/Contents", PdfArray arr) -> parseContentStream dict st objs $ BSL.concat $ map (rawStreamByRef objs) (parseRefsArray arr)
-  Just (PdfName "/Contents", ObjRef r)     -> parseContentStream dict st objs $ rawStreamByRef objs r
-  Nothing                                  -> error "No content to be shown"
+  Just (PdfName "/Contents", PdfArray arr) -> getContentArray arr
+  Just (PdfName "/Contents", ObjRef r) ->
+    case findObjsByRef r objs of
+      Just [PdfArray arr] -> getContentArray arr
+      Just _ -> getContent r
+      Nothing -> error "No content to be shown"
+  Nothing -> error "No content to be shown"
   where
     contents (PdfName "/Contents", _) = True
-    contents _                        = False
+    contents _ = False
+
+    getContentArray arr = parseContentStream dict st objs $
+                          BSL.concat $ map (rawStreamByRef objs) (parseRefsArray arr)
+    getContent r = parseContentStream dict st objs $ rawStreamByRef objs r
 
 parseContentStream :: Dict -> PSR -> [PDFObj] -> BSL.ByteString -> PDFStream
 parseContentStream dict st objs s = 
