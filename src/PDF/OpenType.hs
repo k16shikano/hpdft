@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module PDF.OpenType
-       where
+module PDF.OpenType (cmap) where
 
 import Numeric (readInt)
 import Data.Char (chr)
@@ -11,7 +10,6 @@ import Data.Bits
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Char8 as BSC
 
 import Data.Attoparsec.ByteString (Parser, parseOnly, word8, string)
@@ -73,7 +71,7 @@ parserByFormat 14 = do
   format <- getUint16
   length <- getUint32
   rest <- (AP.take . fromInteger) length
-  return $ trace (show 14) $ []
+  return $ []
 
 parserByFormat 12 = do
   format <- getUint16
@@ -91,15 +89,44 @@ parserByFormat 12 = do
       endCharCode <- fromInteger <$> getUint32
       startGlyphID  <- fromInteger <$> getUint32
       return $ toCmap startGlyphID [startCharCode .. endCharCode]
-
     toCmap gid range = zip [gid ..] $ map ((:[]).chr) range
-
 
 parserByFormat 4 = do
   format <- getUint16
-  length <- getUint16
-  rest <- (AP.take . fromInteger) length
-  return []
+  length <- fromInteger <$> getUint16
+  language <- getUint16
+  segCount2 <- fromInteger <$> getUint16
+  searchRange <- getUint16
+  entrySlector <- getUint16
+  rangeShift <-getUint16
+  let segCount = segCount2 `div` 2
+  endCodes <- count segCount $ fromInteger <$> getUint16
+  reservedPad <- contiguous [0x00, 0x00]
+  startCodes <- count segCount $ fromInteger <$> getUint16
+  idDelta <- count segCount $ fromInteger <$> getUint16
+  rest <- AP.take (length - 16 - segCount2 * 3)
+  return $ concat $ getGlyphIDs startCodes endCodes idDelta rest
+
+  where
+    getGlyphIDs [] _ _ _ = []
+    getGlyphIDs (s:ss) (e:ee) (d:dd) rest =
+      -- take 2bytes from idRangeOffset[uint16]
+      let rest' = BS.drop 2 rest
+      in (getGlyphID s e d rest):(getGlyphIDs ss ee dd rest')
+
+    getGlyphID :: Int -> Int -> Int -> ByteString
+                -> CMap
+    getGlyphID start end delta rest =
+      let offset = fromInteger $ fromBytes $ BS.take 2 rest
+      in 
+        if offset == 0
+        then zip (map (+delta) [start .. end])
+                 (map ((:[]).chr) [start .. end])
+        else zip (map (getRangeOffsetGlyphID start offset rest) [start .. end])
+                 (map ((:[]).chr) [start .. end])
+             
+    getRangeOffsetGlyphID s o bytestring c =
+      fromInteger $ fromBytes $ BS.take 2 $ BS.drop (o + 2 * (c - s)) bytestring
 
 parserByFormat _ = return []
 
