@@ -59,16 +59,16 @@ getObjectByRef ref pdfobjs = do
 
 -- | Get a PDF stream from a whole 'PDFObj' by specifying `ref :: Int`
 
-getStreamByRef :: Int -> [PDFObj] -> IO BSL.ByteString
-getStreamByRef n =
+getStreamByRef :: Bool -> Int -> [PDFObj] -> IO BSL.ByteString
+getStreamByRef hex n =
   return
-  <$> showBSL
+  <$> showBSL hex
   <$> (flip rawStreamByRef) n
 
-showBSL s =
+showBSL hex s =
   let strm' = (B.toLazyByteString . B.lazyByteStringHex) s
-  in if BSL.length strm' > 256
-     then BSL.concat [BSL.take 256 strm', "...(omit)"]
+  in if hex
+     then if BSL.length strm' > 256 then BSL.concat [BSL.take 256 strm', "...(omit)"] else strm'
      else s
 
 -- | The reference number of /Root in `filename`.

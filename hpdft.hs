@@ -14,7 +14,7 @@ import System.Environment (getArgs)
 import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
-import Data.List (nub)
+import Data.List (nub, find)
 import Data.Maybe (fromMaybe)
 
 import Options.Applicative
@@ -108,7 +108,7 @@ hpdft (CmdOpt 0 0 False _ _ True _ fn) = showOutlines fn
 hpdft (CmdOpt 0 0 False _ _ _ True fn) = print =<< getTrailer fn
 hpdft (CmdOpt 0 0 True _ _ _ _ fn) = print =<< refByPage fn
 hpdft (CmdOpt n 0 False _ _ _ _ fn) = showPage fn n
-hpdft (CmdOpt 0 r False _ _ _ _ fn) = print =<< getObjectByRef r =<< getPDFObjFromFile fn
+hpdft (CmdOpt 0 r False _ _ _ _ fn) = showContent False fn r
 hpdft _ = return ()
 
 -- | Get a whole text from 'filename'. It works as:
@@ -184,6 +184,17 @@ contentByRef filename ref = do
           case findDictOfType "/Page" obj of
             Just dict -> contentsStream dict initstate objs
             Nothing -> ""
+
+showContent hex filename ref = do
+  objs <- getPDFObjFromFile filename
+  obj <- getObjectByRef ref objs
+  case hasStream obj of
+    Just _ -> BSL.putStrLn =<< getStreamByRef hex ref objs
+    Nothing -> print =<< getObjectByRef ref objs
+  where
+    hasStream obj = find isStream obj
+    isStream (PdfStream s) = True
+    isStream _             = False
 
 -- | Show /Title from meta information in 'filename'
 
