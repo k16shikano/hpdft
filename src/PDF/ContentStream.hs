@@ -36,7 +36,7 @@ parseContentStream p st = runParser p st ""
 
 parseStream :: PSR -> PDFStream -> PDFStream
 parseStream psr pdfstream = 
-  case parseContentStream (T.concat <$> many (elems <|> skipOther)) psr pdfstream of
+  case parseContentStream (T.concat <$> (spaces >> many (try elems <|> skipOther))) psr pdfstream of
     Left  err -> error $ "Nothing to be parsed: " ++ (show err) 
     Right str -> BSC.pack $ BS.unpack $ encodeUtf8 str
 
@@ -192,7 +192,11 @@ dictionary = T.concat <$> (spaces >> string "<<" >> spaces
                             *> manyTill dictEntry (try (string ">>" >> (notFollowedBy $ string ">"))))
 
 dictEntry :: PSParser T.Text
-dictEntry = choice [try name, T.pack <$> try hex, T.pack <$> try (many1 digit)] <* spaces
+dictEntry = choice [ try name
+                   , try letters
+                   , T.pack <$> try hex
+                   , T.pack <$> try (many1 digit)
+                   ] <* spaces
   where
     hex = string "<" >> (manyTill (oneOf "0123456789abcdefABCDEF") (try $ string ">"))
 
