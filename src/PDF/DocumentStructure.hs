@@ -24,6 +24,7 @@ module PDF.DocumentStructure
        , findObjsByRef
        , findObjs
        , findTrailer
+       , rawStream
        ) where
 
 import Data.Char (chr)
@@ -44,6 +45,7 @@ import PDF.Definition
 import PDF.Object
 import PDF.ContentStream (parseStream, parseColorSpace)
 import PDF.Cmap (parseCMap)
+import qualified PDF.OpenType as OpenType
 
 spaces = skipSpace
 oneOf = satisfy . inClass
@@ -374,10 +376,24 @@ findCMap d objs = map pairwise (fontObjs d objs)
     pairwise x = ("", [])
 
 toUnicode :: Int -> [PDFObj] -> CMap
-toUnicode x objs = case findObjFromDictWithRef x "/ToUnicode" objs of
-  Just (ObjRef ref) -> parseCMap $ rawStreamByRef objs ref
-  otherwise -> case findObjFromDictWithRef x "/Encoding" objs of
-    Just (PdfName "/Identity-H") -> case findObjFromDictWithRef x "/ToUnicode" objs of
-      Just (ObjRef ref) -> parseCMap $ rawStreamByRef objs ref
-      otherwise -> []
+toUnicode x objs =
+  case findObjFromDictWithRef x "/ToUnicode" objs of
+    Just (ObjRef ref) ->
+      parseCMap $ rawStreamByRef objs ref
+    otherwise -> noToUnicode x objs
+
+noToUnicode x objs = 
+  case findObjFromDictWithRef x "/DescendantFonts" objs of
+    Just (ObjRef ref) ->
+      case findObjsByRef ref objs of
+        Just [(PdfArray ((ObjRef subref):_))] ->
+          case findObjFromDictWithRef subref "/FontDescriptor" objs of
+            Just (ObjRef desc) ->
+              case findObjFromDictWithRef desc "/FontFile2" objs of
+                Just (ObjRef fontfile) ->
+                  OpenType.cmap $ BSL.toStrict $ rawStreamByRef objs fontfile
+                otherwise -> []
+            otherwise -> []
+        otherwise -> []
     otherwise -> []
+
