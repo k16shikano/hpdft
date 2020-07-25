@@ -57,11 +57,13 @@ bfchar = do
 
 bfrange :: Parser [CMap]
 bfrange = do
-  many1 digit
+  d <- many1 digit
   spaces 
   string "beginbfrange"
   spaces
-  ms <- many (toCmap <$> (getRange <$> hexletters <*> hexletters) <*> (hexletters <|> hexletterArray))
+  ms <- many (toCmap
+              <$> (getRange <$> hexletters <*> hexletters)
+              <*> ((mkStrList d . lines) <$> (try hexletters <|> hexletterArray)))
   spaces
   string "endbfrange"
   spaces
@@ -69,7 +71,10 @@ bfrange = do
     where 
       gethex = fst.head.readHex
       getRange cid cid' = [gethex cid .. gethex cid']
-      toCmap range ucs = zip range (map ((:[]).chr) [gethex ucs ..])
+      mkStrList d src = if (length src) == 1
+                        then [gethex $ head src .. ]
+                        else map gethex src
+      toCmap range ucs = zip range (map ((:[]).chr) ucs)
 
 
 hexletters :: Parser String
