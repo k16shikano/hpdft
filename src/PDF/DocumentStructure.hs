@@ -377,6 +377,12 @@ findCMap d objs = map pairwise (fontObjs d objs)
 
 toUnicode :: Int -> [PDFObj] -> CMap
 toUnicode x objs =
+  case findObjFromDictWithRef x "/ToUnicode" objs of
+    Just (ObjRef ref) ->
+      parseCMap $ rawStreamByRef objs ref
+    otherwise -> noToUnicode x objs
+
+noToUnicode x objs = 
   case findObjFromDictWithRef x "/DescendantFonts" objs of
     Just (ObjRef ref) ->
       case findObjsByRef ref objs of
@@ -389,10 +395,5 @@ toUnicode x objs =
                 otherwise -> []
             otherwise -> []
         otherwise -> []
-    otherwise -> 
-      case findObjFromDictWithRef x "/ToUnicode" objs of
-        Just (ObjRef ref) ->
---          trace (show ref) $           
-          parseCMap $ rawStreamByRef objs ref
-        otherwise -> []
+    otherwise -> []
 

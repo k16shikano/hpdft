@@ -273,7 +273,7 @@ letters = do
   let letterParser = case lookup (curfont st) (fontmaps st) of
         Just (Encoding m) -> psletter m
         Just (CIDmap s) -> cidletter s
-        Just (WithCharSet s) -> cidletters
+        Just (WithCharSet s) -> psletter [] -- cidletters
         Just NullMap -> psletter []
         Nothing -> T.pack <$> (many1 $ choice [ try $ ')' <$ (string "\\)")
                                               , try $ '(' <$ (string "\\(")
