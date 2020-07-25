@@ -172,7 +172,10 @@ pageTreeToList Nop = []
 
 showPage filename page = do 
   pagetree <- refByPage filename
-  contentByRef filename $ pagetree !! (page - 1)
+  case length pagetree >= page of
+    True -> contentByRef filename $ pagetree !! (page - 1)
+    False -> putStrLn $ "hpdft: No Page "++(show page)
+
 
 -- | Show /Content referenced from the 'ref'ed-object in 'filename'.
 
