@@ -48,11 +48,11 @@ toString depth (ObjOther o) = o
 toString depth (PdfNull) = ""
 
 
-data FontMap = CIDmap String | FontMap [(Char,String)] | WithCharSet String | NullMap
+data Encoding = CIDmap String | Encoding [(Char,String)] | WithCharSet String | NullMap
 
-instance Show FontMap where
+instance Show Encoding where
   show (CIDmap s) = "CIDmap"++s
-  show (FontMap a) = "FontMap"++show a
+  show (Encoding a) = "Encoding"++show a
   show (WithCharSet s) = "WithCharSet"++s
   show NullMap = []
 
@@ -71,7 +71,7 @@ data PSR = PSR { linex      :: Double
                , fontfactor :: Double
                , curfont    :: String
                , cmaps      :: [(String, CMap)]
-               , fontmaps   :: [(String, FontMap)]
+               , fontmaps   :: [(String, Encoding)]
                , colorspace :: String
                , xcolorspaces :: [String]
                }

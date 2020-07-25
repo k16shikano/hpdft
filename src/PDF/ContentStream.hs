@@ -271,7 +271,7 @@ letters = do
   char '('
   st <- getState
   let letterParser = case lookup (curfont st) (fontmaps st) of
-        Just (FontMap m) -> psletter m
+        Just (Encoding m) -> psletter m
         Just (CIDmap s) -> cidletter s
         Just (WithCharSet s) -> cidletters
         Just NullMap -> psletter []

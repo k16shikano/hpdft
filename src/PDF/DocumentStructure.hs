@@ -140,7 +140,7 @@ contentsStream dict st objs = case find contents dict of
 parseContentStream :: Dict -> PSR -> [PDFObj] -> BSL.ByteString -> PDFStream
 parseContentStream dict st objs s = 
   parseStream (st {fontmaps=fontdict, cmaps=cmap}) s
-  where fontdict = findFontMap dict objs
+  where fontdict = findFontEncoding dict objs
         cmap = findCMap dict objs
 
 rawStreamByRef :: [PDFObj] -> Int -> BSL.ByteString
@@ -297,12 +297,12 @@ pdfObjStm n s =
 
 -- make fontmap from page's /Resources (see 3.7.2 of PDF Ref.)
 
-findFontMap d os = findEncoding (fontObjs d os) os
+findFontEncoding d os = findEncoding (fontObjs d os) os
 
-findEncoding :: Dict -> [PDFObj] -> [(String, FontMap)]
+findEncoding :: Dict -> [PDFObj] -> [(String, Encoding)]
 findEncoding dict objs = map pairwise dict
   where 
-    pairwise (PdfName n, ObjRef r) = (n, fontMap r objs)
+    pairwise (PdfName n, ObjRef r) = (n, encoding r objs)
     pairwise x = ("", NullMap)
 
 fontObjs :: Dict -> [PDFObj] -> Dict
@@ -322,10 +322,10 @@ findResourcesDict dict objs = case find resources dict of
     resources _                         = False
 
 -- Needs rewrite!
-fontMap :: Int -> [PDFObj] -> FontMap
-fontMap x objs = case findObjFromDictWithRef x "/Encoding" objs of
+encoding :: Int -> [PDFObj] -> Encoding
+encoding x objs = case findObjFromDictWithRef x "/Encoding" objs of
   Just (ObjRef ref) -> case findObjFromDictWithRef ref "/Differences" objs of
-    Just (PdfArray arr) -> charMap arr
+    Just (PdfArray arr) -> charDiff arr
     otherwise -> trace "no /differences" NullMap
   Just (PdfName "/StandardEncoding") -> NullMap
   Just (PdfName "/MacRomanEncoding") -> NullMap
@@ -356,29 +356,21 @@ fontMap x objs = case findObjFromDictWithRef x "/Encoding" objs of
   where
     defaultCIDMap = NullMap -- CIDmap "Adobe-Japan1"
 
-showBSL s =
-  let strm' = (B.toLazyByteString . B.lazyByteStringHex) s
-  in if BSL.length strm' > 64
-     then BSL.concat [BSL.take 256 s, "...(omit)"]
-     else strm'
 
-
-
-charMap :: [Obj] -> FontMap
-charMap objs = FontMap $ fontmap objs 0
-  where fontmap (PdfNumber x : PdfName n : xs) i = 
+charDiff :: [Obj] -> Encoding
+charDiff objs = Encoding $ charmap objs 0
+  where charmap (PdfNumber x : PdfName n : xs) i = 
           if i < truncate x then 
-            (chr $ truncate x, n) : (fontmap xs $ incr x)
+            (chr $ truncate x, n) : (charmap xs $ incr x)
           else 
-            (chr $ i, n) : (fontmap xs $ i+1)
-        fontmap (PdfName n : xs) i = (chr i, n) : (fontmap xs $ i+1)
-        fontmap [] i               = []
+            (chr $ i, n) : (charmap xs $ i+1)
+        charmap (PdfName n : xs) i = (chr i, n) : (charmap xs $ i+1)
+        charmap [] i               = []
         incr x = (truncate x) + 1
 
-findCMap d os = cMap (fontObjs d os) os
 
-cMap :: Dict -> [PDFObj] -> [(String, CMap)]
-cMap dict objs = map pairwise dict
+findCMap :: Dict -> [PDFObj] -> [(String, CMap)]
+findCMap d objs = map pairwise (fontObjs d objs)
   where
     pairwise (PdfName n, ObjRef r) = (n, toUnicode r objs)
     pairwise x = ("", [])
