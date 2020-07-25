@@ -18,7 +18,6 @@ module PDF.PDFIO ( getObjectByRef
                  , getRootObj
                  , getTrailer
                  , getInfo
-                 , getStreamByRef
                  ) where
 
 import PDF.Definition

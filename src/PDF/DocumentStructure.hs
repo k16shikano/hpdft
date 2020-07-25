@@ -308,8 +308,11 @@ findEncoding dict objs = map pairwise dict
 fontObjs :: Dict -> [PDFObj] -> Dict
 fontObjs dict objs = case findResourcesDict dict objs of
   Just d -> case findObjFromDict d "/Font" of
-    Just (PdfDict d) -> d
-    otherwise -> []
+    Just (PdfDict d') -> d'
+    Just (ObjRef x) -> case findDictByRef x objs of
+                         Just d' -> d'
+                         otherwise -> error "cannot find /Font dictionary"
+    otherwise -> trace (show d) $ []
   Nothing -> []
 
 findResourcesDict :: Dict -> [PDFObj] -> Maybe Dict

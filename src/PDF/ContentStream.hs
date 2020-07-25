@@ -10,14 +10,13 @@ import Data.String (fromString)
 import Data.List (isPrefixOf, dropWhileEnd)
 import Numeric (readOct, readHex)
 import Data.Maybe (fromMaybe)
-
-import Data.Binary (decode)
-import Data.ByteString (ByteString)
-import qualified Data.ByteString.Char8 as BS
-import qualified Data.ByteString.Lazy.Char8 as BSC
-import qualified Data.ByteString.Lazy.UTF8 as BSL
-import qualified Data.Text as T
 import qualified Data.Map as Map
+
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy.Char8 as BSLC (ByteString, pack)
+import qualified Data.ByteString.Char8 as BSSC (unpack)
+import qualified Data.ByteString.Lazy.UTF8 as BSLU (toString)
+import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8)
 
 import Text.Parsec hiding (many, (<|>))
@@ -38,9 +37,9 @@ parseStream :: PSR -> PDFStream -> PDFStream
 parseStream psr pdfstream = 
   case parseContentStream (T.concat <$> (spaces >> many (try elems <|> skipOther))) psr pdfstream of
     Left  err -> error $ "Nothing to be parsed: " ++ (show err) 
-    Right str -> BSC.pack $ BS.unpack $ encodeUtf8 str
+    Right str -> BSLC.pack $ BSSC.unpack $ encodeUtf8 str
 
-parseColorSpace :: PSR -> BSC.ByteString -> [T.Text]
+parseColorSpace :: PSR -> BSLC.ByteString -> [T.Text]
 parseColorSpace psr pdfstream = 
   case parseContentStream (many (choice [ try colorSpace
                                         , try $ T.concat <$> xObject
@@ -245,9 +244,9 @@ unknowns = do
   ps <- manyTill anyChar (try $ oneOf "\r\n")
   st <- getState
   -- linebreak within (...) is parsed as Tj
-  return $ case runParser elems st "" $ BSC.pack ((Data.List.dropWhileEnd (=='\\') ps)++")Tj") of
+  return $ case runParser elems st "" $ BSLC.pack ((Data.List.dropWhileEnd (=='\\') ps)++")Tj") of
              Right xs -> xs
-             Left e -> case runParser elems st "" $ BSC.pack ("("++ps) of
+             Left e -> case runParser elems st "" $ BSLC.pack ("("++ps) of
                Right xs -> xs
                Left e -> case ps of
                  "" -> ""
@@ -274,19 +273,43 @@ letters :: PSParser T.Text
 letters = do
   char '('
   st <- getState
-  let letterParser = case lookup (curfont st) (fontmaps st) of
+  let cmap = fromMaybe [] (lookup (curfont st) (cmaps st))
+      letterParser = case lookup (curfont st) (fontmaps st) of
         Just (Encoding m) -> psletter m
         Just (CIDmap s) -> cidletter s
-        Just (WithCharSet s) -> psletter [] -- cidletters
+        Just (WithCharSet s) -> try $ bytesletter cmap <|> cidletters
         Just NullMap -> psletter []
-        Nothing -> T.pack <$> (many1 $ choice [ try $ ')' <$ (string "\\)")
-                                              , try $ '(' <$ (string "\\(")
-                                              , try $ noneOf ")"
-                                              ])
-  lets <- manyTill letterParser (try $ char ')')
+        Nothing -> (T.pack) <$> (many1 $ choice [ try $ ')' <$ (string "\\)")
+                                                , try $ '(' <$ (string "\\(")
+                                                , try $ noneOf ")"
+                                                ])
+  lets <- manyTill letterParser $ (try $ char ')')
   spaces
   return $ T.concat lets
 
+bytesletter :: CMap -> PSParser T.Text
+bytesletter cmap = do
+  txt <- (many1 $ choice [ try $ ')' <$ (string "\\)")
+                         , try $ '(' <$ (string "\\(")
+                         , try $ (chr 10) <$ (string "\\n")
+                         , try $ (chr 13) <$ (string "\\r")
+                         , try $ (chr 8) <$ (string "\\b")
+                         , try $ (chr 9) <$ (string "\\t")
+                         , try $ (chr 12) <$ (string "\\f")
+                         , try $ chr <$> ((string "\\") *> octnum)
+                         , try $ (chr 92) <$ (string "\\\\")
+                         , try $ noneOf ")"
+                         ])
+  return $ byteStringToText cmap txt
+  where
+    byteStringToText :: CMap -> String -> T.Text
+    byteStringToText cmap str = T.concat $ map (toUcs cmap) $ asInt16 $ map ord str
+
+    asInt16 :: [Int] -> [Int]
+    asInt16 [] = []
+    asInt16 (a:[]) = [a] --error $ "Can not read string "++(show a)
+    asInt16 (a:b:rest) = (a * 256 + b):(asInt16 rest)
+    
 hexletters :: PSParser T.Text
 hexletters = do
   char '<'
@@ -303,7 +326,7 @@ octletters = do
 
 adobeOneSix :: Int -> T.Text
 adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
-  Just cs -> T.pack $ BSL.toString cs
+  Just cs -> T.pack $ BSLU.toString cs
   Nothing -> T.pack $ "[" ++ (show a) ++ "]"
 
 toUcs :: CMap -> Int -> T.Text

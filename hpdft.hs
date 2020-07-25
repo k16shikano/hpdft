@@ -176,7 +176,6 @@ showPage filename page = do
     True -> contentByRef filename $ pagetree !! (page - 1)
     False -> putStrLn $ "hpdft: No Page "++(show page)
 
-
 -- | Show /Content referenced from the 'ref'ed-object in 'filename'.
 
 contentByRef filename ref = do
