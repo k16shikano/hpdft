@@ -337,7 +337,7 @@ adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
 toUcs :: CMap -> Int -> T.Text
 toUcs m h = case lookup h m of
   Just ucs -> T.pack ucs
-  Nothing -> T.pack $ [chr h]
+  Nothing -> if m == [] then adobeOneSix h else T.pack [chr h]
 
 cidletters = choice [try hexletter, try octletter]
 
