@@ -149,7 +149,7 @@ xObject = do
 pdfopBT :: PSParser T.Text
 pdfopBT = do
   st <- getState
-  updateState (\s -> s{text_m = (1,0,0,1,0,0), text_break = False})
+  updateState (\s -> s{text_m = (1,0,0,1,0,0), text_break = False, curfont = ""})
   string "BT"
   spaces
   t <- manyTill elems (try $ string "ET")
@@ -332,7 +332,7 @@ adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
 toUcs :: CMap -> Int -> T.Text
 toUcs m h = case lookup h m of
   Just ucs -> T.pack ucs
-  Nothing -> adobeOneSix h
+  Nothing -> T.pack $ [chr h]
 
 cidletters = choice [try hexletter, try octletter]
 
@@ -341,7 +341,10 @@ hexletter = do
   st <- getState
   let font = curfont st
       cmap = fromMaybe [] (lookup font (cmaps st))
-  (hexToString cmap . readHex) <$> (count 4 $ oneOf "0123456789ABCDEFabcdef")
+  (hexToString cmap . readHex) <$> choice [ try $ count 4 $ oneOf "0123456789ABCDEFabcdef"
+                                          , try $ count 2 $ oneOf "0123456789ABCDEFabcdef"
+                                          , try $ (:"0") <$> (oneOf "0123456789ABCDEFabcdef")
+                                          ]
   where hexToString m [(h,"")] = toUcs m h
         hexToString _ _ = "????"
 

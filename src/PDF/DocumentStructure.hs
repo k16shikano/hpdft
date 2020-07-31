@@ -342,15 +342,19 @@ encoding x objs = case findObjFromDictWithRef x "/Encoding" objs of
     otherwise -> case findObjFromDictWithRef x "/DescendantFonts" objs of -- needs CID to Unicode map
       Just (ObjRef ref) -> case findObjsByRef ref objs of
         Just [(PdfArray ((ObjRef subref):_))] -> case findObjFromDictWithRef subref "/CIDSystemInfo" objs of
-          Just (ObjRef inforef) -> case findObjFromDictWithRef inforef "/Registry" objs of
-            Just (PdfText "Adobe") -> case findObjFromDictWithRef inforef "/Ordering" objs of
-              Just (PdfText "Japan1") -> case findObjFromDictWithRef inforef "/Supplement" objs of
-                Just (PdfNumber _) -> CIDmap "Adobe-Japan1"
-                _ -> trace (show inforef) defaultCIDMap
-              _ -> trace (show inforef) defaultCIDMap
-            _ -> trace (show inforef) defaultCIDMap
-          _ -> trace (show subref ++ " no /cidsysteminfoy. using default...") defaultCIDMap
-        _ -> trace (show ref ++ " no array in /descendantfonts. using default...") defaultCIDMap
+          Just (ObjRef inforef) ->
+            let registry = case findObjFromDictWithRef inforef "/Registry" objs of
+                             Just (PdfText r) -> r
+                             otherwise -> error "Can not find /Registry"
+                ordering = case findObjFromDictWithRef inforef "/Ordering" objs of
+                             Just (PdfText o) -> o
+                             othserwise -> error "Can not find /Ordering"
+                supplement = case findObjFromDictWithRef inforef "/Supplement" objs of
+                               Just (PdfNumber s) -> s
+                               otherwise -> error "Can not find /Supprement"
+            in CIDmap "Adobe-Japan1"
+          otherwise -> error $ (show subref) ++ ". Can not find /CidSystemInfo. "
+        _ -> error $ (show ref) ++ ". Can not find array in /DescendantFonts. using default..."
       _ -> case findObjFromDictWithRef x "/FontDescriptor" objs of
         Just (ObjRef ref) -> case findObjFromDictWithRef ref "/FontFile3" objs of
           Just (ObjRef fontfile) -> NullMap
