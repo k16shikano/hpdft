@@ -40,7 +40,7 @@ import Debug.Trace
 
 import PDF.Definition
 
-spaces = skipSpace
+spaces = skipMany (comment <|> oneOf pdfspaces) --skipSpace
 oneOf = satisfy . inClass
 noneOf = satisfy . notInClass
 
@@ -48,13 +48,16 @@ noneOf = satisfy . notInClass
 
 pdfObj :: Parser PDFBS
 pdfObj = do
-  skipMany (comment <|> oneOf "\r\n")
+  spaces -- skipMany (comment <|> oneOf pdfspaces)
   objn <- many1 digit <* (spaces >> oneOf "0123456789" >> string " obj")
   object <- manyTill anyChar (try $ string "endobj")
   spaces
   skipMany xref
   skipMany startxref
   return $ (read objn, BS.pack object)
+
+pdfspaces :: [Char]
+pdfspaces = map chr [0, 9, 10, 12, 13, 32]
 
 parsePDFObj :: PDFBS -> PDFObj
 parsePDFObj (n,pdfobject) = case parseOnly (spaces >> many1 (try pdfobj <|> try objother)) pdfobject of

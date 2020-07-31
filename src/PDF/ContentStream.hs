@@ -296,8 +296,10 @@ bytesletter cmap = do
                          , try $ (chr 8) <$ (string "\\b")
                          , try $ (chr 9) <$ (string "\\t")
                          , try $ (chr 12) <$ (string "\\f")
-                         , try $ chr <$> ((string "\\") *> octnum)
                          , try $ (chr 92) <$ (string "\\\\")
+                         , try $ (chr 0) <$ (char '\NUL')
+                         , try $ (chr 32) <$ (char ' ')
+                         , try $ chr <$> ((string "\\") *> octnum)
                          , try $ noneOf ")"
                          ])
   return $ byteStringToText cmap txt
