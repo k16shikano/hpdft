@@ -149,7 +149,7 @@ xObject = do
 pdfopBT :: PSParser T.Text
 pdfopBT = do
   st <- getState
-  updateState (\s -> s{text_m = (1,0,0,1,0,0), text_break = False, curfont = ""})
+  updateState (\s -> s{text_m = (1,0,0,1,0,0), text_break = False})
   string "BT"
   spaces
   t <- manyTill elems (try $ string "ET")
