@@ -34,7 +34,11 @@ parseCMap str = case runParser (skipHeader >>
                                  (try $ string "endcmap"))
                                () "" str of
   Left err -> error $ "Can not parse CMap " ++ (show err)
-  Right cmap -> cmap
+  Right cmap -> mkUniq cmap
+
+  where
+    mkUniq = reverse
+
 
 skipHeader :: Parser ()
 skipHeader = do

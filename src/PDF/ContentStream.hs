@@ -309,7 +309,10 @@ bytesletter cmap = do
     asInt16 [] = []
     asInt16 (a:[]) = [a] --error $ "Can not read string "++(show a)
     asInt16 (a:b:rest) = (a * 256 + b):(asInt16 rest)
-    
+
+    -- for debug
+    -- myToUcs cmap x = if x == 636 then trace (show cmap) $ toUcs cmap x else toUcs cmap x
+
 hexletters :: PSParser T.Text
 hexletters = do
   char '<'
