@@ -29,6 +29,7 @@ library
                      , PDF.Outlines
                      , PDF.Object
                      , PDF.OpenType
+                     , PDF.CFF
   other-modules:       Paths_hpdft
   other-extensions:    OverloadedStrings
   build-depends:       attoparsec >=0.13.0
