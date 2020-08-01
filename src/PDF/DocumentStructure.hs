@@ -46,6 +46,7 @@ import PDF.Object
 import PDF.ContentStream (parseStream, parseColorSpace)
 import PDF.Cmap (parseCMap)
 import qualified PDF.OpenType as OpenType
+import qualified PDF.CFF as CFF
 
 spaces = skipSpace
 oneOf = satisfy . inClass
@@ -328,13 +329,63 @@ encoding :: Int -> [PDFObj] -> Encoding
 encoding x objs = case findObjFromDictWithRef x "/Encoding" objs of
   Just (ObjRef ref) -> case findObjFromDictWithRef ref "/Differences" objs of
     Just (PdfArray arr) -> charDiff arr
-    otherwise -> trace "no /differences" NullMap
+    otherwise -> error "No /Differences"
+  Just (PdfDict d) -> case findObjFromDict d "/Differences" of
+                        Just (PdfArray arr) -> charDiff arr
+                        _ -> error "No /Differences"
   Just (PdfName "/StandardEncoding") -> NullMap
   Just (PdfName "/MacRomanEncoding") -> NullMap
   Just (PdfName "/MacExpertEncoding") -> NullMap
   Just (PdfName "/WinAnsiEncoding") -> NullMap
+  Just (PdfName "/Identity-H") ->
+    case findObjFromDictWithRef x "/Subtype" objs of
+      Just (PdfName "/Type0") -> 
+        case findObjFromDictWithRef x "/DescendantFonts" objs of -- needs CID to Unicode map
+          Just (ObjRef ref') -> case findObjsByRef ref' objs of
+            Just [(PdfArray ((ObjRef subref):_))] ->
+              case findObjFromDictWithRef subref "/CIDSystemInfo" objs of
+                Just (PdfDict d) -> getCIDSystemInfo d
+                Just (ObjRef inforef) ->
+                  case findDictByRef inforef objs of
+                    Just d -> getCIDSystemInfo d
+                    _ -> error $ "No /CIDSystemInfo in" ++ show inforef
+                _ -> error $ (show subref) ++ ". Can not find /CidSystemInfo. "
+            _ -> error $ (show ref') ++ ". Can not find array in /DescendantFonts. using default..."
+--          Just (PdfArray (ObjRef ref':_)) -> case findObjFromDictWithRef ref' "/CIDSystemInfo" objs of
+--            Just (PdfDict d) -> getCIDSystemInfo d
+--            Just (ObjRef inforef) ->
+--              case findDictByRef inforef objs of
+--                Just d -> getCIDSystemInfo d
+--                _ -> error $ "No /CIDSystemInfo in" ++ show ref'
+--            _ -> error $ "No /CIDSystemInfo in" ++ show ref'
+          otherwise -> WithCharSet ""
+      otherwise -> NullMap
 
-  otherwise -> WithCharSet ""
+  -- When No /Encode
+  -- TODO: FontFile (Type 1), FontFile2 (TrueType), FontFile3 (Other than Type1C)
+  otherwise -> case findObjFromDictWithRef x "/Subtype" objs of
+    Just (PdfName "/Type1") ->
+      case findObjFromDictWithRef x "/FontDescriptor" objs of
+        Just (ObjRef desc) ->
+          case findObjFromDictWithRef desc "/FontFile3" objs of
+            Just (ObjRef fontfile) ->
+              CFF.encoding $ BSL.toStrict $ rawStreamByRef objs fontfile
+            otherwise -> NullMap
+        otherwise -> NullMap
+    otherwise -> NullMap
+
+  where
+    getCIDSystemInfo d =
+      let registry = case findObjFromDict d "/Registry" of
+                       Just (PdfText r) -> r
+                       otherwise -> error "Can not find /Registry"
+          ordering = case findObjFromDict d "/Ordering" of
+                       Just (PdfText o) -> o
+                       othserwise -> error "Can not find /Ordering"
+          supplement = case findObjFromDict d "/Supplement" of
+                         Just (PdfNumber s) -> s
+                         otherwise -> error "Can not find /Supprement"
+      in CIDmap $ registry ++ "-" ++ ordering -- "Adobe-Japan1"
 
 charDiff :: [Obj] -> Encoding
 charDiff objs = Encoding $ charmap objs 0
