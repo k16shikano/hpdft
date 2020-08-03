@@ -33,6 +33,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Lazy.Builder as B
 import qualified Data.Text as T
+import Data.Maybe (fromMaybe)
 
 import Data.Attoparsec.ByteString.Char8 hiding (take)
 import Data.Attoparsec.Combinator
@@ -151,19 +152,23 @@ rawStreamByRef pdfobjs x = case findObjsByRef x pdfobjs of
 
 rawStream :: [Obj] -> BSL.ByteString
 rawStream objs = case find isStream objs of
-  Just (PdfStream strm) -> streamFilter strm
+  Just (PdfStream strm) -> rawStream' (fromMaybe [] $ findDict objs) strm
   Nothing               -> BSL.pack $ show objs
   where
     isStream (PdfStream s) = True
     isStream _             = False
 
-    streamFilter = case findDict objs of
-      Just d -> case find withFilter d of
-        Just (PdfName "/Filter", PdfName "/FlateDecode")
-          -> decompress
-        Just _ -> id -- need fix
-        Nothing -> id
+    rawStream' :: Dict -> BSL.ByteString -> BSL.ByteString
+    rawStream' d s = streamFilter d s
+
+    streamFilter d = case find withFilter d of
+      Just (PdfName "/Filter", PdfName "/FlateDecode")
+        -> decompress
+      Just (PdfName "/Filter", PdfName f)
+        -> error $ "Unknown Stream Compression: " ++ f -- need fix
+      Just _ -> error $ "No Stream Compression Filter."
       Nothing -> id
+
     withFilter (PdfName "/Filter", _) = True
     withFilter _                      = False
 
@@ -302,7 +307,7 @@ findFontEncoding d os = findEncoding (fontObjs d os) os
 
 findEncoding :: Dict -> [PDFObj] -> [(String, Encoding)]
 findEncoding dict objs = map pairwise dict
-  where 
+  where
     pairwise (PdfName n, ObjRef r) = (n, encoding r objs)
     pairwise x = ("", NullMap)
 

@@ -11,18 +11,18 @@ Functions for use within IO.
 -}
 
 module PDF.PDFIO ( getObjectByRef
-                 , getStreamByRef
                  , getPDFBSFromFile
                  , getPDFObjFromFile
                  , getRootRef
                  , getRootObj
+                 , getStream
                  , getTrailer
                  , getInfo
                  ) where
 
 import PDF.Definition
 import PDF.DocumentStructure
-  (rawStreamByRef, findObjs, findObjsByRef,
+  (rawStream, rawStreamByRef, findObjs, findObjsByRef,
    findDictByRef, findObjFromDict, rootRef,
    findTrailer, expandObjStm)
 import PDF.Object (parsePDFObj)
@@ -59,11 +59,8 @@ getObjectByRef ref pdfobjs = do
 
 -- | Get a PDF stream from a whole 'PDFObj' by specifying `ref :: Int`
 
-getStreamByRef :: Bool -> Int -> [PDFObj] -> IO BSL.ByteString
-getStreamByRef hex n =
-  return
-  <$> showBSL hex
-  <$> (flip rawStreamByRef) n
+getStream :: Bool -> [Obj] -> IO BSL.ByteString
+getStream hex obj = return $ showBSL hex $ rawStream obj
 
 showBSL hex s =
   let strm' = (B.toLazyByteString . B.lazyByteStringHex) s

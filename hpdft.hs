@@ -108,7 +108,7 @@ hpdft (CmdOpt 0 0 False _ _ True _ fn) = showOutlines fn
 hpdft (CmdOpt 0 0 False _ _ _ True fn) = print =<< getTrailer fn
 hpdft (CmdOpt 0 0 True _ _ _ _ fn) = print =<< refByPage fn
 hpdft (CmdOpt n 0 False _ _ _ _ fn) = showPage fn n
-hpdft (CmdOpt 0 r False _ _ _ _ fn) = showContent False fn r
+hpdft (CmdOpt 0 r False _ _ _ _ fn) = showContent fn r
 hpdft _ = return ()
 
 -- | Get a whole text from 'filename'. It works as:
@@ -187,16 +187,32 @@ contentByRef filename ref = do
             Just dict -> contentsStream dict initstate objs
             Nothing -> ""
 
-showContent hex filename ref = do
+showContent filename ref = do
   objs <- getPDFObjFromFile filename
   obj <- getObjectByRef ref objs
-  case hasStream obj of
-    Just _ -> BSL.putStrLn =<< getStreamByRef hex ref objs
-    Nothing -> print =<< getObjectByRef ref objs
+  let d = fromMaybe [] $ findDict obj
+  if hasStream obj
+    then
+      if hasSubtype d -- then it's not content stream
+        then printStreamWithDict d obj
+        else BSL.putStrLn =<< getStream False obj
+    else print =<< getObjectByRef ref objs
   where
-    hasStream obj = find isStream obj
-    isStream (PdfStream s) = True
+
+    hasStream obj = case find isStream obj of
+      Just _ -> True
+      Nothing -> False
+    isStream (PdfStream _) = True
     isStream _             = False
+
+    hasSubtype d = case find isSubtype d of
+                       Just _ -> True
+                       Nothing -> False
+    isSubtype (PdfName "/Subtype", _) = True
+    isSubtype x = False
+
+    printStreamWithDict :: Dict -> [Obj] -> IO ()
+    printStreamWithDict d obj = print (PdfDict d) >> (BSL.putStrLn =<< getStream True obj)
 
 -- | Show /Title from meta information in 'filename'
 
