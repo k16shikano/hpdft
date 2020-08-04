@@ -330,56 +330,70 @@ findResourcesDict dict objs = case find resources dict of
     resources (PdfName "/Resources", _) = True
     resources _                         = False
 
-encoding :: Int -> [PDFObj] -> Encoding
-encoding x objs = case findObjFromDictWithRef x "/Encoding" objs of
-  Just (ObjRef ref) -> case findObjFromDictWithRef ref "/Differences" objs of
-    Just (PdfArray arr) -> charDiff arr
-    otherwise -> error "No /Differences"
-  Just (PdfDict d) -> case findObjFromDict d "/Differences" of
-                        Just (PdfArray arr) -> charDiff arr
-                        _ -> error "No /Differences"
-  Just (PdfName "/StandardEncoding") -> NullMap
-  Just (PdfName "/MacRomanEncoding") -> NullMap
-  Just (PdfName "/MacExpertEncoding") -> NullMap
-  Just (PdfName "/WinAnsiEncoding") -> NullMap
-  Just (PdfName "/Identity-H") ->
-    case findObjFromDictWithRef x "/Subtype" objs of
-      Just (PdfName "/Type0") -> 
-        case findObjFromDictWithRef x "/DescendantFonts" objs of -- needs CID to Unicode map
-          Just (ObjRef ref') -> case findObjsByRef ref' objs of
-            Just [(PdfArray ((ObjRef subref):_))] ->
-              case findObjFromDictWithRef subref "/CIDSystemInfo" objs of
-                Just (PdfDict d) -> getCIDSystemInfo d
-                Just (ObjRef inforef) ->
-                  case findDictByRef inforef objs of
-                    Just d -> getCIDSystemInfo d
-                    _ -> error $ "No /CIDSystemInfo in" ++ show inforef
-                _ -> error $ (show subref) ++ ". Can not find /CidSystemInfo. "
-            _ -> error $ (show ref') ++ ". Can not find array in /DescendantFonts. using default..."
---          Just (PdfArray (ObjRef ref':_)) -> case findObjFromDictWithRef ref' "/CIDSystemInfo" objs of
---            Just (PdfDict d) -> getCIDSystemInfo d
---            Just (ObjRef inforef) ->
---              case findDictByRef inforef objs of
---                Just d -> getCIDSystemInfo d
---                _ -> error $ "No /CIDSystemInfo in" ++ show ref'
---            _ -> error $ "No /CIDSystemInfo in" ++ show ref'
-          otherwise -> WithCharSet ""
-      otherwise -> NullMap
 
-  -- When No /Encode
-  -- TODO: FontFile (Type 1), FontFile2 (TrueType), FontFile3 (Other than Type1C)
-  otherwise -> case findObjFromDictWithRef x "/Subtype" objs of
-    Just (PdfName "/Type1") ->
-      case findObjFromDictWithRef x "/FontDescriptor" objs of
-        Just (ObjRef desc) ->
-          case findObjFromDictWithRef desc "/FontFile3" objs of
-            Just (ObjRef fontfile) ->
-              CFF.encoding $ BSL.toStrict $ rawStreamByRef objs fontfile
-            otherwise -> NullMap
-        otherwise -> NullMap
-    otherwise -> NullMap
+encoding :: Int -> [PDFObj] -> Encoding
+encoding x objs = case subtype of
+  Just (PdfName "/Type0") -> case encoding of
+    Just (PdfName "/Identity-H") -> head $ cidSysInfo descendantFonts
+    -- TODO" when /Encoding is stream of CMap
+    Just (PdfName s) -> error $ "Unknown Encoding " ++ (show s) ++ " for a Type0 font. Check " ++ show x
+    _ -> error $ "Something wrong with a Type0 font. Check " ++ (show x)
+  Just (PdfName "/Type1") -> case encoding of
+    Just (ObjRef r) -> case findObjFromDictWithRef r "/Differences" objs of
+                     Just (PdfArray arr) -> charDiff arr
+                     _ -> error "No /Differences"
+    Just (PdfDict d) -> case findObjFromDict d "/Differences" of
+                     Just (PdfArray arr) -> charDiff arr
+                     _ -> error "No /Differences"
+    Just (PdfName "/MacRomanEncoding") -> NullMap
+    Just (PdfName "/MacExpertEncoding") -> NullMap
+    Just (PdfName "/WinAnsiEncoding") -> NullMap
+    -- TODO: FontFile (Type 1), FontFile2 (TrueType), FontFile3 (Other than Type1C)
+    _ -> case findObjFromDict (fontDescriptor' x) "/FontFile3" of
+                Just (ObjRef fontfile) ->
+                  CFF.encoding $ BSL.toStrict $ rawStreamByRef objs fontfile
+                _ -> NullMap
+  -- TODO
+  Just (PdfName "/Type2") -> NullMap
+  Just (PdfName "/Type3") -> NullMap
+  _ -> NullMap
 
   where
+    subtype = get "/Subtype"
+    encoding = get "/Encoding"
+    toUnicode = get "/ToUnicode" 
+
+    get s = findObjFromDictWithRef x s objs
+
+    -- Should be an array (or ref to an array) containing refs
+    descendantFonts :: [Obj]
+    descendantFonts = case findObjFromDictWithRef x "/DescendantFonts" objs of
+      Just (PdfArray dfrs) -> dfrs
+      Just (ObjRef r) -> case findObjsByRef r objs of
+        Just [(PdfArray dfrs)] -> dfrs
+        _ -> error $ "Can not find /DescendantFonts entries in " ++ show r
+      _ -> error $ "Can not find /DescendantFonts itself in " ++ show x 
+
+    cidSysInfo :: [Obj] -> [Encoding]
+    cidSysInfo [] = []
+    cidSysInfo ((ObjRef r):rs) = (cidSysInfo' r):(cidSysInfo rs)
+    cidSysInfo' dfr = case findObjFromDictWithRef dfr "/CIDSystemInfo" objs of
+      Just (PdfDict dict) -> getCIDSystemInfo dict
+      Just (ObjRef r) -> case findDictByRef r objs of
+                           Just dict -> getCIDSystemInfo dict
+                           _ -> error $ "Can not find /CIDSystemInfo entries in" ++ show r
+      _ -> error $ "Can not find /CidSystemInfo itself " ++ show dfr
+
+    fontDescriptor :: [Obj] -> [Dict]
+    fontDescriptor [] = []
+    fontDescriptor ((ObjRef r):rs) = (fontDescriptor' r):(fontDescriptor rs)
+    fontDescriptor' :: Int -> Dict
+    fontDescriptor' fdr = case findObjFromDictWithRef fdr "/FontDescriptor" objs of
+      Just (ObjRef r) -> case findDictByRef r objs of
+                           Just dict -> dict
+                           _ -> error $ "No /FontDescriptor entries in " ++ show r
+      _ -> error $ "Can not find /FontDescriptor itself in " ++ show fdr
+
     getCIDSystemInfo d =
       let registry = case findObjFromDict d "/Registry" of
                        Just (PdfText r) -> r
@@ -390,7 +404,11 @@ encoding x objs = case findObjFromDictWithRef x "/Encoding" objs of
           supplement = case findObjFromDict d "/Supplement" of
                          Just (PdfNumber s) -> s
                          otherwise -> error "Can not find /Supprement"
-      in CIDmap $ registry ++ "-" ++ ordering -- "Adobe-Japan1"
+          cmap = registry ++ "-" ++ ordering -- ex. "Adobe-Japan1"
+      in if cmap == "Adobe-Japan1"
+         then CIDmap cmap
+         else WithCharSet ""
+
 
 charDiff :: [Obj] -> Encoding
 charDiff objs = Encoding $ charmap objs 0
