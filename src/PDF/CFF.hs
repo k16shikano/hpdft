@@ -50,7 +50,7 @@ parseDict c d = case parseOnly (many1 dict) d of
       Right arr -> map (chr . fromInteger) arr
       Left e -> error "Failed to parse Encoding Array"
     Just a -> error (show a)
-    Nothing -> error "No Encodind Array"
+    Nothing -> error $ "No Encodind Array" ++ show dictData
 
 stringInd = map (('/':) . BSC.unpack) <$> (header >> index >> index *> index)
 
