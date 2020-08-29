@@ -48,6 +48,7 @@ import PDF.ContentStream (parseStream, parseColorSpace)
 import PDF.Cmap (parseCMap)
 import qualified PDF.OpenType as OpenType
 import qualified PDF.CFF as CFF
+import qualified PDF.Type1 as Type1
 
 spaces = skipSpace
 oneOf = satisfy . inClass
@@ -350,9 +351,12 @@ encoding x objs = case subtype of
     Just (PdfName "/WinAnsiEncoding") -> NullMap
     -- TODO: FontFile (Type 1), FontFile2 (TrueType), FontFile3 (Other than Type1C)
     _ -> case findObjFromDict (fontDescriptor' x) "/FontFile3" of
-                Just (ObjRef fontfile) ->
-                  CFF.encoding $ BSL.toStrict $ rawStreamByRef objs fontfile
-                _ -> NullMap
+           Just (ObjRef fontfile) ->
+             CFF.encoding $ BSL.toStrict $ rawStreamByRef objs fontfile
+           _ -> case findObjFromDict (fontDescriptor' x) "/FontFile" of
+             Just (ObjRef fontfile) ->
+               Type1.encoding $ BSL.toStrict $ rawStreamByRef objs fontfile
+             _ -> NullMap
   -- TODO
   Just (PdfName "/Type2") -> NullMap
   Just (PdfName "/Type3") -> NullMap

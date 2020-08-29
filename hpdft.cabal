@@ -30,6 +30,7 @@ library
                      , PDF.Object
                      , PDF.OpenType
                      , PDF.CFF
+                     , PDF.Type1
   other-modules:       Paths_hpdft
   other-extensions:    OverloadedStrings
   build-depends:       attoparsec >=0.13.0
