@@ -22,6 +22,8 @@ Available options:
 
 ## install
 
+Clone this repository and do cabal-install.
+
 ```
 $ cabal install
 ```
