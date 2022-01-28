@@ -30,7 +30,7 @@ import PDF.Object (parsePDFObj)
 import Debug.Trace
 
 import qualified Data.ByteString.Char8 as BS
-import qualified Data.ByteString.Lazy.Builder as B
+import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy.Char8 as BSL
 
 -- | Get PDF objects as a whole bytestring. Use `getPDFObjFromFile` instead if there's no reason to see a raw bytestring. 

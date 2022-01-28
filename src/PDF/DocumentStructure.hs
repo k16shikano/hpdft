@@ -31,7 +31,7 @@ import Data.Char (chr)
 import Data.List (find)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
-import qualified Data.ByteString.Lazy.Builder as B
+import qualified Data.ByteString.Builder as B
 import qualified Data.Text as T
 import Data.Maybe (fromMaybe)
 
