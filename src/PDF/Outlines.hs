@@ -53,12 +53,14 @@ getOutlines filename = do
     Nothing -> error "No top level outline entry."
   firstdict <- case findObjsByRef firstref objs of
     Just [PdfDict d] -> return d
+    Just s -> error $ "Unknown Object: " ++ show s
     Nothing -> error $ "No Object with Ref " ++ show firstref
   return $ gatherOutlines firstdict objs
 
 gatherChildren dict objs = case findFirst dict of
   Just r -> case findObjsByRef r objs of
     Just [PdfDict d] -> gatherOutlines d objs
+    Just s -> error $ "Unknown Object at " ++ show r
     Nothing -> error $ "No Object with Ref " ++ show r
   Nothing -> PDFOutlinesNE
 
@@ -70,6 +72,7 @@ gatherOutlines dict objs =
                                                             , text = findTitle dict objs ++ "\n"
                                                             , subs = c}
                                            : [gatherOutlines d objs])
+      Just s -> error $ "Unknown Object at " ++ show r
       Nothing -> error $ "No Object with Ref " ++ show r
     Nothing -> PDFOutlinesEntry { dest = head $ findDest dict
                                 , text = findTitle dict objs ++ "\n"
@@ -78,6 +81,7 @@ gatherOutlines dict objs =
 outlines :: Dict -> Int
 outlines dict = case find isOutlinesRef dict of
   Just (_, ObjRef x) -> x
+  Just s -> error $ "Unknown Object: " ++ show s
   Nothing            -> error "There seems no /Outlines in the root"
   where
     isOutlinesRef (PdfName "/Outlines", ObjRef x) = True
@@ -95,6 +99,7 @@ outlineObjFromFile filename = do
     Nothing   -> error "Something wrong..."
   case findObjsByRef outlineref objs of
     Just [PdfDict d] -> return d
+    Just s -> error $ "Unknown Object: " ++ show s
     Nothing -> error "Could not get outlines object"
 
 findTitle dict objs = 
@@ -104,6 +109,7 @@ findTitle dict objs =
       Left err -> s
     Just (ObjRef r) -> case findObjsByRef r objs of
       Just [PdfText s] -> s
+      Just s -> error $ "Unknown Object at " ++ show r
       Nothing -> error $ "No title object in " ++ show r
     Just x -> show x
     Nothing -> error "No title object."
@@ -111,14 +117,17 @@ findTitle dict objs =
 findDest dict = 
   case findObjFromDict dict "/Dest" of
     Just (PdfArray a) -> parseRefsArray a
+    Just s -> error $ "Unknown Object: " ++ show s
     Nothing -> error "No destination object."
 
 findNext dict = 
   case findObjFromDict dict "/Next" of
     Just (ObjRef x) -> Just x
+    Just s -> error $ "Unknown Object: " ++ show s
     Nothing -> Nothing
 
 findFirst dict =
   case findObjFromDict dict "/First" of
     Just (ObjRef x) -> Just x
+    Just s -> error $ "Unknown Object: " ++ show s
     Nothing -> Nothing
