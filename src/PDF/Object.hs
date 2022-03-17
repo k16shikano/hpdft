@@ -28,7 +28,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf16BEWith)
-import Data.Text.Encoding.Error (lenientDecode)
+import Data.Text.Encoding.Error (strictDecode)
 import Numeric (readOct, readHex)
 import Data.ByteString.Builder (toLazyByteString, word16BE)
 
@@ -106,43 +106,46 @@ pdfarray :: Parser Obj
 pdfarray = PdfArray <$> (string "[" >> spaces *> manyTill pdfobj (try $ spaces >> string "]"))
 
 pdfname :: Parser Obj
-pdfname = PdfName . BS.unpack <$> (BS.append <$> string "/" <*> (BS.pack <$> (manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/")))) <* spaces
+pdfname = PdfName . BS.unpack <$> (BS.append <$> string "/" <*> (BS.pack <$> manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/"))) <* spaces
 
 pdfletters :: Parser Obj
 pdfletters = PdfText <$> parsePdfLetters
 
 parsePdfLetters :: Parser String
-parsePdfLetters = (concat <$> (char '(' *> manyTill (choice [try pdfutf, try pdfoctutf, pdfletter]) (try $ char ')')))
-  where pdfletter = do
-          str <- choice [ return <$> try (char '\\' >> oneOf "\\()")
-                        , "\n" <$ try (string "\n")
-                        , "\r" <$ try (string "\r")
-                        , "\t" <$ try (string "\t")
-                        , "\b" <$ try (string "\b")
-                        , "\f" <$ try (string "\f")
-                        , (++) <$> ("(" <$ char '(') <*> ((++")") . concat <$> manyTill pdfletter (try $ char ')'))
-                        , return <$> (noneOf "\\")
-                        ]
-          return $ str
+parsePdfLetters = concat <$> (char '(' *>
+                               manyTill (choice [ try pdfutf
+                                                , try pdfoctutf
+                                                , pdfletter])
+                               (try $ char ')'))
+  where pdfletter =
+          choice [ "(" <$ try (string "\\(")
+                 , ")" <$ try (string "\\)")
+                 , "\\" <$ try (string "\\\\")
+                 , "\n" <$ try (string "\\n")
+                 , "\r" <$ try (string "\\r")
+                 , "\t" <$ try (string "\\t")
+                 , "\b" <$ try (string "\\b")
+                 , "\f" <$ try (string "\\f")
+                 , return <$> try (noneOf "\\")
+                 , "" <$ string "\\"
+                 ]
         pdfutf :: Parser String
         pdfutf = do 
-          str <- string "\254\255" *> manyTill anyChar (lookAhead $ string ")")
-          return $ utf16be str
+          str <- string "\254\255" *> manyTill pdfletter (lookAhead $ string ")")
+          return $ utf16be $ concat str
         
         pdfoctutf :: Parser String
         pdfoctutf = do
           string "\\376\\377" 
-          octstr <- manyTill (choice [ try (return . chr . fst . head . readOct <$> (char '\\' *> count 3 (oneOf "01234567")))
+          octstr <- manyTill (choice [ try (return . chr . fst . head . readOct
+                                            <$> (char '\\' *> count 3 (oneOf "01234567")))
                                      , try ("\92" <$ string "\\\\")
                                      , return <$> noneOf "\\"
                                      ])
                     (lookAhead $ string ")")
           return $ utf16be $ concat octstr
 
-        octToString [] = "????"
-        octToString [(o,_)] = [chr o]
-
-utf16be = T.unpack . decodeUtf16BEWith lenientDecode . BS.pack
+utf16be = T.unpack . decodeUtf16BEWith strictDecode . BS.pack
 
 pdfstream :: Parser Obj
 pdfstream = PdfStream <$> stream
