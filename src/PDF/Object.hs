@@ -126,9 +126,15 @@ parsePdfLetters = concat <$> (char '(' *>
                  , "\t" <$ try (string "\\t")
                  , "\b" <$ try (string "\\b")
                  , "\f" <$ try (string "\\f")
+                 , octal <$> try (char '\\' *> count 3 (oneOf "01234567"))
+                 , octal <$> try (char '\\' *> count 2 (oneOf "01234567"))
+                 , octal . (:[]) <$> try (char '\\' *> oneOf "01234567")
                  , return <$> try (noneOf "\\")
                  , "" <$ string "\\"
                  ]
+
+        octal = return . chr . fst . head . readOct
+        
         pdfutf :: Parser String
         pdfutf = do 
           str <- string "\254\255" *> manyTill pdfletter (lookAhead $ string ")")
@@ -136,15 +142,9 @@ parsePdfLetters = concat <$> (char '(' *>
         
         pdfoctutf :: Parser String
         pdfoctutf = do
-          string "\\376\\377" 
-          octstr <- manyTill (choice [ try (return . chr . fst . head . readOct
-                                            <$> (char '\\' *> count 3 (oneOf "01234567")))
-                                     , try ("\92" <$ string "\\\\")
-                                     , return <$> noneOf "\\"
-                                     ])
-                    (lookAhead $ string ")")
-          return $ utf16be $ concat octstr
-
+          str <- string "\\376\\377" *> manyTill pdfletter (lookAhead $ string ")")
+          return $ utf16be $ concat str
+        
 utf16be = T.unpack . decodeUtf16BEWith strictDecode . BS.pack
 
 pdfstream :: Parser Obj
@@ -191,13 +191,13 @@ pdfobj :: Parser Obj
 pdfobj = choice [ try rrefs <* spaces
                 , try pdfname <* spaces
                 , try pdfnumber <* spaces
-                , try pdfhex <* spaces
+                , try pdfhex <* spaces -- Hexadecimal String
                 , try pdfbool <* spaces
                 , try pdfnull <* spaces
                 , try pdfarray <* spaces
                 , try pdfdictionary <* spaces
                 , {-# SCC pdfstream #-} try pdfstream <* spaces
-                , pdfletters <* spaces
+                , pdfletters <* spaces -- Literal String
                 ]
 
 rrefs :: Parser Obj
