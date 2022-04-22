@@ -1,3 +1,4 @@
+{-# LANGUAGE PackageImports #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
@@ -14,11 +15,17 @@ import System.Environment (getArgs)
 import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
+import Data.Text.Lazy as TL (unpack)
+import Data.Text.Lazy.Encoding as TL
 import Data.List (nub, find)
 import Data.Maybe (fromMaybe)
 
 import Options.Applicative
 import Data.Semigroup ((<>))
+
+import "regex-compat-tdfa" Text.Regex as R
+import Options.Applicative (strOption)
+import PDF.Definition (Obj(PdfStream))
 
 import Debug.Trace
 
@@ -54,6 +61,7 @@ main = hpdft =<< execParser opts
 data CmdOpt = CmdOpt {
   page :: Int,
   ref  :: Int,
+  grep :: String,
   refs :: Bool,
   pdftitle :: Bool,
   pdfinfo :: Bool,
@@ -76,6 +84,12 @@ options = CmdOpt
             <> value 0
             <> metavar "REF"
             <> help "Object reference" )
+          <*> strOption
+          ( long "grep"
+            <> short 'g'
+            <> value ""
+            <> metavar "RegExp"
+            <> help "grep PDF" )
           <*> switch
           ( long "refs"
             <> short 'R'
@@ -101,14 +115,15 @@ options = CmdOpt
             <> action "file" )
 
 hpdft :: CmdOpt -> IO ()
-hpdft (CmdOpt 0 0 False False False False False fn) = pdfToText fn  
-hpdft (CmdOpt 0 0 False True _ _ _ fn) = showTitle fn
-hpdft (CmdOpt 0 0 False _ True _ _ fn) = showInfo fn
-hpdft (CmdOpt 0 0 False _ _ True _ fn) = showOutlines fn
-hpdft (CmdOpt 0 0 False _ _ _ True fn) = print =<< getTrailer fn
-hpdft (CmdOpt 0 0 True _ _ _ _ fn) = print =<< refByPage fn
-hpdft (CmdOpt n 0 False _ _ _ _ fn) = showPage fn n
-hpdft (CmdOpt 0 r False _ _ _ _ fn) = showContent fn r
+hpdft (CmdOpt 0 0 "" False False False False False fn) = pdfToText fn  
+hpdft (CmdOpt 0 0 "" False True _ _ _ fn) = showTitle fn
+hpdft (CmdOpt 0 0 "" False _ True _ _ fn) = showInfo fn
+hpdft (CmdOpt 0 0 "" False _ _ True _ fn) = showOutlines fn
+hpdft (CmdOpt 0 0 "" False _ _ _ True fn) = print =<< getTrailer fn
+hpdft (CmdOpt 0 0 "" True _ _ _ _ fn) = print =<< refByPage fn
+hpdft (CmdOpt n 0 "" False _ _ _ _ fn) = showPage fn n
+hpdft (CmdOpt 0 r "" False _ _ _ _ fn) = showContent fn r
+hpdft (CmdOpt 0 0 r  False _ _ _ _ fn) = grepPDF fn r
 hpdft _ = return ()
 
 -- | Get a whole text from 'filename'. It works as:
@@ -240,3 +255,34 @@ showOutlines filename = do
   putStrLn $ show d
   return ()
 
+-- | Find string in each page.
+
+grepPDF filename re = do
+  root <- getRootRef filename
+  objs <- getPDFObjFromFile filename
+  mapM
+    (grepByPage re . contentInObjs objs)
+    (pageTreeToList $ pageorder root objs)
+  return ()
+  
+  where
+    contentInObjs objs ref =
+      case findObjsByRef ref objs of
+        Just obj -> case findDictOfType "/Page" obj of
+                      Just dict -> contentsStream dict initstate objs
+                      Nothing -> ""
+        Nothing -> error $ "No Object with Ref " ++ show ref
+
+    grepByPage :: String -> PDFStream -> IO ()
+    grepByPage re txt = do
+      let matched = filter (not . null) $ map (grepByLine re) $ BSL.lines txt
+      mapM putStrLn $ matched
+      return ()
+
+    grepByLine :: String -> PDFStream -> String
+    grepByLine re txt =
+      case matchRegexAll (mkRegex re) $ TL.unpack $ TL.decodeUtf8 txt of
+        Just (b, m, a, _) -> (b <> (highlight m) <> a)
+        Nothing -> ""
+
+    highlight m = "\ESC[31m" <> m <> "\ESC[0m"
