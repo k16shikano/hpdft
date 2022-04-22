@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE PackageImports #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -25,6 +26,7 @@ import Data.Semigroup ((<>))
 
 import "regex-compat-tdfa" Text.Regex as R
 import Options.Applicative (strOption)
+import Control.Monad (when)
 import PDF.Definition (Obj(PdfStream))
 
 import Debug.Trace
@@ -261,8 +263,8 @@ grepPDF filename re = do
   root <- getRootRef filename
   objs <- getPDFObjFromFile filename
   mapM
-    (grepByPage re . contentInObjs objs)
-    (pageTreeToList $ pageorder root objs)
+    (\(strm, pagenm) -> (grepByPage pagenm re . contentInObjs objs) strm)
+    $ zip (pageTreeToList $ pageorder root objs) [1..]
   return ()
   
   where
@@ -273,11 +275,16 @@ grepPDF filename re = do
                       Nothing -> ""
         Nothing -> error $ "No Object with Ref " ++ show ref
 
-    grepByPage :: String -> PDFStream -> IO ()
-    grepByPage re txt = do
+    grepByPage :: Int -> String -> PDFStream -> IO ()
+    grepByPage pagenm re txt = do
       let matched = filter (not . null) $ map (grepByLine re) $ BSL.lines txt
-      mapM putStrLn $ matched
+      when (not $ null matched) (showResult pagenm matched)
       return ()
+      where
+        showResult p m = do
+          putStrLn $ "At page " <> show p <> "..."
+          mapM (putStrLn . (" | " <>)) m
+          return ()
 
     grepByLine :: String -> PDFStream -> String
     grepByLine re txt =
