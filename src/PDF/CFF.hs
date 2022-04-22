@@ -35,7 +35,7 @@ test f = do
 
 encoding :: ByteString -> Encoding
 encoding c = case parseOnly stringInd c of
-  Right ss -> Encoding $ zip (parseTopDictInd c) ss
+  Right ss -> Encoding [] -- Encoding $ zip (parseTopDictInd c) ss
   Left e -> error "Can not find String INDEX in CFF file"
 
 parseTopDictInd :: ByteString -> [Char]
