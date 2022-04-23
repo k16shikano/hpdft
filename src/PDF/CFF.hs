@@ -3,7 +3,7 @@
 module PDF.CFF (encoding) where
 
 import Numeric (readInt)
-import Data.Char (chr)
+import Data.Char (chr, intToDigit)
 
 import Data.Word
 import Data.Bits
@@ -34,12 +34,11 @@ test f = do
   return $ encoding c
 
 encoding :: ByteString -> Encoding
-encoding c = case parseOnly stringInd c of
-  Right ss -> Encoding [] -- Encoding $ zip (parseTopDictInd c) ss
-  Left e -> error "Can not find String INDEX in CFF file"
+encoding c = let m = parseTopDictInd c
+             in Encoding $ zip m (map (:[]) m)
 
 parseTopDictInd :: ByteString -> [Char]
-parseTopDictInd c = case parseOnly (header >> index >> index) c of
+parseTopDictInd c = case parseOnly (header >> index *> index) c of
   Right ds -> concat $ map (parseDict c) ds
   Left e -> error "Can not find Top DICT INDEX"
 
@@ -54,15 +53,19 @@ parseDict c d = case parseOnly (many1 dict) d of
 
 stringInd = map (('/':) . BSC.unpack) <$> (header >> index >> index *> index)
 
+nameInd = map (('/':) . BSC.unpack) <$> (header *> index)
+
+dictInd = BSC.concat <$> (header >> index *> index)
+
 encodingArray :: Parser [Integer]
 encodingArray = do
   format <- getCard 1
   p <- fromInteger <$> getCard 1
-  encodeObj format (p - 1) -- ?
+  encodeObj format p
 
   where
     encodeObj :: Integer -> Int -> Parser [Integer]
-    encodeObj 0 p = count p (getCard 1)
+    encodeObj 0 p = count (p - 1) (getCard 1)
     encodeObj 1 p = concat <$> count p getRange1
 
     getRange1 :: Parser [Integer]
