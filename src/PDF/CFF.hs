@@ -4,6 +4,7 @@ module PDF.CFF (encoding) where
 
 import Numeric (readInt)
 import Data.Char (chr, intToDigit)
+import Data.List (isPrefixOf)
 
 import Data.Word
 import Data.Bits
@@ -34,28 +35,56 @@ test f = do
   return $ encoding c
 
 encoding :: ByteString -> Encoding
-encoding c = let m = parseTopDictInd c
-             in Encoding $ zip m (map (:[]) m)
+encoding c = let ds = parseTopDictInd c
+                 m = concat $ map (parseDict c) ds
+                 font = concat $ map (parseFontname c) ds
+             in case font of
+                  name
+                    | "/LCIRCLE" `isPrefixOf` name ->
+                        Encoding $ zip m (mkTextRep circle m)
+                    | otherwise -> 
+                        Encoding $ zip m (mkTextRep direct m)
+                    
+  where
+    mkTextRep byFontType m = map byFontType m
+    direct = (:[])
+    circle 'q' = "‡"
+    circle 'r' = "・"
 
-parseTopDictInd :: ByteString -> [Char]
+parseTopDictInd :: ByteString -> [ByteString]
 parseTopDictInd c = case parseOnly (header >> index *> index) c of
-  Right ds -> concat $ map (parseDict c) ds
+  Right ds -> ds
   Left e -> error "Can not find Top DICT INDEX"
 
 parseDict :: ByteString -> ByteString -> [Char]
 parseDict c d = case parseOnly (many1 dict) d of
-  Right dictData -> case lookup [16] dictData of
-    Just (DictInt n:[]) -> case parseOnly encodingArray $ BS.drop n c of
-      Right arr -> map (chr . fromInteger) arr
-      Left e -> error "Failed to parse Encoding Array"
+  -- '16' is key for 'Encoding' in Top DICT
+  Right dictData -> case lookup [16] dictData of 
+    Just (DictInt 0:[]) -> [] -- Standard Encoding (not supported)
+    Just (DictInt 1:[]) -> [] -- Expert Encoding (not supported)
+    Just (DictInt n:[]) -> -- n is offset
+      case parseOnly encodingArray $ BS.drop n c of
+        Right arr -> map (chr . fromInteger) arr
+        Left e -> error "Failed to parse Encoding Array"
     Just a -> error (show a)
     Nothing -> error $ "No Encodind Array" ++ show dictData
+  Left _ -> error "Failed to parse Top DICT in CFF"
 
-stringInd = map (('/':) . BSC.unpack) <$> (header >> index >> index *> index)
+parseFontname c d = case parseOnly (many1 dict) d of
+  Right dictData -> case lookup [2] dictData of
+    Just (DictInt n:[]) ->
+      case parseOnly stringInd c of
+        Right arr -> arr !! (n - 390 - 1) -- 390 seems to be a magic number
+        Left _ -> error ""
+    Just _ -> error "fuga"
+    Nothing -> error ""
+  Left _ -> error ""
 
 nameInd = map (('/':) . BSC.unpack) <$> (header *> index)
 
 dictInd = BSC.concat <$> (header >> index *> index)
+
+stringInd = map (('/':) . BSC.unpack) <$> (header >> index >> index *> index)
 
 encodingArray :: Parser [Integer]
 encodingArray = do
@@ -67,6 +96,7 @@ encodingArray = do
     encodeObj :: Integer -> Int -> Parser [Integer]
     encodeObj 0 p = count (p - 1) (getCard 1)
     encodeObj 1 p = concat <$> count p getRange1
+    encodeObj _ p = error "CFF Supplement Format is not supported."
 
     getRange1 :: Parser [Integer]
     getRange1 = do
