@@ -76,7 +76,7 @@ gatherOutlines dict objs =
       Nothing -> error $ "No Object with Ref " ++ show r
     Nothing -> PDFOutlinesEntry { dest = head $ findDest dict
                                 , text = findTitle dict objs ++ "\n"
-                                , subs = PDFOutlinesNE}
+                                , subs = c}
 
 outlines :: Dict -> Int
 outlines dict = case find isOutlinesRef dict of
