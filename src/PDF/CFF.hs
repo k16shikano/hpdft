@@ -24,40 +24,35 @@ import Debug.Trace
 
 import PDF.Definition
 
-data Table = Table String Integer Integer
-  deriving (Show)
-
-data EncRecord = EncRecord Integer Integer Integer
-  deriving (Show)
-
 test f = do
   c <- BS.readFile f
   return $ encoding c
 
 encoding :: ByteString -> Encoding
-encoding c = let ds = parseTopDictInd c
-                 m = concat $ map (parseDict c) ds
-                 font = concat $ map (parseFontname c) ds
-             in case font of
-                  name
-                    | "/LCIRCLE" `isPrefixOf` name ->
-                        Encoding $ zip m (mkTextRep circle m)
-                    | otherwise -> 
-                        Encoding $ zip m (mkTextRep direct m)
-                    
+encoding c =
+  case break (> 390) charset of
+    (standard,[]) -> Encoding $ zip encodings $ map (:[]) encodings
+    (_,expert) -> Encoding $ zip encodings $ map sidToText strings
+
   where
-    mkTextRep byFontType m = map byFontType m
-    direct = (:[])
-    circle 'q' = "‡"
-    circle 'r' = "・"
+    ds = parseTopDictInd c
+    encodings  = concatMap (parseEncoding c) ds
+    charset = concatMap (parseCharset c) ds
+    fontname = concat $ map (parseFontname c) ds         
+    strings = case parseOnly stringInd c of
+                Right arr -> arr
+                Left e -> error "Failed to parse STRING Index"
+
+    sidToText "a113" = "‡"
+    sidToText "a114" = "・"
 
 parseTopDictInd :: ByteString -> [ByteString]
 parseTopDictInd c = case parseOnly (header >> index *> index) c of
   Right ds -> ds
   Left e -> error "Can not find Top DICT INDEX"
 
-parseDict :: ByteString -> ByteString -> [Char]
-parseDict c d = case parseOnly (many1 dict) d of
+parseEncoding :: ByteString -> ByteString -> [Char]
+parseEncoding c d = case parseOnly (many1 dict) d of
   -- '16' is key for 'Encoding' in Top DICT
   Right dictData -> case lookup [16] dictData of 
     Just (DictInt 0:[]) -> [] -- Standard Encoding (not supported)
@@ -67,7 +62,7 @@ parseDict c d = case parseOnly (many1 dict) d of
         Right arr -> map (chr . fromInteger) arr
         Left e -> error "Failed to parse Encoding Array"
     Just a -> error (show a)
-    Nothing -> error $ "No Encodind Array" ++ show dictData
+    Nothing -> error $ "No Encodind Array in " ++ show dictData
   Left _ -> error "Failed to parse Top DICT in CFF"
 
 parseFontname c d = case parseOnly (many1 dict) d of
@@ -75,16 +70,46 @@ parseFontname c d = case parseOnly (many1 dict) d of
     Just (DictInt n:[]) ->
       case parseOnly stringInd c of
         Right arr -> arr !! (n - 390 - 1) -- 390 seems to be a magic number
-        Left _ -> error ""
-    Just _ -> error "fuga"
-    Nothing -> error ""
-  Left _ -> error ""
+        Left e -> error "Failed to parse Fontname"
+    Just a -> error (show a)
+    Nothing -> error $ "No Fontname in " <> show dictData
+  Left _ -> error "Failed to parse Top DICT in CFF"
 
-nameInd = map (('/':) . BSC.unpack) <$> (header *> index)
+parseCharset c d = case parseOnly (many1 dict) d of
+  Right dictData -> case lookup [15] dictData of
+    Just (DictInt offset:[]) -> 
+      case parseOnly (charsetData $ charStringsInd c dictData) $
+           BS.drop offset c of
+        Right arr -> arr
+        Left _ -> error ""
+    Just a -> error (show a)
+    Nothing -> error $ "No Charset in " <> show dictData
+  Left _ -> error "Failed to parse Top DICT in CFF"
+
+charStringsInd c dictData = 
+  case lookup [17] dictData of
+    Just (DictInt offset:[]) -> 
+      case parseOnly index (BS.drop offset c) of
+        Right [] -> error "failed to get CharStrings"
+        Right ind -> ind
+        Left "" -> error "failed to get CharStrings"
+    Nothing -> error $ "No CharStrings in " <> show dictData
+
+nameInd = map BSC.unpack <$> (header *> index)
 
 dictInd = BSC.concat <$> (header >> index *> index)
 
-stringInd = map (('/':) . BSC.unpack) <$> (header >> index >> index *> index)
+stringInd = map BSC.unpack <$> (header >> index >> index *> index)
+
+charsetData :: [ByteString] -> Parser [Integer]
+charsetData ind = do
+  format <- getCard 1
+  charsetObj format
+  
+  where
+    -- .notdef must be excluded, so minus one
+    charsetObj 0 = count (length ind - 1) getSID 
+
 
 encodingArray :: Parser [Integer]
 encodingArray = do
@@ -169,6 +194,9 @@ header = do
 
 getCard :: Int -> Parser Integer
 getCard n = fromBytes <$> AP.take n
+
+getSID :: Parser Integer
+getSID = fromBytes <$> AP.take 2
 
 fromBytes :: ByteString -> Integer
 fromBytes = BS.foldl' f 0
