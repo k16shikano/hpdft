@@ -34,6 +34,7 @@ import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Builder as B
 import qualified Data.Text as T
 import Data.Maybe (fromMaybe)
+import Numeric (readDec)
 
 import Data.Attoparsec.ByteString.Char8 hiding (take)
 import Data.Attoparsec.Combinator
@@ -208,31 +209,34 @@ xobjColorSpace x objs = case findObjFromDictWithRef x "/ColorSpace" objs of
 -- find root ref from Trailer or Cross-Reference Dictionary
 
 parseTrailer :: BS.ByteString -> Maybe Dict
-parseTrailer bs = case parseOnly (try trailer <|> xref) bs of
-  Left  err -> (trace (show err) Nothing)
-  Right rlt -> Just (parseCRDict rlt)
-  where trailer :: Parser BS.ByteString
-        trailer = do
-          manyTill anyChar (try $ string "trailer")
-          t <- manyTill anyChar (try $ string "startxref")
-          return $ BS.pack t
-        xref :: Parser BS.ByteString
-        xref = do
-          manyTill anyChar (try $ string "startxref" >> spaces >> lookAhead (oneOf "123456789"))
-          offset <- many1 digit
-          return $ BS.drop (read offset :: Int) bs
+parseTrailer bs = case BS.breakEnd (== '\n') bs of
+  (source, eofLine)
+    | "%%EOF" `BS.isPrefixOf` eofLine
+      -> Just (parseCRDict $ BS.drop (getOffset source) bs)
+    | otherwise -> parseTrailer (BS.init bs)
+  _ -> Nothing
+
+getOffset bs = case BS.breakEnd (== '\n') (BS.init bs) of
+  (_, nstr) -> case readDec $ BS.unpack nstr of
+                 [(n,_)] -> n
+                 _ -> err
+  _ -> err
+  where err = error "Could not find Offset"
 
 parseCRDict :: BS.ByteString -> Dict
 parseCRDict rlt = case parseOnly crdict rlt of
   Left  err  -> error $ show (BS.take 100 rlt)
   Right (PdfDict dict) -> dict
-  Right other -> error "Could not find Cross-Reference dictionary"
-  where crdict :: Parser Obj
-        crdict = do 
-          spaces
-          many (many1 digit >> spaces >> digit >> string " obj" >> spaces)
-          d <- pdfdictionary <* spaces
-          return d
+  Right _ -> error "Could not find Cross-Reference dictionary"
+  where
+    crdict :: Parser Obj
+    crdict = do 
+      spaces
+      (try skipCRtable <|> skipCRstream)
+      d <- pdfdictionary <* spaces
+      return d
+    skipCRtable = ((manyTill anyChar (try $ string "trailer")) >> spaces)
+    skipCRstream = (many1 digit >> spaces >> digit >> string " obj" >> spaces)
 
 rootRef :: BS.ByteString -> Maybe Int
 rootRef bs = case parseTrailer bs of
