@@ -27,7 +27,7 @@ import Debug.Trace
 
 import PDF.Definition
 import PDF.Object
-import PDF.Character (pdfcharmap, adobeJapanOneSixMap)
+import PDF.Character (pdfcharmap, extendedAscii, adobeJapanOneSixMap)
 
 type PSParser a = GenParser Char PSR a
 
@@ -380,7 +380,9 @@ psletter fontmap = do
             [(i,"")] -> T.singleton $ chr i
             [(i,x)] -> T.pack (chr i : " ")
             _ -> T.pack s
-          octToChar [(o,"")] = chr o
+          octToChar [(o,"")] = case Map.lookup o extendedAscii of
+            Just c -> c
+            Nothing -> chr o
           octToChar _ = '?'
 
 cidletter :: String -> PSParser T.Text
