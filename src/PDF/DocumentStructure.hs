@@ -213,15 +213,13 @@ parseTrailer bs = case BS.breakEnd (== '\n') bs of
   (source, eofLine)
     | "%%EOF" `BS.isPrefixOf` eofLine
       -> Just (parseCRDict $ BS.drop (getOffset source) bs)
+    | source == "" -> Nothing
     | otherwise -> parseTrailer (BS.init bs)
-  _ -> Nothing
 
 getOffset bs = case BS.breakEnd (== '\n') (BS.init bs) of
   (_, nstr) -> case readDec $ BS.unpack nstr of
                  [(n,_)] -> n
-                 _ -> err
-  _ -> err
-  where err = error "Could not find Offset"
+                 _ -> error "Could not find Offset"
 
 parseCRDict :: BS.ByteString -> Dict
 parseCRDict rlt = case parseOnly crdict rlt of

@@ -30,9 +30,7 @@ test f = do
 
 encoding :: ByteString -> Encoding
 encoding c =
-  case break (> 390) charset of
-    (standard,[]) -> Encoding $ zip encodings $ map (:[]) encodings
-    (_,expert) -> Encoding $ zip encodings $ map sidToText strings
+  Encoding $ map findEncodings $ zip charset encodings
 
   where
     ds = parseTopDictInd c
@@ -43,8 +41,23 @@ encoding c =
                 Right arr -> arr
                 Left e -> error "Failed to parse STRING Index"
 
-    sidToText "a113" = "‡"
-    sidToText "a114" = "・"
+    findEncodings :: (Integer, Char) -> (Char, String)
+    findEncodings (char,enc) =
+      case char of
+        s | s > 390 -> (enc, stringToText $ strings !! fromInteger (char - 390 - 1))
+          | s > 95 -> (enc, sidToText s) 
+          | otherwise -> (enc, enc:[])
+
+    -- defined in String INDEX of each font
+    stringToText "a113" = "‡"
+    stringToText "a114" = "・"
+    stringToText "trianglesolid" = "▲"
+    stringToText x = "[CFF:String " <> x <> "]"
+
+    -- pre-defined in Appendix C of CFF specs
+    sidToText 112 = "†"
+    sidToText 166 = "－"
+    sidToText n = "[CFF:SID " <> (show n) <> "]"
 
 parseTopDictInd :: ByteString -> [ByteString]
 parseTopDictInd c = case parseOnly (header >> index *> index) c of
