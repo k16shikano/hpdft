@@ -24,6 +24,8 @@ import Debug.Trace
 
 import PDF.Definition
 
+type SID = Integer
+
 test f = do
   c <- BS.readFile f
   return $ encoding c
@@ -36,17 +38,17 @@ encoding c =
     ds = parseTopDictInd c
     encodings  = concatMap (parseEncoding c) ds
     charset = concatMap (parseCharset c) ds
-    fontname = concat $ map (parseFontname c) ds         
+    fontname = concat $ map (parseFontname c) ds
     strings = case parseOnly stringInd c of
                 Right arr -> arr
                 Left e -> error "Failed to parse STRING Index"
 
-    findEncodings :: (Integer, Char) -> (Char, String)
+    findEncodings :: (SID, Char) -> (Char, String)
     findEncodings (char,enc) =
       case char of
         s | s > 390 -> (enc, stringToText $ strings !! fromInteger (char - 390 - 1))
-          | s > 95 -> (enc, sidToText s) 
-          | otherwise -> (enc, enc:[])
+          | s > 95 -> (enc, sidToText s)
+          | otherwise -> (enc, [enc])
 
     -- defined in String INDEX of each font
     stringToText "a113" = "‡"
@@ -55,9 +57,7 @@ encoding c =
     stringToText x = "[CFF:String " <> x <> "]"
 
     -- pre-defined in Appendix C of CFF specs
-    sidToText 112 = "†"
-    sidToText 166 = "－"
-    sidToText n = "[CFF:SID " <> (show n) <> "]"
+    sidToText n = [complementSID 0 predefinedChars !! fromInteger n]
 
 parseTopDictInd :: ByteString -> [ByteString]
 parseTopDictInd c = case parseOnly (header >> index *> index) c of
@@ -142,7 +142,7 @@ encodingArray = do
       nleft <- getCard 1
       return $ [first .. first + nleft]
 
-data DictOp = DictInt Int | DictReal Double | SID ByteString
+data DictOp = DictInt Int | DictReal Double
   deriving (Show)
 
 dict = (flip (,)) <$> (manyTill dictOp (try $ lookAhead dictKey)) <*> dictKey
@@ -208,10 +208,246 @@ header = do
 getCard :: Int -> Parser Integer
 getCard n = fromBytes <$> AP.take n
 
-getSID :: Parser Integer
+getSID :: Parser SID
 getSID = fromBytes <$> AP.take 2
 
 fromBytes :: ByteString -> Integer
 fromBytes = BS.foldl' f 0
   where
     f a b = a `shiftL` 8 .|. fromIntegral b
+
+complementSID _ [] = []
+complementSID i arr@((n,c):rest) 
+  | i == n = c:(complementSID (i+1) rest)
+  | otherwise = ' ':(complementSID (i+1) arr)
+
+predefinedChars = 
+  [ (1, ' ')
+  , (2, '!')
+  , (3, '"')
+  , (4, '#')
+  , (5, '$')
+  , (6, '%')
+  , (7, '&')
+  , (8, '’')
+  , (9, '(')
+  , (10, ')')
+  , (11, '*')
+  , (12, '+')
+  , (13, ',')
+  , (14, '-')
+  , (15, '.')
+  , (16, '/')
+  , (17, '0')
+  , (18, '1')
+  , (19, '2')
+  , (20, '3')
+  , (21, '4')
+  , (22, '5')
+  , (23, '6')
+  , (24, '7')
+  , (25, '8')
+  , (26, '9')
+  , (27, ':')
+  , (28, ';')
+  , (29, '<')
+  , (30, '=')
+  , (31, '>')
+  , (32, '?')
+  , (33, '@')
+  , (34, 'A')
+  , (35, 'B')
+  , (36, 'C')
+  , (37, 'D')
+  , (38, 'E')
+  , (39, 'F')
+  , (40, 'G')
+  , (41, 'H')
+  , (42, 'I')
+  , (43, 'J')
+  , (44, 'K')
+  , (45, 'L')
+  , (46, 'M')
+  , (47, 'N')
+  , (48, 'O')
+  , (49, 'P')
+  , (50, 'Q')
+  , (51, 'R')
+  , (52, 'S')
+  , (53, 'T')
+  , (54, 'U')
+  , (55, 'V')
+  , (56, 'W')
+  , (57, 'X')
+  , (58, 'Y')
+  , (59, 'Z')
+  , (60, '{')
+  , (61, '/')
+  , (62, '}')
+  , (63, '^')
+  , (64, '_')
+  , (65, '‘')
+  , (66, 'a')
+  , (67, 'b')
+  , (68, 'c')
+  , (69, 'd')
+  , (70, 'e')
+  , (71, 'f')
+  , (72, 'g')
+  , (73, 'h')
+  , (74, 'i')
+  , (75, 'j')
+  , (76, 'k')
+  , (77, 'l')
+  , (78, 'm')
+  , (79, 'n')
+  , (80, 'o')
+  , (81, 'p')
+  , (82, 'q')
+  , (83, 'r')
+  , (84, 's')
+  , (85, 't')
+  , (86, 'u')
+  , (87, 'v')
+  , (88, 'w')
+  , (89, 'x')
+  , (90, 'y')
+  , (91, 'z')
+  , (92, '[')
+  , (93, 'ˉ')
+  , (94, ']')
+  , (95, '~')
+  , (96, '¡')
+  , (97, '¢')
+  , (98, '£')
+  , (99, '/')
+  , (100, '¥')
+  , (101, 'ƒ')
+  , (102, '§')
+  , (103, '$')
+  , (104, '\'')
+  , (105, '“')
+  , (106, '«')
+  , (107, '‹')
+  , (108, '›')
+  , (109, 'ﬁ')
+  , (110, 'ﬂ')
+  , (111, '–')
+  , (112, '†')
+  , (113, '‡')
+  , (114, '·')
+  , (115, '❡')
+  , (116, '・')
+  , (117, '‚')
+  , (118, '„')
+  , (119, '”')
+  , (120, '»')
+  , (121, '…')
+  , (122, '‰')
+  , (123, '¿')
+  , (124, '`')
+  , (125, '´')
+  , (126, '^')
+  , (127, '~')
+  , (128, '¯')
+  , (129, '˘')
+  , (130, '˙')
+  , (131, '¨')
+  , (132, '°')
+  , (133, '¸')
+  , (134, '˝')
+  , (135, '˛')
+  , (136, 'ˇ')
+  , (137, '—')
+  , (138, 'Æ')
+  , (139, 'ª')
+  , (140, 'Ł')
+  , (141, 'Ø')
+  , (142, 'Œ')
+  , (143, 'º')
+  , (144, 'æ')
+  , (145, 'ı')
+  , (146, 'ł')
+  , (147, 'ø')
+  , (148, 'œ')
+  , (149, 'ẞ')
+  , (150, '¹')
+  , (151, '￢')
+  , (152, 'µ')
+  , (153, '™')
+  , (154, 'Ð')
+  , (155, '½')
+  , (156, '±')
+  , (157, 'Þ')
+  , (158, '¼')
+  , (159, '÷')
+  , (160, '¦')
+  , (161, '°')
+  , (162, 'þ')
+  , (163, '¾')
+  , (164, '²')
+  , (165, '®')
+  , (166, '－')
+  , (167, 'ð')
+  , (168, '×')
+  , (169, '³')
+  , (170, 'Ⓒ')
+  , (171, 'Á')
+  , (172, 'Â')
+  , (173, 'Ä')
+  , (174, 'À')
+  , (175, 'Å')
+  , (176, 'Ã')
+  , (177, 'Ç')
+  , (178, 'É')
+  , (179, 'Ê')
+  , (180, 'Ë')
+  , (181, 'È')
+  , (182, 'Í')
+  , (183, 'Î')
+  , (184, 'Ï')
+  , (185, 'Ì')
+  , (186, 'Ñ')
+  , (187, 'Ó')
+  , (188, 'Ô')
+  , (189, 'Ö')
+  , (190, 'Ò')
+  , (191, 'Õ')
+  , (192, 'Š')
+  , (193, 'Ú')
+  , (194, 'Û')
+  , (195, 'Ü')
+  , (196, 'Ù')
+  , (197, 'Ý')
+  , (198, 'Ÿ')
+  , (199, 'Ž')
+  , (200, 'á')
+  , (201, 'â')
+  , (202, 'ä')
+  , (203, 'à')
+  , (204, 'å')
+  , (205, 'ã')
+  , (206, 'ç')
+  , (207, 'é')
+  , (208, 'ê')
+  , (209, 'ë')
+  , (210, 'è')
+  , (211, 'í')
+  , (212, 'î')
+  , (213, 'ï')
+  , (214, 'ì')
+  , (215, 'ñ')
+  , (216, 'ó')
+  , (217, 'ô')
+  , (218, 'ö')
+  , (219, 'ò')
+  , (220, 'õ')
+  , (221, 'š')
+  , (222, 'ú')
+  , (223, 'û')
+  , (224, 'ü')
+  , (225, 'ù')
+  , (226, 'ý')
+  , (227, 'ÿ')
+  , (228, 'ž')
+  ]
