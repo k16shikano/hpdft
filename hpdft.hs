@@ -24,7 +24,9 @@ import Data.Maybe (fromMaybe)
 import Options.Applicative
 import Data.Semigroup ((<>))
 
-import "regex-compat-tdfa" Text.Regex as R
+import Text.Regex.Base.RegexLike ( makeRegex )
+import Text.Regex.TDFA.String    ( regexec )
+
 import Options.Applicative (strOption)
 import Control.Monad (when)
 import PDF.Definition (Obj(PdfStream))
@@ -288,8 +290,10 @@ grepPDF filename re = do
 
     grepByLine :: String -> PDFStream -> String
     grepByLine re txt =
-      case matchRegexAll (mkRegex re) $ TL.unpack $ TL.decodeUtf8 txt of
-        Just (b, m, a, _) -> (b <> (highlight m) <> a)
-        Nothing -> ""
+      case regexec (makeRegex re) $ TL.unpack $ TL.decodeUtf8 txt of
+        Left _  -> ""
+        Right m -> case m of
+         Just (b, m, a, _) -> (b <> (highlight m) <> a)
+         Nothing           -> ""
 
     highlight m = "\ESC[31m" <> m <> "\ESC[0m"
