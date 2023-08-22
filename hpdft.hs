@@ -24,7 +24,7 @@ import Data.Maybe (fromMaybe)
 import Options.Applicative
 import Data.Semigroup ((<>))
 
-import "regex-compat-tdfa" Text.Regex as R
+import Text.Regex (mkRegex, matchRegexAll)
 import Options.Applicative (strOption)
 import Control.Monad (when)
 import PDF.Definition (Obj(PdfStream))

@@ -1,5 +1,6 @@
+cabal-version:       3.0
 name:                hpdft
-version:             0.1.1.1
+version:             0.1.1.2
 synopsis:            A tool for looking through PDF file using Haskell
 -- description:         
 homepage:            https://github.com/k16shikano/hpdft
@@ -11,7 +12,6 @@ maintainer:          k16.shikano@gmail.com
 category:            PDF
 build-type:          Simple
 extra-source-files:  README.md
-cabal-version:       >=1.10
 
 data-dir:            data/
 
@@ -43,7 +43,6 @@ library
                      , memory >= 0.14.5
                      , optparse-applicative
                      , parsec >=3.0 && <3.2
-                     , regex-compat-tdfa >= 0.95.1.4
                      , semigroups
                      , text >=0.11
                      , utf8-string >=0.3
@@ -63,8 +62,7 @@ executable hpdft
                      , memory >= 0.14.5
                      , optparse-applicative
                      , regex-base >= 0.94.0.2
-                     , regex-compat-tdfa >= 0.95.1.4
-                     , regex-compat-tdfa >= 0.95.1.4
+                     , regex-compat >= 0.95
                      , semigroups
                      , text >=0.11
                      , utf8-string >=0.3
