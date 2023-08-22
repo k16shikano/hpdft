@@ -53,8 +53,8 @@ library
                      , text >= 2.0.2 && < 2.1
                      , utf8-string >= 1.0.2 && < 1.1
                      , zlib >= 0.6.3 && < 0.7
-  autogen-modules:     Paths_hpdft
-  default-language:    Haskell2010
+  autogen-modules:   Paths_hpdft
+  default-language:  Haskell2010
   buildable:         True
 
 executable hpdft
@@ -72,5 +72,6 @@ executable hpdft
                      , semigroups >= 0.20 && < 0.21
                      , text >= 2.0.2 && < 2.1
                      , utf8-string >= 1.0.2 && < 1.1
-  default-language:    Haskell2010
+  autogen-modules:   Paths_hpdft
+  default-language:  Haskell2010
   buildable:         True

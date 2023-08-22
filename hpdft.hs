@@ -31,6 +31,9 @@ import Options.Applicative (strOption)
 import Control.Monad (when)
 import PDF.Definition (Obj(PdfStream))
 
+import qualified Paths_hpdft as Autogen (version)
+import Data.Version (showVersion)
+
 import Debug.Trace
 
 initstate = PSR { linex=0
@@ -55,10 +58,11 @@ initstate = PSR { linex=0
 main :: IO ()
 main = hpdft =<< execParser opts
   where
-    opts = info (options <**> helper)
+    opts = info (options <**> helper <**> (simpleVersioner versionInfo))
       (fullDesc
-       <> progDesc "Show text of a PDF file"
-       <> header "hpdft - a PDF parsing tool" )
+       <> header versionInfo)
+
+versionInfo = "hpdft - a PDF to text converter, version " <> showVersion Autogen.version
 
 -- option parser
 
@@ -124,7 +128,7 @@ hpdft (CmdOpt 0 0 "" False True _ _ _ fn) = showTitle fn
 hpdft (CmdOpt 0 0 "" False _ True _ _ fn) = showInfo fn
 hpdft (CmdOpt 0 0 "" False _ _ True _ fn) = showOutlines fn
 hpdft (CmdOpt 0 0 "" False _ _ _ True fn) = print =<< getTrailer fn
-hpdft (CmdOpt 0 0 "" True _ _ _ _ fn) = print =<< refByPage fn
+hpdft (CmdOpt 0 0 "" True  _ _ _ _ fn) = print =<< refByPage fn
 hpdft (CmdOpt n 0 "" False _ _ _ _ fn) = showPage fn n
 hpdft (CmdOpt 0 r "" False _ _ _ _ fn) = showContent fn r
 hpdft (CmdOpt 0 0 r  False _ _ _ _ fn) = grepPDF fn r
@@ -297,3 +301,4 @@ grepPDF filename re = do
          Nothing           -> ""
 
     highlight m = "\ESC[31m" <> m <> "\ESC[0m"
+
