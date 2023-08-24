@@ -12,12 +12,13 @@ import Numeric (readOct, readHex)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
 
-import Data.ByteString (ByteString)
+import GHC.Word (Word8)
+import qualified Data.ByteString as B (pack)
 import qualified Data.ByteString.Lazy.Char8 as BSLC (ByteString, pack)
 import qualified Data.ByteString.Char8 as BSSC (unpack)
 import qualified Data.ByteString.Lazy.UTF8 as BSLU (toString)
 import qualified Data.Text as T
-import Data.Text.Encoding (encodeUtf8)
+import Data.Text.Encoding (encodeUtf8, decodeUtf16BE)
 
 import Text.Parsec hiding (many, (<|>))
 import Text.Parsec.ByteString.Lazy
@@ -160,7 +161,7 @@ pdfopBT = do
 
 pdfopBMC :: PSParser T.Text
 pdfopBMC = do
-  n <- (++) <$> string "/" <*> manyTill anyChar (try space)
+  tag <- (++) <$> string "/" <*> manyTill anyChar (try space)
   spaces
   string "BMC"
   spaces
@@ -170,11 +171,42 @@ pdfopBMC = do
 
 pdfopBDC :: PSParser T.Text
 pdfopBDC = do
-  n1 <- name *> propertyList
+  tag <- name
+  prop <- propertyList
   spaces
   string "BDC"
   spaces
-  return T.empty
+  case tag of
+    "/Span" 
+      | "/ActualText" == (fst prop)
+        -> do {spaces >> manyTill elems (try $ string "EMC") >> return (snd prop)}
+      | otherwise  -> return $ T.empty
+    _ -> return $ T.empty
+
+  where
+    propertyList :: PSParser (T.Text, T.Text)
+    propertyList = spaces >> try dictionary
+
+    dictionary :: PSParser (T.Text, T.Text)
+    dictionary = do
+      _ <- spaces >> string "<<" >> spaces
+      name <- name
+      entries <- T.concat <$> manyTill dictEntry (try (string ">>" >> (notFollowedBy $ string ">")))
+      return (name, entries)
+
+    dictEntry :: PSParser T.Text
+    dictEntry = choice [ try name
+                       , try letters
+                       , hexDecodeUTF16BE . T.pack <$> try hex
+                       , T.pack <$> try (many1 digit)
+                       ] <* spaces
+
+    hex = string "<" >> (manyTill (oneOf "0123456789abcdefABCDEF") (try $ string ">"))
+
+    name :: PSParser T.Text
+    name = T.pack <$>
+           ((++) <$> string "/"
+             <*> (manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/")) <* spaces)
 
 pdfopEMC :: PSParser T.Text
 pdfopEMC = do
@@ -183,24 +215,7 @@ pdfopEMC = do
   spaces
   return T.empty
 
-propertyList :: PSParser T.Text
-propertyList = spaces >> choice [try dictionary, try name]
 
-dictionary :: PSParser T.Text
-dictionary = T.concat <$> (spaces >> string "<<" >> spaces
-                            *> manyTill dictEntry (try (string ">>" >> (notFollowedBy $ string ">"))))
-
-dictEntry :: PSParser T.Text
-dictEntry = choice [ try name
-                   , try letters
-                   , T.pack <$> try hex
-                   , T.pack <$> try (many1 digit)
-                   ] <* spaces
-  where
-    hex = string "<" >> (manyTill (oneOf "0123456789abcdefABCDEF") (try $ string ">"))
-
-name :: PSParser T.Text
-name = T.pack <$> ((++) <$> string "/" <*> (manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/")) <* spaces)
 
 
 pdfopTj :: PSParser T.Text
@@ -328,6 +343,11 @@ octletters = do
   lets <- manyTill octletter (try $ char ')')
   spaces
   return $ T.concat lets
+
+hexDecodeUTF16BE :: T.Text -> T.Text
+hexDecodeUTF16BE s =
+  let bytestring = B.pack ((map read . map ("0x"<>) . map T.unpack . T.chunksOf 2) s :: [Word8])
+  in decodeUtf16BE bytestring
 
 adobeOneSix :: Int -> T.Text
 adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
