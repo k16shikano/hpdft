@@ -57,7 +57,7 @@ bfchar = do
   string "endbfchar"
   spaces
   return ms
-    where toCmap cid ucs = ((fst.head.readHex) cid, ((:[]).chr.fst.head.readHex) ucs)
+    where toCmap cid ucs = ((fst.head.readHex) cid, ((:[]).chr.fst.head.readHex) $ take 4 ucs)
 
 bfrange :: Parser [CMap]
 bfrange = do
