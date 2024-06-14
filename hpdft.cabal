@@ -59,6 +59,7 @@ library
 
 executable hpdft
   main-is:           hpdft.hs
+  optimization: 3
   hs-source-dirs:    .
   other-modules:     Paths_hpdft
   other-extensions:    OverloadedStrings
