@@ -9,8 +9,7 @@ Maintainer  : k16.shikano@gmail.com
 -}
 
 module PDF.DocumentStructure
-       ( parseTrailer
-       , expandObjStm
+       ( expandObjStm
        , rootRef
        , contentsStream
        , rawStreamByRef
@@ -27,8 +26,8 @@ module PDF.DocumentStructure
        , rawStream
        ) where
 
-import Data.Char (chr)
-import Data.List (find)
+import Data.Char (chr, isDigit)
+import Data.List (find, elem)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Builder as B
@@ -36,7 +35,8 @@ import qualified Data.Text as T
 import Data.Maybe (fromMaybe)
 import Numeric (readDec)
 
-import Data.Attoparsec.ByteString.Char8 hiding (take)
+import Data.Attoparsec.ByteString.Char8 hiding (take, isDigit)
+import Data.Attoparsec.ByteString.Char8 as P (take, takeWhile)
 import Data.Attoparsec.Combinator
 import Control.Applicative
 import Codec.Compression.Zlib (decompress)
@@ -59,11 +59,6 @@ noneOf = satisfy . notInClass
 
 findObjs :: BS.ByteString -> [PDFBS]
 findObjs contents = case parseOnly (many1 pdfObj) contents of
-  Left  err -> []
-  Right rlt -> rlt
-
-findXref :: BS.ByteString -> String
-findXref contents = case parseOnly (xref) contents of
   Left  err -> []
   Right rlt -> rlt
 
@@ -206,46 +201,69 @@ xobjColorSpace x objs = case findObjFromDictWithRef x "/ColorSpace" objs of
   otherwise -> ""
 
 
--- find root ref from Trailer or Cross-Reference Dictionary
+-- find root ref from Trailer Dictionary
 
-parseTrailer :: BS.ByteString -> Maybe Dict
-parseTrailer bs = case BS.breakEnd (== '\n') bs of
+readDec' bs = case readDec $ BS.unpack bs of
+  [(n,_)] -> n
+  _ -> error $ show bs
+
+findTrailer :: BS.ByteString -> Maybe Dict
+findTrailer bs = case BS.breakEnd (== '\n') bs of
   (source, eofLine)
     | "%%EOF" `BS.isPrefixOf` eofLine
-      -> Just (parseCRDict $ BS.drop (getOffset source) bs)
+      -> let dictXref = findTrailerDictXREF $ BS.drop (getXrefOffset source) bs
+         in Just $ fst (trace (show dictXref) dictXref)
     | source == "" -> Nothing
-    | otherwise -> parseTrailer (BS.init bs)
+    | otherwise -> findTrailer (BS.init bs)
+  where 
+    getXrefOffset bs = case BS.breakEnd (== '\n') (BS.init bs) of
+      (_, nstr) -> readDec' nstr
 
-getOffset bs = case BS.breakEnd (== '\n') (BS.init bs) of
-  (_, nstr) -> case readDec $ BS.unpack nstr of
-                 [(n,_)] -> n
-                 _ -> error "Could not find Offset"
+findTrailerDictXREF :: BS.ByteString -> (Dict, [XREF])
+findTrailerDictXREF xrefTrailer = case BS.breakSubstring "trailer" xrefTrailer of
+  (xref, trailer) -> case parseOnly (pdfdictionary <* spaces) (BS.drop 7 trailer) of
+    Left  err  -> error $ show (BS.take 100 trailer)
+    Right (PdfDict dict) -> (dict, parseXref xref)
 
-parseCRDict :: BS.ByteString -> Dict
-parseCRDict rlt = case parseOnly crdict rlt of
-  Left  err  -> error $ show (BS.take 100 rlt)
-  Right (PdfDict dict) -> dict
-  Right _ -> error "Could not find Cross-Reference dictionary"
-  where
-    crdict :: Parser Obj
-    crdict = do 
-      spaces
-      (try skipCRtable <|> skipCRstream)
-      d <- pdfdictionary <* spaces
-      return d
-    skipCRtable = ((manyTill anyChar (try $ string "trailer")) >> spaces)
-    skipCRstream = (many1 digit >> spaces >> digit >> string " obj" >> spaces)
+parseXref :: BS.ByteString -> [XREF]
+parseXref xref = case parseOnly xrefParser xref of
+  Left  err  -> error $ show (BS.take 100 xref)
+  Right xs -> concatMap concatSubsections xs
+  
+  where 
+    xrefParser = do
+      string "xref" >> spaces
+      es <- many1 subsections
+      return $ es
+    subsections = do
+      begin <- P.takeWhile isDigit <* spaces
+      num <- P.takeWhile isDigit <* spaces
+      es <- many1 entries 
+      return $ (readDec' begin, readDec' num, es)
+    entries = do
+      offset <- P.take 10 <* spaces
+      gennum <- P.take 5 <* spaces
+      status <- P.take 1 <* string "\r\n"
+      return $ (readDec' offset, forn status)
+    forn "f" = False
+    forn "n" = True
+    forn _ = error "xref is neither f nor n"
+
+    concatSubsections (objn, 1, e:[]) = [(objn, fst e, snd e)]
+    concatSubsections (objn, 1, e:_)  = error $ show e
+    concatSubsections (objn, i, e:es) = (objn, fst e, snd e):(concatSubsections (objn+1, i-1, es))
+    concatSubsections (_, _, e)  = error $ show e
 
 rootRef :: BS.ByteString -> Maybe Int
-rootRef bs = case parseTrailer bs of
+rootRef bs = case findTrailer bs of
   Just dict -> findRefs isRootRef dict
   Nothing   -> rootRefFromCRStream bs
 
 rootRefFromCRStream :: BS.ByteString -> Maybe Int
 rootRefFromCRStream bs =
-  let offset = (read . BS.unpack . head . drop 1 . reverse . BS.lines $ (trace (show bs) bs)) :: Int
+  let offset = (read . BS.unpack . head . drop 1 . reverse . BS.lines $ bs) :: Int
       crstrm = snd . head . findObjs $ BS.drop offset bs
-      crdict = parseCRDict crstrm
+      crdict = fst $ findTrailerDictXREF crstrm
   in findRefs isRootRef $ crdict
 
 isRootRef (PdfName "/Root", ObjRef x) = True
@@ -259,12 +277,7 @@ findRefs pred dict = case find pred dict of
 
 -- find Info
 
-findTrailer bs = do
-  case parseTrailer bs of
-    Just d -> d
-    Nothing -> []
-
-infoRef bs = case parseTrailer bs of
+infoRef bs = case findTrailer bs of
   Just dict -> findRefs isInfoRef dict
   Nothing -> error "No ref for info"
 

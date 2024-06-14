@@ -8,11 +8,11 @@ import Codec.Compression.Zlib (decompress)
 
 type PDFBS = (Int,BS.ByteString)
 
+type XREF = (Int,Int,Bool)
+
 type PDFObj = (Int,[Obj])
 
 type PDFStream = BSL.ByteString
-
-type PDFxref = BSL.ByteString
 
 data Obj = PdfDict Dict -- [(Obj, Obj)]
          | PdfText String 

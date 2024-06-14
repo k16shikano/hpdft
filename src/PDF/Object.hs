@@ -32,7 +32,9 @@ import Data.Text.Encoding.Error (strictDecode)
 import Numeric (readOct, readHex)
 import Data.ByteString.Builder (toLazyByteString, word16BE)
 
-import Data.Attoparsec.ByteString.Char8 hiding (take)
+import Data.Attoparsec.ByteString.Char8 hiding (take, skipWhile, takeTill)
+import Data.Attoparsec.ByteString.Char8 as P (takeWhile1)
+import Data.Attoparsec.ByteString as W (skipWhile, word8, notWord8, takeTill, anyWord8)
 import Data.Attoparsec.Combinator
 import Control.Applicative
 
@@ -40,7 +42,7 @@ import Debug.Trace
 
 import PDF.Definition
 
-spaces = skipMany (comment <|> oneOf pdfspaces) --skipSpace
+spaces = many (comment <|> pdfspaces)
 oneOf = satisfy . inClass
 noneOf = satisfy . notInClass
 
@@ -48,28 +50,26 @@ noneOf = satisfy . notInClass
 
 pdfObj :: Parser PDFBS
 pdfObj = do
-  spaces -- skipMany (comment <|> oneOf pdfspaces)
-  objn <- many1 digit <* (spaces >> oneOf "0123456789" >> string " obj")
-  object <- manyTill anyChar (try $ string "endobj")
   spaces
-  skipMany xref
-  skipMany startxref
+  objn <- many1 digit <* (spaces >> oneOf "0123456789" >> string " obj")
+  object <- {-# SCC "pdfobj_manyTill" #-}manyTill' anyChar (try $ string "endobj")
+  spaces
+  many xref
+  many startxref
   return $ (read objn, BS.pack object)
 
-pdfspaces :: [Char]
-pdfspaces = map chr [0, 9, 10, 12, 13, 32]
+pdfspaces = do
+  W.word8 0 <|> W.word8 9 <|> W.word8 10 <|> W.word8 12 <|> W.word8 13 <|> W.word8 32
+  return ""
 
 parsePDFObj :: PDFBS -> PDFObj
 parsePDFObj (n,pdfobject) = case parseOnly (spaces >> many1 (try pdfobj <|> try objother)) pdfobject of
   Left  err -> (n,[PdfNull])
   Right obj -> (n,obj)
 
-comment :: Parser Char
 comment = do
-  char '%'
-  noneOf "%"
-  manyTill anyChar $ oneOf "\r\n"
-  return ' '
+  W.word8 37 >> W.notWord8 37 >> W.takeTill (\w-> w == 13 || w == 10)
+  return " "
 
 xref :: Parser String
 xref = do
@@ -188,15 +188,15 @@ pdfnull :: Parser Obj
 pdfnull = PdfNull <$ string "null"
 
 pdfobj :: Parser Obj
-pdfobj = choice [ try rrefs <* spaces
-                , try pdfname <* spaces
-                , try pdfnumber <* spaces
+pdfobj = choice [ try rrefs
+                , try pdfname
+                , try pdfnumber
                 , try pdfhex <* spaces -- Hexadecimal String
                 , try pdfbool <* spaces
                 , try pdfnull <* spaces
                 , try pdfarray <* spaces
                 , try pdfdictionary <* spaces
-                , {-# SCC pdfstream #-} try pdfstream <* spaces
+                , try pdfstream <* spaces
                 , pdfletters <* spaces -- Literal String
                 ]
 
@@ -211,7 +211,7 @@ rrefs = do
   return $ ObjRef (read objnum)
 
 objother :: Parser Obj
-objother = ObjOther <$> (manyTill anyChar space)
+objother = ObjOther . show <$> (W.takeTill (\w-> w == 10 || w == 13) <* (W.word8 10 <|> W.word8 13))
 
 parseRefsArray :: [Obj] -> [Int]
 parseRefsArray (ObjRef x:y) = (x:parseRefsArray y)

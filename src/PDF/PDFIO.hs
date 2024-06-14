@@ -93,7 +93,9 @@ getRootObj filename = do
 getTrailer :: FilePath -> IO Dict
 getTrailer filename = do
   c <- BS.readFile filename
-  return $ findTrailer c
+  case findTrailer c of
+    Just d -> return d
+    Nothing -> return []
 
 -- | /Info of `filename`.
 
