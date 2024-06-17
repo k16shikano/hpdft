@@ -22,7 +22,7 @@ module PDF.PDFIO ( getObjectByRef
 
 import PDF.Definition
 import PDF.DocumentStructure
-  (rawStream, rawStreamByRef, findObjs, findObjsByRef,
+  (rawStream, rawStreamByRef, findObjs, findObjs', findObjsByRef,
    findDictByRef, findObjFromDict, rootRef,
    findTrailer, expandObjStm)
 import PDF.Object (parsePDFObj)
@@ -46,8 +46,8 @@ getPDFBSFromFile f = do
 getPDFObjFromFile :: FilePath -> IO [PDFObj]
 getPDFObjFromFile f = do
   c <- BS.readFile f
-  let obj = expandObjStm $ map parsePDFObj $ findObjs c
-  return obj
+  let obj = expandObjStm $ map parsePDFObj $ findObjs' c
+  return $ obj
 
 -- | Get a PDF object from a whole 'PDFObj' by specifying `ref :: Int`
 

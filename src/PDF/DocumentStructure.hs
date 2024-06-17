@@ -22,6 +22,7 @@ module PDF.DocumentStructure
        , findObjFromDictWithRef
        , findObjsByRef
        , findObjs
+       , findObjs'
        , findTrailer
        , rawStream
        ) where
@@ -40,6 +41,8 @@ import Data.Attoparsec.ByteString.Char8 as P (take, takeWhile)
 import Data.Attoparsec.Combinator
 import Control.Applicative
 import Codec.Compression.Zlib (decompress)
+import qualified Data.Map as Map
+import Data.Map (Map)
 
 import Debug.Trace
 
@@ -61,6 +64,15 @@ findObjs :: BS.ByteString -> [PDFBS]
 findObjs contents = case parseOnly (many1 pdfObj) contents of
   Left  err -> []
   Right rlt -> rlt
+
+findObjs' :: BS.ByteString -> [PDFBS]
+findObjs' contents = case findTrailer' contents of
+  Just (dict, xref) -> Map.toList $ Map.map (chopRest . chopHead) xref
+  where
+    chopHead d = BS.drop d contents
+    chopRest bs = case BS.breakSubstring "endobj" bs of
+      (obj', _) -> case BS.breakSubstring " obj" obj' of
+        (ref', obj) -> BS.drop 4 obj
 
 findObjsByRef :: Int -> [PDFObj] -> Maybe [Obj]
 findObjsByRef x pdfobjs = case find (isRefObj (Just x)) pdfobjs of
@@ -212,23 +224,46 @@ findTrailer bs = case BS.breakEnd (== '\n') bs of
   (source, eofLine)
     | "%%EOF" `BS.isPrefixOf` eofLine
       -> let dictXref = findTrailerDictXREF $ BS.drop (getXrefOffset source) bs
-         in Just $ fst (trace (show dictXref) dictXref)
+         in Just $ fst dictXref
     | source == "" -> Nothing
     | otherwise -> findTrailer (BS.init bs)
   where 
     getXrefOffset bs = case BS.breakEnd (== '\n') (BS.init bs) of
       (_, nstr) -> readDec' nstr
 
-findTrailerDictXREF :: BS.ByteString -> (Dict, [XREF])
+findTrailer' :: BS.ByteString -> Maybe (Dict, XREF)
+findTrailer' bs = case BS.breakEnd (== '\n') bs of
+  (source, eofLine)
+    | "%%EOF" `BS.isPrefixOf` eofLine
+      -> case findTrailerDictXREF $ BS.drop (getXrefOffset source) bs of
+           (dict, xref) -> case find isPrev dict of
+             Just (PdfName "/Prev", PdfNumber x) -> xrefs (truncate x) bs (dict, xref) -- PDF was updated
+             Nothing -> Just (dict, xref)
+    | source == "" -> Nothing
+    | otherwise -> findTrailer' (BS.init bs) -- in case there's data below %%EOF
+  where 
+    getXrefOffset bs = case BS.breakEnd (== '\n') (BS.init bs) of
+      (_, nstr) -> readDec' nstr
+    
+    isPrev (PdfName "/Prev", _) = True
+    isPrev (_,_) = False
+    
+    xrefs :: Int -> BS.ByteString -> (Dict, XREF) -> Maybe (Dict, XREF)
+    xrefs n all (dict, sofar) = case findTrailerDictXREF $ BS.drop n all of
+      (dict', xref) -> case find isPrev dict' of -- found dict' is only to be used for /Prev
+        Just (PdfName "/Prev", PdfNumber x) -> xrefs (truncate x) all (dict, Map.union xref sofar) -- first Map is used for duplicated key
+        Nothing -> Just $ (dict, Map.union xref sofar)
+
+findTrailerDictXREF :: BS.ByteString -> (Dict, XREF)
 findTrailerDictXREF xrefTrailer = case BS.breakSubstring "trailer" xrefTrailer of
   (xref, trailer) -> case parseOnly (pdfdictionary <* spaces) (BS.drop 7 trailer) of
     Left  err  -> error $ show (BS.take 100 trailer)
     Right (PdfDict dict) -> (dict, parseXref xref)
 
-parseXref :: BS.ByteString -> [XREF]
+parseXref :: BS.ByteString -> XREF
 parseXref xref = case parseOnly xrefParser xref of
   Left  err  -> error $ show (BS.take 100 xref)
-  Right xs -> concatMap concatSubsections xs
+  Right xs -> Map.fromList $ map dropFN $ concatMap concatSubsections xs
   
   where 
     xrefParser = do
@@ -253,6 +288,8 @@ parseXref xref = case parseOnly xrefParser xref of
     concatSubsections (objn, 1, e:_)  = error $ show e
     concatSubsections (objn, i, e:es) = (objn, fst e, snd e):(concatSubsections (objn+1, i-1, es))
     concatSubsections (_, _, e)  = error $ show e
+    
+    dropFN (n, offset, fn) = (n, offset)
 
 rootRef :: BS.ByteString -> Maybe Int
 rootRef bs = case findTrailer bs of
@@ -262,7 +299,7 @@ rootRef bs = case findTrailer bs of
 rootRefFromCRStream :: BS.ByteString -> Maybe Int
 rootRefFromCRStream bs =
   let offset = (read . BS.unpack . head . drop 1 . reverse . BS.lines $ bs) :: Int
-      crstrm = snd . head . findObjs $ BS.drop offset bs
+      crstrm = snd . head . findObjs' $ BS.drop offset bs
       crdict = fst $ findTrailerDictXREF crstrm
   in findRefs isRootRef $ crdict
 

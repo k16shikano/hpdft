@@ -5,10 +5,11 @@ import Data.List (replicate, intercalate)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import Codec.Compression.Zlib (decompress)
+import Data.Map (Map)
 
 type PDFBS = (Int,BS.ByteString)
 
-type XREF = (Int,Int,Bool)
+type XREF = Map Int Int
 
 type PDFObj = (Int,[Obj])
 

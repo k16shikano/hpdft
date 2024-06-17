@@ -52,7 +52,7 @@ pdfObj :: Parser PDFBS
 pdfObj = do
   spaces
   objn <- many1 digit <* (spaces >> oneOf "0123456789" >> string " obj")
-  object <- {-# SCC "pdfobj_manyTill" #-}manyTill' anyChar (try $ string "endobj")
+  object <- manyTill' anyChar (try $ string "endobj")
   spaces
   many xref
   many startxref
