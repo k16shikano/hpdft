@@ -1,4 +1,4 @@
-cabal-version:       3.0
+cabal-version:       3.12
 name:                hpdft
 version:             0.1.1.3
 synopsis:            A tool for looking through PDF file using Haskell
@@ -40,19 +40,19 @@ library
   other-modules:       Paths_hpdft
   other-extensions:    OverloadedStrings
   build-depends:       attoparsec >= 0.14.4 && < 0.15
-                     , base >= 4.18.0 && < 4.19
+                     , base >= 4.20.0 && < 4.21
                      , binary >= 0.8.9 && < 0.9
-                     , bytestring >= 0.11.4 && < 0.12
-                     , containers >= 0.6.7 && < 0.7
-                     , directory >= 1.3.8 && < 1.4
-                     , file-embed >= 0.0.15 && < 0.1
+                     , bytestring >= 0.11.5 && < 0.12
+                     , containers >= 0.7 && < 0.8
+                     , directory >= 1.3.9 && < 1.4
+                     , file-embed >= 0.0.16 && < 0.1
                      , memory >= 0.18.0 && < 0.19
                      , optparse-applicative >= 0.18.1 && < 0.19
-                     , parsec >=3.0 && <3.2
+                     , parsec >= 3.1.18 && < 3.2
                      , semigroups >= 0.20 && < 0.21
-                     , text >= 2.0.2 && < 2.1
+                     , text >= 2.1.2 && < 2.2
                      , utf8-string >= 1.0.2 && < 1.1
-                     , zlib >= 0.6.3 && < 0.7
+                     , zlib >= 0.7.1 && < 0.8
   autogen-modules:   Paths_hpdft
   default-language:  Haskell2010
   buildable:         True
@@ -63,15 +63,15 @@ executable hpdft
   hs-source-dirs:    .
   other-modules:     Paths_hpdft
   other-extensions:    OverloadedStrings
-  build-depends:       base >= 4.18.0 && < 4.19
-                     , bytestring >= 0.11.4 && < 0.12
+  build-depends:       base >= 4.20.0 && < 4.21
+                     , bytestring >= 0.11.5 && < 0.12
                      , hpdft
                      , memory >= 0.18.0 && < 0.19
                      , optparse-applicative >= 0.18.1 && < 0.19
                      , regex-base >= 0.94.0 && < 0.95
                      , regex-tdfa >= 1.3.2 && < 1.4
                      , semigroups >= 0.20 && < 0.21
-                     , text >= 2.0.2 && < 2.1
+                     , text >= 2.1.2 && < 2.2
                      , utf8-string >= 1.0.2 && < 1.1
   autogen-modules:   Paths_hpdft
   default-language:  Haskell2010
