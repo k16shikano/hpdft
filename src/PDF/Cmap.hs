@@ -24,17 +24,20 @@ import Debug.Trace
 import PDF.Definition
 
 parseCMap :: BSL.ByteString -> CMap
-parseCMap str = case runParser (skipHeader >>
-                                concat <$>
-                                manyTill
-                                 (choice
-                                 [ try bfchar
-                                 , try $ concat <$> bfrange
-                                 ])
-                                 (try $ string "endcmap"))
-                               () "" str of
-  Left err -> error $ "Can not parse CMap " ++ (show err)
-  Right cmap -> mkUniq cmap
+parseCMap str
+  | BSL.null str = []
+  | otherwise =
+      case runParser (skipHeader >>
+                      concat <$>
+                      manyTill
+                       (choice
+                       [ try bfchar
+                       , try $ concat <$> bfrange
+                       ])
+                       (try $ string "endcmap"))
+                     () "" str of
+        Left _  -> []
+        Right cmap -> mkUniq cmap
 
   where
     mkUniq = reverse

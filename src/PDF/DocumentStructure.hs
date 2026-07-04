@@ -669,7 +669,8 @@ toUnicode :: Maybe Security -> Int -> PDFObjIndex -> CMap
 toUnicode sec x objs =
   case findObjFromDictWithRef x "/ToUnicode" objs of
     Just (ObjRef ref) ->
-      parseCMap $ rawStreamByRef sec objs ref
+      let s = rawStreamByRef sec objs ref
+      in if BSL.null s then noToUnicode sec x objs else parseCMap s
     otherwise -> noToUnicode sec x objs
 
 noToUnicode :: Maybe Security -> Int -> PDFObjIndex -> CMap
