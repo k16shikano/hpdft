@@ -31,8 +31,6 @@ import PDF.Encrypt (Security, securityFromEncryptDict)
 import Data.List (find)
 import Data.Maybe (fromMaybe)
 
-import Debug.Trace
-
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy.Char8 as BSL
@@ -144,7 +142,14 @@ getInfo filename password = do
                   Just _ -> error "There seems to be no Info"
                   Nothing -> error "There seems to be no Info"
   case find ((== inforef) . fst) (findObjs' c) of
-    Nothing -> error "Could not get info object"
     Just objbs -> case findDict $ snd $ parsePDFObj msec objbs of
       Just d -> return d
-      Nothing -> error "Could not get info object"
+      Nothing -> getInfoFromIndex c msec inforef
+    Nothing -> getInfoFromIndex c msec inforef
+
+getInfoFromIndex :: BS.ByteString -> Maybe Security -> Int -> IO Dict
+getInfoFromIndex c msec inforef = do
+  let objs = indexPDFObjs $ expandObjStm msec $ map (parsePDFObj msec) $ findObjs' c
+  case findDictByRef inforef objs of
+    Just d -> return d
+    Nothing -> error "Could not get info object"

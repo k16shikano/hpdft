@@ -687,12 +687,18 @@ pdfopTast = do
   return ""
 
 digitParam :: PSParser Double
-digitParam = do 
-  sign <- many $ char '-'
+digitParam = do
+  sign <- (char '-' >> return "-") <|> return ""
   num <- ((++) <$> (("0"++) <$> (string ".")) <*> many1 digit)
          <|>
          ((++) <$> (many1 digit) <*> ((++) <$> (many $ char '.') <*> many digit))
-  return $ read $ sign ++ num
+  return $ parsePdfNumber $ sign ++ num
+
+parsePdfNumber :: String -> Double
+parsePdfNumber s
+  | null s || s == "-" = 0
+  | last s == '.' = read (s ++ "0")
+  | otherwise = read s
 
 hexParam :: Parser T.Text
 hexParam = do
