@@ -47,7 +47,7 @@ import Data.Map (Map)
 
 import PDF.Definition
 import PDF.Object
-import PDF.Error (PdfError(..), PdfResult, orError)
+import PDF.Error (PdfError(..), PdfResult, PdfWarning(..))
 import PDF.Encrypt (Security, decryptStream)
 import PDF.ContentStream (parseStream, parseColorSpace)
 import PDF.Cmap (parseCMap)
@@ -140,7 +140,7 @@ findKids dict = case find isKidsRefs dict of
     isKidsRefs (PdfName "/Kids", PdfArray x) = True
     isKidsRefs (_,_)                         = False
 
-contentsStream :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> PdfResult PDFStream
+contentsStream :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> PdfResult (PDFStream, [PdfWarning])
 contentsStream dict st sec objs = case find contents dict of
   Just (PdfName "/Contents", PdfArray arr) -> getContentArray arr
   Just (PdfName "/Contents", ObjRef r) ->
@@ -154,13 +154,14 @@ contentsStream dict st sec objs = case find contents dict of
     contents _ = False
 
     getContentArray arr = parseContentStream dict st sec objs $
-                          BSL.concat $ map (orError . rawStreamByRef sec objs) (parseRefsArray arr)
+      BSL.concat [s | ref <- parseRefsArray arr
+                     , Right s <- [rawStreamByRef sec objs ref]]
     getContent r = do
       s <- rawStreamByRef sec objs r
       parseContentStream dict st sec objs s
 
-parseContentStream :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> BSL.ByteString -> PdfResult PDFStream
-parseContentStream dict st sec objs s = 
+parseContentStream :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> BSL.ByteString -> PdfResult (PDFStream, [PdfWarning])
+parseContentStream dict st sec objs s =
   parseStream (st {fontmaps=fontdict, cmaps=cmap}) s
   where fontdict = findFontEncoding dict sec objs
         cmap = findCMap dict sec objs
@@ -242,7 +243,8 @@ pngSub row =
 contentsColorSpace :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> PdfResult [T.Text]
 contentsColorSpace dict st sec objs = case find contents dict of
   Just (PdfName "/Contents", PdfArray arr) ->
-    Right $ concat $ map (orError . parseColorSpaceEntry) (parseRefsArray arr)
+    Right $ concat [cs | ref <- parseRefsArray arr
+                        , Right cs <- [parseColorSpaceEntry ref]]
   Just (PdfName "/Contents", ObjRef x) ->
     parseColorSpaceEntry x
   Nothing -> Left (MissingKey "/Contents" "page")
@@ -644,10 +646,14 @@ encoding sec x objs = case subtype of
     -- TODO: FontFile (Type 1), FontFile2 (TrueType), FontFile3 (Other than Type1C)
     _ -> case findObjFromDict (fontDescriptor' x) "/FontFile3" of
            Just (ObjRef fontfile) ->
-             CFF.encoding $ BSL.toStrict $ orError $ rawStreamByRef sec objs fontfile
+             case rawStreamByRef sec objs fontfile of
+               Right bs -> CFF.encoding $ BSL.toStrict bs
+               Left _ -> NullMap
            _ -> case findObjFromDict (fontDescriptor' x) "/FontFile" of
              Just (ObjRef fontfile) ->
-               Type1.encoding $ BSL.toStrict $ orError $ rawStreamByRef sec objs fontfile
+               case rawStreamByRef sec objs fontfile of
+                 Right bs -> Type1.encoding $ BSL.toStrict bs
+                 Left _ -> NullMap
              _ -> NullMap
   -- TODO
   Just (PdfName "/Type2") -> NullMap
@@ -732,8 +738,10 @@ toUnicode :: Maybe Security -> Int -> PDFObjIndex -> CMap
 toUnicode sec x objs =
   case findObjFromDictWithRef x "/ToUnicode" objs of
     Just (ObjRef ref) ->
-      let s = orError $ rawStreamByRef sec objs ref
-      in if BSL.null s then noToUnicode sec x objs else parseCMap s
+      case rawStreamByRef sec objs ref of
+        Right s | BSL.null s -> noToUnicode sec x objs
+                | otherwise  -> parseCMap s
+        _ -> noToUnicode sec x objs
     otherwise -> noToUnicode sec x objs
 
 noToUnicode :: Maybe Security -> Int -> PDFObjIndex -> CMap
@@ -746,7 +754,9 @@ noToUnicode sec x objs =
             Just (ObjRef desc) ->
               case findObjFromDictWithRef desc "/FontFile2" objs of
                 Just (ObjRef fontfile) ->
-                  OpenType.cmap $ BSL.toStrict $ orError $ rawStreamByRef sec objs fontfile
+                  case rawStreamByRef sec objs fontfile of
+                    Right bs -> OpenType.cmap $ BSL.toStrict bs
+                    Left _ -> []
                 otherwise -> []
             otherwise -> []
         otherwise -> []

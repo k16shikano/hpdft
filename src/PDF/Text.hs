@@ -4,10 +4,11 @@ module PDF.Text
   ( initstate
   , walkdown
   , pdfToTextBS
+  , pdfToTextWithWarnings
   ) where
 
 import PDF.Definition
-import PDF.Error (PdfResult)
+import PDF.Error (PdfResult, PdfWarning(..))
 import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Encrypt (Security)
@@ -31,10 +32,16 @@ initstate = PSR { linex=0
                 , cmaps=[]
                 , colorspace=""
                 , xcolorspaces=[]
+                , warnings=[]
                 }
 
 pdfToTextBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
 pdfToTextBS filename mpw = do
+  result <- pdfToTextWithWarnings filename mpw
+  return (fmap fst result)
+
+pdfToTextWithWarnings :: FilePath -> Maybe String -> IO (PdfResult (BSL.ByteString, [PdfWarning]))
+pdfToTextWithWarnings filename mpw = do
   objResult <- getPDFObjFromFile filename mpw
   case objResult of
     Left err -> return (Left err)
@@ -44,24 +51,28 @@ pdfToTextBS filename mpw = do
         Left err -> return (Left err)
         Right rootref -> return (Right (walkdown initstate rootref sec objs))
 
-walkdown :: PSR -> Int -> Maybe Security -> PDFObjIndex -> PDFStream
+walkdown :: PSR -> Int -> Maybe Security -> PDFObjIndex -> (BSL.ByteString, [PdfWarning])
 walkdown st parent sec objs =
   case findObjsByRef parent objs of
     Just os -> case findDictOfType "/Catalog" os of
       Just dict -> case findPages dict of
         Just pr -> walkdown st pr sec objs
-        Nothing -> ""
+        Nothing -> ("", [])
       Nothing -> case findDictOfType "/Pages" os of
         Just dict -> case findKids dict of
-          Just kidsrefs -> BSL.concat $ map ((\f -> f sec objs) . (walkdown st)) kidsrefs
-          Nothing -> ""
+          Just kidsrefs ->
+            let results = map (\k -> walkdown st k sec objs) kidsrefs
+            in ( BSL.concat (map fst results)
+               , concatMap snd results
+               )
+          Nothing -> ("", [])
         Nothing -> case findDictOfType "/Page" os of
           Just dict -> pageContent dict st sec objs
-          Nothing -> ""
-    Nothing -> ""
+          Nothing -> ("", [])
+    Nothing -> ("", [])
 
-pageContent :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> PDFStream
+pageContent :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> (BSL.ByteString, [PdfWarning])
 pageContent dict st sec objs =
   case contentsStream dict st sec objs of
-    Right s -> s
-    Left _ -> ""
+    Right (s, ws) -> (s, ws)
+    Left _ -> ("", [])

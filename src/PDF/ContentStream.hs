@@ -28,17 +28,22 @@ import Control.Applicative
 import PDF.Definition
 import PDF.Object
 import PDF.Character (pdfcharmap, extendedAscii, adobeJapanOneSixMap)
-import PDF.Error (PdfError(..), PdfResult)
+import PDF.Error (PdfError(..), PdfResult, PdfWarning(..))
 
 type PSParser a = GenParser Char PSR a
 
 parseContentStream p st = runParser p st ""
 
-parseStream :: PSR -> PDFStream -> PdfResult PDFStream
-parseStream psr pdfstream = 
-  case parseContentStream (T.concat <$> (spaces >> many (try elems <|> skipOther))) psr pdfstream of
-    Left  err -> Left (ParseError ("content stream: " ++ show err) BS.empty)
-    Right str -> Right $ BSLC.pack $ BSSC.unpack $ encodeUtf8 str
+parseStream :: PSR -> PDFStream -> PdfResult (PDFStream, [PdfWarning])
+parseStream psr pdfstream =
+  case parseContentStream contentParser psr pdfstream of
+    Left err -> Left (ParseError ("content stream: " ++ show err) BS.empty)
+    Right (str, ws) -> Right (BSLC.pack $ BSSC.unpack $ encodeUtf8 str, reverse ws)
+  where
+    contentParser = do
+      str <- T.concat <$> (spaces >> many (try elems <|> skipOther))
+      st <- getState
+      return (str, warnings st)
 
 parseColorSpace :: PSR -> BSLC.ByteString -> PdfResult [T.Text]
 parseColorSpace psr pdfstream = 
@@ -255,17 +260,18 @@ pdfQuote = do
   return $ T.concat t
 
 unknowns :: PSParser T.Text
-unknowns = do 
+unknowns = do
   ps <- manyTill anyChar (try $ oneOf "\r\n")
   st <- getState
-  -- linebreak within (...) is parsed as Tj
-  return $ case runParser elems st "" $ BSLC.pack ((Data.List.dropWhileEnd (=='\\') ps)++")Tj") of
-             Right xs -> xs
-             Left e -> case runParser elems st "" $ BSLC.pack ("("++ps) of
-               Right xs -> xs
-               Left e -> case ps of
-                 "" -> ""
-                 otherwise -> T.pack $ "[[[UNKNOWN STREAM:" ++ take 100 (show ps) ++ "]]]"
+  case runParser elems st "" $ BSLC.pack ((Data.List.dropWhileEnd (=='\\') ps)++")Tj") of
+    Right xs -> return xs
+    Left _ -> case runParser elems st "" $ BSLC.pack ("("++ps) of
+      Right xs -> return xs
+      Left _ -> case ps of
+        "" -> return T.empty
+        _ -> do
+          updateState (\s -> s {warnings = UnknownOperator (take 100 ps) : warnings s})
+          return T.empty
 
 skipOther :: PSParser T.Text
 skipOther = do
@@ -317,18 +323,16 @@ bytesletter cmap = do
                          , try $ chr <$> ((string "\\") *> octnum)
                          , try $ noneOf ")"
                          ])
-  return $ byteStringToText cmap txt
+  byteStringToText cmap txt
   where
-    byteStringToText :: CMap -> String -> T.Text
-    byteStringToText cmap str = T.concat $ map (toUcs cmap) $ asInt16 $ map ord str
+    byteStringToText cmap' str = do
+      parts <- mapM (lookupUcs cmap') $ asInt16 $ map ord str
+      return $ T.concat parts
 
     asInt16 :: [Int] -> [Int]
     asInt16 [] = []
-    asInt16 (a:[]) = [a] --error $ "Can not read string "++(show a)
+    asInt16 (a:[]) = [a]
     asInt16 (a:b:rest) = (a * 256 + b):(asInt16 rest)
-
-    -- for debug
-    -- myToUcs cmap x = if x == 636 then trace (show cmap) $ toUcs cmap x else toUcs cmap x
 
 hexletters :: PSParser T.Text
 hexletters = do
@@ -352,12 +356,18 @@ hexDecodeUTF16BE s =
 adobeOneSix :: Int -> T.Text
 adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
   Just cs -> T.pack $ BSLU.toString cs
-  Nothing -> T.pack $ "[" ++ (show a) ++ "]"
+  Nothing -> T.pack $ "[" ++ show a ++ "]"
 
-toUcs :: CMap -> Int -> T.Text
-toUcs m h = case lookup h m of
-  Just ucs -> T.pack ucs
-  Nothing -> if m == [] then adobeOneSix h else T.pack [chr h]
+lookupUcs :: CMap -> Int -> PSParser T.Text
+lookupUcs m h = case lookup h m of
+  Just ucs -> return $ T.pack ucs
+  Nothing
+    | null m -> case Map.lookup h adobeJapanOneSixMap of
+        Just cs -> return $ T.pack $ BSLU.toString cs
+        Nothing -> do
+          updateState (\s -> s {warnings = UnmappedCid h : warnings s})
+          return $ adobeOneSix h
+    | otherwise -> return $ T.pack [chr h]
 
 cidletters = choice [try hexletter, try octletter]
 
@@ -366,19 +376,20 @@ hexletter = do
   st <- getState
   let font = curfont st
       cmap = fromMaybe [] (lookup font (cmaps st))
-  (hexToString cmap . readHex) <$> choice [ try $ count 4 $ oneOf "0123456789ABCDEFabcdef"
-                                          , try $ count 2 $ oneOf "0123456789ABCDEFabcdef"
-                                          , try $ (:"0") <$> (oneOf "0123456789ABCDEFabcdef")
-                                          ]
-  where hexToString m [(h,"")] = toUcs m h
-        hexToString _ _ = "????"
+  hexDigits <- choice [ try $ count 4 $ oneOf "0123456789ABCDEFabcdef"
+                      , try $ count 2 $ oneOf "0123456789ABCDEFabcdef"
+                      , try $ (:"0") <$> (oneOf "0123456789ABCDEFabcdef")
+                      ]
+  case readHex hexDigits of
+    [(h,"")] -> lookupUcs cmap h
+    _ -> return "????"
 
 octletter :: PSParser T.Text
 octletter = do
   st <- getState
   let cmap = fromMaybe [] (lookup (curfont st) (cmaps st))
   o <- octnum
-  return $ toUcs cmap o
+  lookupUcs cmap o
 
 psletter :: [(Char,String)] -> PSParser T.Text
 psletter fontmap = do
@@ -406,14 +417,11 @@ psletter fontmap = do
           octToChar _ = '?'
 
 cidletter :: String -> PSParser T.Text
-cidletter cidmapName = do
+cidletter _ = do
   o1 <- octnum
   o2 <- octnum
   let d = 256 * o1 + o2
-  return $
-    if cidmapName == "Adobe-Japan1"
-    then adobeOneSix d
-    else adobeOneSix d
+  lookupUcs [] d
 
 octnum :: PSParser Int
 octnum = do

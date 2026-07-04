@@ -11,8 +11,8 @@ import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Outlines
 import PDF.Encrypt (Security)
-import PDF.Text (initstate, pdfToTextBS)
-import PDF.Error (PdfError(..), PdfResult)
+import PDF.Text (initstate, pdfToTextWithWarnings)
+import PDF.Error (PdfError(..), PdfResult, PdfWarning(..), renderPdfWarning)
 
 import System.Environment (getArgs)
 import System.Exit (exitWith, ExitCode(..))
@@ -25,7 +25,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import Data.Text.Lazy as TL (unpack)
 import Data.Text.Lazy.Encoding as TL
-import Data.List (nub, find)
+import Data.List (nub, find, intercalate)
 import Data.Maybe (fromMaybe)
 
 import Options.Applicative
@@ -59,6 +59,9 @@ describeError (UnsupportedFeature msg) = "unsupported feature: " ++ msg
 describeError (DecryptionError msg) =
   "cannot decrypt: " ++ msg ++ ". Use -P to supply a password."
 describeError (FontError n msg) = "font error in object " ++ show n ++ ": " ++ msg
+
+printWarnings :: [PdfWarning] -> IO ()
+printWarnings = mapM_ (hPutStrLn stderr . ("hpdft: warning: " ++) . renderPdfWarning)
 
 runOrDie :: IO (PdfResult a) -> IO a
 runOrDie action = do
@@ -159,7 +162,8 @@ hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, pdftit
 
 pdfToText :: FilePath -> Maybe String -> IO ()
 pdfToText filename mpw = do
-  txt <- runOrDie (pdfToTextBS filename mpw)
+  (txt, ws) <- runOrDie (pdfToTextWithWarnings filename mpw)
+  printWarnings ws
   BSL.putStrLn txt
 
 data  PageTree = Nop | Page Int | Pages [PageTree]
@@ -210,17 +214,19 @@ showPage filename mpw page = do
 contentByRefObjs :: Maybe Security -> PDFObjIndex -> Int -> IO ()
 contentByRefObjs sec objs ref = do
   obj <- runOrDie (getObjectByRef ref objs)
-  BSL.putStrLn $ contentInObject sec obj objs
+  let (txt, ws) = contentInObject sec obj objs
+  printWarnings ws
+  BSL.putStrLn txt
   where contentInObject sec' obj' objs' =
           case findDictOfType "/Page" obj' of
             Just dict -> pageStream dict sec' objs'
-            Nothing -> ""
+            Nothing -> ("", [])
 
-pageStream :: Dict -> Maybe Security -> PDFObjIndex -> BSL.ByteString
+pageStream :: Dict -> Maybe Security -> PDFObjIndex -> (BSL.ByteString, [PdfWarning])
 pageStream dict sec objs =
   case contentsStream dict initstate sec objs of
-    Right s -> s
-    Left _ -> ""
+    Right (s, ws) -> (s, ws)
+    Left _ -> ("", [])
 
 showContent :: FilePath -> Maybe String -> Int -> IO ()
 showContent filename mpw ref = do
@@ -234,7 +240,9 @@ showContent filename mpw ref = do
         else do
           strm <- runOrDie (getStream sec ref False obj)
           BSL.putStrLn strm
-    else print =<< runOrDie (getObjectByRef ref objs)
+    else do
+      objs' <- runOrDie (getObjectByRef ref objs)
+      putStrLn $ "[" ++ intercalate ", " (map ppObj objs') ++ "]"
   where
 
     hasStream obj = case find isStream obj of
@@ -251,7 +259,7 @@ showContent filename mpw ref = do
 
     printStreamWithDict :: Maybe Security -> Int -> Dict -> [Obj] -> IO ()
     printStreamWithDict sec' ref' d obj = do
-      print (PdfDict d)
+      putStrLn $ ppObj (PdfDict d)
       strm <- runOrDie (getStream sec' ref' True obj)
       BSL.putStrLn strm
 
@@ -261,14 +269,14 @@ showTitle filename mpw = do
   let title = 
         case findObjFromDict d "/Title" of
           Just (PdfText s) -> s
-          Just x -> show x
+          Just x -> ppObj x
           Nothing -> "No title anyway"
   putStrLn title
 
 showInfo :: FilePath -> Maybe String -> IO ()
 showInfo filename mpw = do
   d <- runOrDie (getInfo filename mpw)
-  putStrLn $ toString 0 (PdfDict d)
+  putStrLn $ ppObj (PdfDict d)
 
 showOutlines :: FilePath -> Maybe String -> IO ()
 showOutlines filename mpw = do
@@ -278,14 +286,14 @@ showOutlines filename mpw = do
 showTrailer :: FilePath -> IO ()
 showTrailer filename = do
   d <- runOrDie (getTrailer filename)
-  print d
+  putStrLn $ ppDictEntries d
 
 grepPDF :: FilePath -> Maybe String -> String -> IO ()
 grepPDF filename mpw re = do
   root <- runOrDie (getRootRef filename)
   (objs, sec) <- runOrDie (getPDFObjFromFile filename mpw)
   mapM_
-    (\(strm, pagenm) -> (grepByPage pagenm re . contentInObjs sec objs) strm)
+    (\(ref, pagenm) -> grepByPage pagenm re (contentInObjs sec objs ref))
     $ zip (pageTreeToList $ pageorder root objs) [1..]
   
   where
@@ -293,11 +301,11 @@ grepPDF filename mpw re = do
       case findObjsByRef ref objs' of
         Just obj -> case findDictOfType "/Page" obj of
                       Just dict -> pageStream dict sec' objs'
-                      Nothing -> ""
-        Nothing -> ""
+                      Nothing -> ("", [])
+        Nothing -> ("", [])
 
-    grepByPage :: Int -> String -> PDFStream -> IO ()
-    grepByPage pagenm re txt = do
+    grepByPage :: Int -> String -> (BSL.ByteString, [PdfWarning]) -> IO ()
+    grepByPage pagenm re (txt, _) = do
       let matched = filter (not . null) $ map (grepByLine re) $ BSL.lines txt
       when (not $ null matched) (showResult pagenm matched)
       return ()

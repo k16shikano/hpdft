@@ -22,7 +22,7 @@ module PDF.Error
   ( PdfError(..)
   , PdfResult
   , PdfWarning(..)
-  , orError
+  , renderPdfWarning
   , note
   ) where
 
@@ -57,13 +57,18 @@ data PdfWarning
     -- ^ Font without usable \/ToUnicode; output may be garbled.
   | SubstitutedEncoding Int String
     -- ^ Fallback encoding used for a font.
+  | UnmappedCid Int
+    -- ^ CID not found in Adobe-Japan1-6; bracket placeholder emitted.
   deriving (Show, Eq)
 
--- | Escape hatch during migration: collapse a 'PdfResult' into the
--- legacy crashing behaviour. Call sites using this are not yet total.
-orError :: PdfResult a -> a
-orError (Right a) = a
-orError (Left e)  = error (show e)
+renderPdfWarning :: PdfWarning -> String
+renderPdfWarning (UnknownOperator op) = "unknown content-stream operator: " ++ op
+renderPdfWarning (MissingToUnicode n) =
+  "font object " ++ show n ++ " has no usable /ToUnicode map"
+renderPdfWarning (SubstitutedEncoding n enc) =
+  "font object " ++ show n ++ ": using fallback encoding " ++ enc
+renderPdfWarning (UnmappedCid cid) =
+  "unmapped CID " ++ show cid ++ " (Adobe-Japan1-6)"
 
 -- | Annotate a 'Maybe' with an error.
 note :: PdfError -> Maybe a -> PdfResult a

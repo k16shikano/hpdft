@@ -6,6 +6,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import Codec.Compression.Zlib (decompress)
 import Data.Map (Map)
+import PDF.Error (PdfWarning(..))
 
 type PDFBS = (Int,BS.ByteString)
 
@@ -28,27 +29,36 @@ data Obj = PdfDict Dict -- [(Obj, Obj)]
          | ObjRef Int
          | ObjOther String
          | PdfNull
-         deriving (Eq)
+         deriving (Eq, Show)
 
 type Dict =  [(Obj,Obj)]
 
-instance Show Obj where
-  show o = toString 0 o
-  
-toString depth (PdfDict d) = concat $ map dictentry d
-    where dictentry (PdfName n, o) = concat $ ["\n"] ++ replicate depth "  " ++ [n, ": ", toString (depth+1) o]
-          dictentry (k, o) = concat $ ["\n"] ++ replicate depth "  " ++ [toString depth k, ": ", toString (depth+1) o]
-toString depth (PdfText t) = t 
---toString depth (PdfStream s) = "\n  " ++ (BSL.unpack $ decompress s)
-toString depth (PdfStream s) = "\n  " ++ (BSL.unpack $ s)
-toString depth (PdfNumber r) = show r
-toString depth (PdfHex h) = h 
-toString depth (PdfArray a) = intercalate ", " $ map (toString depth) a
-toString depth (PdfBool b) = show b
-toString depth (PdfName n) = n
-toString depth (ObjRef i) = show i
-toString depth (ObjOther o) = o
-toString depth (PdfNull) = ""
+ppObj :: Obj -> String
+ppObj = ppObjAt 0
+
+ppDict :: Int -> Dict -> String
+ppDict depth d = concat $ map dictentry d
+  where dictentry (PdfName n, o) =
+          concat $ ["\n"] ++ replicate depth "  " ++ [n, ": ", ppObjAt (depth+1) o]
+        dictentry (k, o) =
+          concat $ ["\n"] ++ replicate depth "  " ++ [ppObjAt depth k, ": ", ppObjAt (depth+1) o]
+
+ppDictEntries :: Dict -> String
+ppDictEntries d =
+  "[" ++ intercalate "," (map (\(k, v) -> "(" ++ ppObj k ++ "," ++ ppObj v ++ ")") d) ++ "]"
+
+ppObjAt :: Int -> Obj -> String
+ppObjAt depth (PdfDict d) = ppDict depth d
+ppObjAt _ (PdfText t) = t
+ppObjAt _ (PdfStream s) = "\n  " ++ BSL.unpack s
+ppObjAt _ (PdfNumber r) = show r
+ppObjAt _ (PdfHex h) = h
+ppObjAt depth (PdfArray a) = intercalate ", " $ map (ppObjAt depth) a
+ppObjAt _ (PdfBool b) = show b
+ppObjAt _ (PdfName n) = n
+ppObjAt _ (ObjRef i) = show i
+ppObjAt _ (ObjOther o) = o
+ppObjAt _ PdfNull = ""
 
 
 data Encoding = CIDmap String | Encoding [(Char,String)] | WithCharSet String | NullMap
@@ -77,6 +87,7 @@ data PSR = PSR { linex      :: Double
                , fontmaps   :: [(String, Encoding)]
                , colorspace :: String
                , xcolorspaces :: [String]
+               , warnings     :: [PdfWarning]
                }
          deriving (Show)
 
