@@ -15,6 +15,7 @@ module PDF.Outlines
        ) where
 
 import Data.List (find)
+import qualified Data.Map as M
 import Data.Attoparsec.ByteString hiding (inClass, notInClass, satisfy)
 import Data.Attoparsec.ByteString.Char8
 import Data.Attoparsec.Combinator
@@ -116,13 +117,10 @@ destFromAction d = case findObjFromDict d "/D" of
   Nothing -> []
 
 outlinesRef :: Dict -> PdfResult Int
-outlinesRef dict = case find isOutlinesRef dict of
-  Just (_, ObjRef x) -> Right x
+outlinesRef dict = case M.lookup "/Outlines" dict of
+  Just (ObjRef x) -> Right x
   Just s -> Left (ParseError ("Unknown /Outlines: " ++ show s) BS.empty)
   Nothing -> Left (MissingKey "/Outlines" "root")
-  where
-    isOutlinesRef (PdfName "/Outlines", ObjRef x) = True
-    isOutlinesRef (_,_)                           = False
 
 outlineFromDoc :: Document -> IO (PdfResult Dict)
 outlineFromDoc doc =

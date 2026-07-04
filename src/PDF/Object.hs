@@ -27,7 +27,7 @@ module PDF.Object
   ) where
 
 import Data.Char (chr)
-import Data.List (find)
+import qualified Data.Map as M
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.Text as T
@@ -167,8 +167,9 @@ pdfobjSec sec objNum = do
     _   -> fail "multi-element object in nested context"
 
 pdfdictionarySec :: Maybe Security -> Int -> Parser Obj
-pdfdictionarySec sec objNum =
-  PdfDict <$> (spaces >> string "<<" >> spaces *> manyTill (dictEntrySec sec objNum) (try $ spaces >> string ">>"))
+pdfdictionarySec sec objNum = do
+  pairs <- spaces >> string "<<" >> spaces *> manyTill (dictEntrySec sec objNum) (try $ spaces >> string ">>")
+  return $ PdfDict (pairsToDict pairs)
 
 dictEntrySec :: Maybe Security -> Int -> Parser (Obj, Obj)
 dictEntrySec sec objNum = (,) <$> pdfname <*> pdfobjSec sec objNum
@@ -229,10 +230,13 @@ decodeHexBytes bs =
   in BS.pack $ map hexByte pairs
 
 lookupDictInt :: Dict -> String -> Maybe Int
-lookupDictInt d key =
-  find (\(PdfName k, _) -> k == key) d >>= \(_, o) -> case o of
-    PdfNumber x | x >= 0 -> Just (truncate x)
-    _ -> Nothing
+lookupDictInt d key = case M.lookup key d of
+  Just (PdfNumber x) | x >= 0 -> Just (truncate x)
+  _ -> Nothing
+
+pairsToDict :: [(Obj, Obj)] -> Dict
+pairsToDict pairs =
+  M.fromListWith (\_new old -> old) [(n, v) | (PdfName n, v) <- pairs]
 
 skipStreamEOL :: Parser ()
 skipStreamEOL =
@@ -307,10 +311,12 @@ startxref = do
 stream :: Parser PDFStream
 stream = do
   string "stream"
-  readStreamBody []
+  readStreamBody M.empty
 
 pdfdictionary :: Parser Obj
-pdfdictionary = PdfDict <$> (spaces >> string "<<" >> spaces *> manyTill dictEntry (try $ spaces >> string ">>"))
+pdfdictionary = do
+  pairs <- spaces >> string "<<" >> spaces *> manyTill dictEntry (try $ spaces >> string ">>")
+  return $ PdfDict (pairsToDict pairs)
 
 dictEntry :: Parser (Obj, Obj)
 dictEntry = (,) <$> pdfname <*> pdfobj

@@ -30,13 +30,11 @@ module PDF.DocumentStructure
        , findTrailer'
        , indexPDFObjs
        , extractObjBody
-       , isRootRef
-       , isInfoRef
        , rawStream
        ) where
 
 import Data.Char (chr, isDigit, ord)
-import Data.List (find, elem, foldl', nub)
+import Data.List (find, foldl', nub)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Builder as B
@@ -50,7 +48,7 @@ import Data.Attoparsec.Combinator
 import Control.Applicative
 import Control.Monad (replicateM, foldM)
 import Codec.Compression.Zlib (decompress)
-import qualified Data.Map as Map
+import qualified Data.Map as M
 import Data.Map (Map)
 
 import PDF.Definition
@@ -77,7 +75,7 @@ findObjs' contents = case findTrailer' contents of
   Right (_, xref) ->
     Right
       [ (n, extractObjBody contents off)
-      | (n, InFile off) <- Map.toAscList xref
+      | (n, InFile off) <- M.toAscList xref
       ]
   Left xrefErr -> case findObjs contents of
     [] -> Left xrefErr
@@ -97,25 +95,25 @@ isPdfSpace :: Char -> Bool
 isPdfSpace w = w `elem` ['\0', '\t', '\n', '\f', '\r', ' ']
 
 findObjsByRef :: Int -> PDFObjIndex -> Maybe [Obj]
-findObjsByRef = Map.lookup
+findObjsByRef = M.lookup
 
 indexPDFObjs :: [PDFObj] -> PDFObjIndex
-indexPDFObjs = Map.fromList
+indexPDFObjs = M.fromList
 
 buildIndex :: BS.ByteString -> Maybe Security -> XREF -> PDFObjIndex
 buildIndex bytes msec xref = objs
   where
-    objs = Map.mapWithKey resolve xref
+    objs = M.mapWithKey resolve xref
     containerCache =
-      Map.fromList
+      M.fromList
         [ (cnum, objStmEntries cnum)
-        | cnum <- nub [c | InObjStm c _ <- Map.elems xref]
+        | cnum <- nub [c | InObjStm c _ <- M.elems xref]
         ]
     resolve objNum (InFile off) =
       let body = extractObjBody bytes off
       in snd (parsePDFObj msec (objNum, body))
     resolve objNum (InObjStm cnum idx) =
-      case Map.lookup cnum containerCache of
+      case M.lookup cnum containerCache of
         Just entries ->
           case lookup objNum entries of
             Just o -> o
@@ -125,7 +123,7 @@ buildIndex bytes msec xref = objs
                 _ -> [PdfNull]
         Nothing -> [PdfNull]
     objStmEntries cnum =
-      case rawStream msec cnum (Map.findWithDefault [PdfNull] cnum objs) of
+      case rawStream msec cnum (M.findWithDefault [PdfNull] cnum objs) of
         Right streamBytes ->
           case pdfObjStm cnum (BSL.toStrict streamBytes) of
             Right entries -> entries
@@ -147,11 +145,7 @@ findObjFromDictWithRef ref name objs = case findDictByRef ref objs of
   Nothing -> Nothing
   
 findObjFromDict :: Dict -> String -> Maybe Obj
-findObjFromDict d name = case find isName d of
-  Just (_, o) -> Just o
-  otherwise -> Nothing
-  where isName (PdfName n, _) = if name == n then True else False
-        isName _              = False
+findObjFromDict d name = M.lookup name d
 
 findDictByRef :: Int -> PDFObjIndex -> Maybe Dict
 findDictByRef ref objs = case findObjsByRef ref objs of
@@ -163,7 +157,7 @@ findDictOfType typename objs = case findDict objs of
   Just d  -> if isType d then Just d else Nothing 
   Nothing -> Nothing
   where 
-    isType dict = (PdfName "/Type",PdfName typename) `elem` dict
+    isType dict = M.lookup "/Type" dict == Just (PdfName typename)
  
 findDict :: [Obj] -> Maybe Dict
 findDict objs = case find isDict objs of
@@ -175,34 +169,25 @@ findDict objs = case find isDict objs of
     isDict _           = False
 
 findPages :: Dict -> Maybe Int
-findPages dict = case find isPagesRef dict of
-  Just (_, ObjRef x) -> Just x
-  Nothing            -> Nothing
-  where
-    isPagesRef (PdfName "/Pages", ObjRef x) = True
-    isPagesRef (_,_)                        = False
+findPages dict = case M.lookup "/Pages" dict of
+  Just (ObjRef x) -> Just x
+  _               -> Nothing
     
 findKids :: Dict -> Maybe [Int]
-findKids dict = case find isKidsRefs dict of
-  Just (_, PdfArray arr) -> Just (parseRefsArray arr)
-  Nothing                -> Nothing
-  where 
-    isKidsRefs (PdfName "/Kids", PdfArray x) = True
-    isKidsRefs (_,_)                         = False
+findKids dict = case M.lookup "/Kids" dict of
+  Just (PdfArray arr) -> Just (parseRefsArray arr)
+  _                   -> Nothing
 
 contentsStream :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> PdfResult (PDFStream, [PdfWarning])
-contentsStream dict st sec objs = case find contents dict of
-  Just (PdfName "/Contents", PdfArray arr) -> getContentArray arr
-  Just (PdfName "/Contents", ObjRef r) ->
+contentsStream dict st sec objs = case M.lookup "/Contents" dict of
+  Just (PdfArray arr) -> getContentArray arr
+  Just (ObjRef r) ->
     case findObjsByRef r objs of
       Just [PdfArray arr] -> getContentArray arr
       Just _ -> getContent r
       Nothing -> Left (MissingKey "/Contents" (show r))
   Nothing -> Left (MissingKey "/Contents" "page")
   where
-    contents (PdfName "/Contents", _) = True
-    contents _ = False
-
     getContentArray arr = parseContentStream dict st sec objs $
       BSL.concat [s | ref <- parseRefsArray arr
                      , Right s <- [rawStreamByRef sec objs ref]]
@@ -223,7 +208,7 @@ rawStreamByRef sec pdfobjs x = case findObjsByRef x pdfobjs of
 
 rawStream :: Maybe Security -> Int -> [Obj] -> PdfResult BSL.ByteString
 rawStream sec objNum objs = case find isStream objs of
-  Just (PdfStream strm) -> rawStream' sec objNum (fromMaybe [] $ findDict objs) strm
+  Just (PdfStream strm) -> rawStream' sec objNum (fromMaybe M.empty $ findDict objs) strm
   Nothing -> Left (ParseError "No object with stream to be shown"
                    (BS.take 80 $ BS.pack $ show objs))
   where
@@ -238,16 +223,13 @@ rawStream sec objNum objs = case find isStream objs of
 
 decodeStreamBytes :: Dict -> BSL.ByteString -> PdfResult BS.ByteString
 decodeStreamBytes d s = do
-  filtered <- case find isFilter d of
-    Just (PdfName "/Filter", PdfName "/FlateDecode") -> Right $ BSL.toStrict $ decompress s
+  filtered <- case M.lookup "/Filter" d of
+    Just (PdfName "/FlateDecode") -> Right $ BSL.toStrict $ decompress s
     Nothing -> Right $ BSL.toStrict s
-    Just (PdfName "/Filter", PdfName f) ->
+    Just (PdfName f) ->
       Left (UnsupportedFeature ("Unknown Stream Compression: " ++ f))
     Just _ -> Left (UnsupportedFeature "No Stream Compression Filter.")
   applyPredictor d filtered
-  where
-    isFilter (PdfName "/Filter", _) = True
-    isFilter _                      = False
 
 applyPredictor :: Dict -> BS.ByteString -> PdfResult BS.ByteString
 applyPredictor d bs = case findObjFromDict d "/DecodeParms" of
@@ -291,16 +273,14 @@ pngSub row =
     let n = (ord x + prev) `mod` 256 in (n, out ++ [chr n])) (0, []) (BS.unpack row)
 
 contentsColorSpace :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> PdfResult [T.Text]
-contentsColorSpace dict st sec objs = case find contents dict of
-  Just (PdfName "/Contents", PdfArray arr) ->
+contentsColorSpace dict st sec objs = case M.lookup "/Contents" dict of
+  Just (PdfArray arr) ->
     Right $ concat [cs | ref <- parseRefsArray arr
                         , Right cs <- [parseColorSpaceEntry ref]]
-  Just (PdfName "/Contents", ObjRef x) ->
+  Just (ObjRef x) ->
     parseColorSpaceEntry x
   Nothing -> Left (MissingKey "/Contents" "page")
   where
-    contents (PdfName "/Contents", _) = True
-    contents _                        = False
     xobjcs = findXObjectColorSpace dict objs
     parseColorSpaceEntry ref = do
       s <- rawStreamByRef sec objs ref
@@ -311,16 +291,14 @@ contentsColorSpace dict st sec objs = case find contents dict of
 
 findXObjectColorSpace d os = xobjColorSpaceMap (findXObject d os) os
 
-xobjColorSpaceMap dict objs = map pairwise dict
-  where
-    pairwise (PdfName n, ObjRef r) = xobjColorSpace r objs
-    pairwise x = ""
+xobjColorSpaceMap dict objs =
+  [ xobjColorSpace r objs | (_, ObjRef r) <- M.toList dict ]
 
 findXObject dict objs = case findResourcesDict dict objs of
   Just d -> case findObjFromDict d "/XObject" of
     Just (PdfDict d) -> d
-    otherwise -> []
-  Nothing -> []
+    otherwise -> M.empty
+  Nothing -> M.empty
 
 xobjColorSpace :: Int -> PDFObjIndex -> String
 xobjColorSpace x objs = case findObjFromDictWithRef x "/ColorSpace" objs of
@@ -357,7 +335,7 @@ mergeXRefStm :: BS.ByteString -> Dict -> XREF -> PdfResult XREF
 mergeXRefStm all dict xref = case findObjFromDict dict "/XRefStm" of
   Just (PdfNumber n) ->
     case findTrailerDictXREFStream $ BS.drop (truncate n) all of
-      Right (_, stm) -> Right $ Map.union xref stm
+      Right (_, stm) -> Right $ M.union xref stm
       Left err -> Left err
   _ -> Right xref
 
@@ -378,22 +356,19 @@ findTrailer' bs = case BS.breakEnd (== '\n') bs of
         offset <- getStartxrefOffset source
         (dict, xref) <- findTrailerDictXREF $ BS.drop offset bs
         xref' <- mergeXRefStm bs dict xref
-        case find isPrev dict of
-          Just (PdfName "/Prev", PdfNumber x) -> xrefs (truncate x) bs (dict, xref')
-          Nothing -> Right (dict, xref')
+        case M.lookup "/Prev" dict of
+          Just (PdfNumber x) -> xrefs (truncate x) bs (dict, xref')
+          _ -> Right (dict, xref')
     | source == "" -> Left (BrokenXref "no %%EOF or startxref found")
     | otherwise -> findTrailer' (BS.init bs)
   where
-    isPrev (PdfName "/Prev", _) = True
-    isPrev (_,_) = False
-
     xrefs n all (dict, sofar) = do
       (dict', xref) <- findTrailerDictXREF $ BS.drop n all
       xref' <- mergeXRefStm all dict' xref
-      case find isPrev dict' of
-        Just (PdfName "/Prev", PdfNumber x) ->
-          xrefs (truncate x) all (dict, Map.union sofar xref')
-        Nothing -> Right (dict, Map.union sofar xref')
+      case M.lookup "/Prev" dict' of
+        Just (PdfNumber x) ->
+          xrefs (truncate x) all (dict, M.union sofar xref')
+        _ -> Right (dict, M.union sofar xref')
 
 findTrailerDictXREF :: BS.ByteString -> PdfResult (Dict, XREF)
 findTrailerDictXREF xrefTrailer =
@@ -470,7 +445,7 @@ xrefStreamToMap dict s = do
   sections <- indexSections dict
   raw <- decodeStreamBytes dict s
   entries <- xrefStreamEntries ws sections raw
-  return $ Map.fromList
+  return $ M.fromList
     [ (n, entry)
     | (n, typ, f2, f3) <- entries
     , Just entry <- [xrefEntry typ f2 f3]
@@ -531,7 +506,7 @@ parseXref xref = case parseOnly xrefParser xref of
     Left (BrokenXref ("xref table: " ++ show err ++ ": " ++ show (BS.take 80 xref)))
   Right xs -> do
     entries <- mapM concatSubsections xs
-    return $ Map.fromList $ map dropFN $ filter (\(_,_,inUse) -> inUse) $ concat entries
+    return $ M.fromList $ map dropFN $ filter (\(_,_,inUse) -> inUse) $ concat entries
 
   where
     xrefParser = do
@@ -574,7 +549,7 @@ parseXref xref = case parseOnly xrefParser xref of
 
 rootRef :: BS.ByteString -> PdfResult (Maybe Int)
 rootRef bs = case findTrailer bs of
-  Right dict -> Right $ findRefs isRootRef dict
+  Right dict -> Right $ findRefs "/Root" dict
   Left _     -> rootRefFromCRStream bs
 
 rootRefFromCRStream :: BS.ByteString -> PdfResult (Maybe Int)
@@ -587,31 +562,24 @@ rootRefFromCRStream bs = do
       case objs of
         ((_, crstrm):_) -> do
           (crdict, _) <- findTrailerDictXREF crstrm
-          return $ findRefs isRootRef crdict
+          return $ findRefs "/Root" crdict
         [] -> Right Nothing
     _ -> Left (BrokenXref "cannot locate cross-reference stream offset")
 
-isRootRef (PdfName "/Root", ObjRef x) = True
-isRootRef (_,_) = False
-
-findRefs :: ((Obj,Obj) -> Bool) -> Dict -> Maybe Int
-findRefs pred dict = case find pred dict of
-  Just (_, ObjRef x) -> Just x
-  Nothing            -> Nothing
+findRefs :: String -> Dict -> Maybe Int
+findRefs key dict = case M.lookup key dict of
+  Just (ObjRef x) -> Just x
+  _               -> Nothing
 
 
 -- find Info
 
 infoRef :: BS.ByteString -> PdfResult Int
 infoRef bs = case findTrailer bs of
-  Right dict -> case findRefs isInfoRef dict of
+  Right dict -> case findRefs "/Info" dict of
     Just r -> Right r
     Nothing -> Left (ParseError "No ref for info" BS.empty)
   Left err -> Left err
-
-isInfoRef (PdfName "/Info", ObjRef x) = True
-isInfoRef (_,_) = False
-
 
 -- expand PDF 1.5 Object Stream 
 
@@ -659,10 +627,8 @@ pdfObjStm n s =
 findFontEncoding d sec os = findEncoding (fontObjs d os) sec os
 
 findEncoding :: Dict -> Maybe Security -> PDFObjIndex -> Map String Encoding
-findEncoding dict sec objs = Map.fromListWith (flip const) $ map pairwise dict
-  where
-    pairwise (PdfName n, ObjRef r) = (n, encoding sec r objs)
-    pairwise x = ("", NullMap)
+findEncoding dict sec objs = M.fromListWith (flip const) $
+  [ (n, encoding sec r objs) | (n, ObjRef r) <- M.toList dict ]
 
 fontObjs :: Dict -> PDFObjIndex -> Dict
 fontObjs dict objs = case findResourcesDict dict objs of
@@ -670,18 +636,15 @@ fontObjs dict objs = case findResourcesDict dict objs of
     Just (PdfDict d') -> d'
     Just (ObjRef x) -> case findDictByRef x objs of
                          Just d' -> d'
-                         _       -> []
-    _ -> []
-  Nothing -> []
+                         _       -> M.empty
+    _ -> M.empty
+  Nothing -> M.empty
 
 findResourcesDict :: Dict -> PDFObjIndex -> Maybe Dict
-findResourcesDict dict objs = case find resources dict of
-  Just (_, ObjRef x)  -> findDictByRef x objs
-  Just (_, PdfDict d) -> Just d
+findResourcesDict dict objs = case M.lookup "/Resources" dict of
+  Just (ObjRef x)  -> findDictByRef x objs
+  Just (PdfDict d) -> Just d
   _ -> Nothing
-  where
-    resources (PdfName "/Resources", _) = True
-    resources _                         = False
 
 
 encoding :: Maybe Security -> Int -> PDFObjIndex -> Encoding
@@ -757,9 +720,9 @@ encoding sec x objs = case subtype of
     -- Base-14 fonts legally omit /FontDescriptor; treat as empty dict.
     fontDescriptor' :: Int -> Dict
     fontDescriptor' fdr = case findObjFromDictWithRef fdr "/FontDescriptor" objs of
-      Just (ObjRef r) -> fromMaybe [] $ findDictByRef r objs
+      Just (ObjRef r) -> fromMaybe M.empty $ findDictByRef r objs
       Just (PdfDict d) -> d
-      _ -> []
+      _ -> M.empty
 
     getCIDSystemInfo d =
       let registry = case findObjFromDict d "/Registry" of
@@ -775,7 +738,7 @@ encoding sec x objs = case subtype of
 
 
 charDiff :: [Obj] -> Encoding
-charDiff objs = Encoding $ Map.fromListWith (flip const) $ charmap objs 0
+charDiff objs = Encoding $ M.fromListWith (flip const) $ charmap objs 0
   where charmap (PdfNumber x : PdfName n : xs) i = 
           if i < truncate x then 
             (chr $ truncate x, n) : (charmap xs $ incr x)
@@ -788,10 +751,8 @@ charDiff objs = Encoding $ Map.fromListWith (flip const) $ charmap objs 0
 
 
 findCMap :: Dict -> Maybe Security -> PDFObjIndex -> Map String CMap
-findCMap d sec objs = Map.fromListWith (flip const) $ map pairwise (fontObjs d objs)
-  where
-    pairwise (PdfName n, ObjRef r) = (n, toUnicode sec r objs)
-    pairwise x = ("", Map.empty)
+findCMap d sec objs = M.fromListWith (flip const) $
+  [ (n, toUnicode sec r objs) | (n, ObjRef r) <- M.toList (fontObjs d objs) ]
 
 toUnicode :: Maybe Security -> Int -> PDFObjIndex -> CMap
 toUnicode sec x objs =
@@ -815,9 +776,9 @@ noToUnicode sec x objs =
                 Just (ObjRef fontfile) ->
                   case rawStreamByRef sec objs fontfile of
                     Right bs -> OpenType.cmap $ BSL.toStrict bs
-                    Left _ -> Map.empty
-                otherwise -> Map.empty
-            otherwise -> Map.empty
-        otherwise -> Map.empty
-    otherwise -> Map.empty
+                    Left _ -> M.empty
+                otherwise -> M.empty
+            otherwise -> M.empty
+        otherwise -> M.empty
+    otherwise -> M.empty
 

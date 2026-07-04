@@ -237,14 +237,12 @@ showContent filename mpw ref = do
   let objs = docObjs doc
       sec = docSecurity doc
   obj <- runOrDie (getObjectByRef ref objs)
-  let d = fromMaybe [] $ findDict obj
   if hasStream obj
-    then
-      if hasSubtype d
-        then printStreamWithDict sec ref d obj
-        else do
-          strm <- runOrDie (getStream sec ref False obj)
-          BSL.putStrLn strm
+    then case findDict obj of
+      Just d | hasSubtype d -> printStreamWithDict sec ref d obj
+      _ -> do
+        strm <- runOrDie (getStream sec ref False obj)
+        BSL.putStrLn strm
     else do
       objs' <- runOrDie (getObjectByRef ref objs)
       putStrLn $ "[" ++ intercalate ", " (map ppObj objs') ++ "]"
@@ -256,11 +254,9 @@ showContent filename mpw ref = do
     isStream (PdfStream _) = True
     isStream _             = False
 
-    hasSubtype d = case find isSubtype d of
-                       Just _ -> True
-                       Nothing -> False
-    isSubtype (PdfName "/Subtype", _) = True
-    isSubtype x = False
+    hasSubtype d = case findObjFromDict d "/Subtype" of
+      Just _ -> True
+      Nothing -> False
 
     printStreamWithDict :: Maybe Security -> Int -> Dict -> [Obj] -> IO ()
     printStreamWithDict sec' ref' d obj = do

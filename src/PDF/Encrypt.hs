@@ -13,7 +13,8 @@ import PDF.Definition
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import Data.Bits (shiftL, shiftR, xor, (.&.))
-import Data.List (find, foldl')
+import Data.List (foldl')
+import qualified Data.Map as M
 import Control.Applicative ((<|>))
 import Data.Word (Word8, Word32)
 import Numeric (readHex)
@@ -111,11 +112,7 @@ encryptMetadata d = case dictLookup d "/EncryptMetadata" of
   _ -> True
 
 dictLookup :: Dict -> String -> Maybe Obj
-dictLookup d name = case find (isName name) d of
-  Just (_, o) -> Just o
-  Nothing     -> Nothing
-  where isName n (PdfName k, _) = n == k
-        isName _ _              = False
+dictLookup d name = M.lookup name d
 
 dictInt :: Dict -> String -> Maybe Int
 dictInt d name = case dictLookup d name of

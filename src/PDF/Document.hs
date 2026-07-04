@@ -19,8 +19,6 @@ import PDF.DocumentStructure
   , findRefs
   , extractObjBody
   , findObjs
-  , isRootRef
-  , isInfoRef
   )
 import PDF.Encrypt (Security, securityFromEncryptDict)
 import PDF.Error (PdfError(..), PdfResult)
@@ -100,13 +98,13 @@ findEncryptDictScan bytes ref =
 
 docRootRef :: Document -> PdfResult Int
 docRootRef doc =
-  case findRefs isRootRef (docTrailer doc) of
+  case findRefs "/Root" (docTrailer doc) of
     Just r -> Right r
     Nothing -> Left (MissingKey "/Root" "trailer")
 
 docInfoDict :: Document -> PdfResult Dict
 docInfoDict doc =
-  case findRefs isInfoRef (docTrailer doc) of
+  case findRefs "/Info" (docTrailer doc) of
     Nothing -> Left (MissingKey "/Info" "trailer")
     Just inforef ->
       case findDictByRef inforef (docObjs doc) of

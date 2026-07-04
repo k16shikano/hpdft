@@ -6,6 +6,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import Codec.Compression.Zlib (decompress)
 import Data.Map (Map)
+import qualified Data.Map as M
 import PDF.Error (PdfWarning(..))
 
 type PDFBS = (Int,BS.ByteString)
@@ -22,7 +23,7 @@ type PDFObjIndex = Map Int [Obj]
 
 type PDFStream = BSL.ByteString
 
-data Obj = PdfDict Dict -- [(Obj, Obj)]
+data Obj = PdfDict Dict
          | PdfText String 
          | PdfStream PDFStream
          | PdfNumber Double 
@@ -35,21 +36,19 @@ data Obj = PdfDict Dict -- [(Obj, Obj)]
          | PdfNull
          deriving (Eq, Show)
 
-type Dict =  [(Obj,Obj)]
+type Dict = Map String Obj
 
 ppObj :: Obj -> String
 ppObj = ppObjAt 0
 
 ppDict :: Int -> Dict -> String
-ppDict depth d = concat $ map dictentry d
-  where dictentry (PdfName n, o) =
+ppDict depth d = concat $ map dictentry (M.toList d)
+  where dictentry (n, o) =
           concat $ ["\n"] ++ replicate depth "  " ++ [n, ": ", ppObjAt (depth+1) o]
-        dictentry (k, o) =
-          concat $ ["\n"] ++ replicate depth "  " ++ [ppObjAt depth k, ": ", ppObjAt (depth+1) o]
 
 ppDictEntries :: Dict -> String
 ppDictEntries d =
-  "[" ++ intercalate "," (map (\(k, v) -> "(" ++ ppObj k ++ "," ++ ppObj v ++ ")") d) ++ "]"
+  "[" ++ intercalate "," (map (\(k, v) -> "(" ++ k ++ "," ++ ppObj v ++ ")") (M.toList d)) ++ "]"
 
 ppObjAt :: Int -> Obj -> String
 ppObjAt depth (PdfDict d) = ppDict depth d
