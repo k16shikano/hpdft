@@ -20,6 +20,8 @@ import Data.Attoparsec.Combinator
 
 import Control.Applicative
 
+import qualified Data.Map as Map
+
 import PDF.Definition
 
 type SID = Integer
@@ -39,7 +41,8 @@ encoding c =
           strings    = case parseOnly stringInd c of
                          Right arr -> arr
                          Left _    -> []
-      in Encoding $ map (findEncodings strings) $ zip charset encodings
+      in Encoding $ Map.fromListWith (flip const) $
+           map (findEncodings strings) $ zip charset encodings
 
   where
     findEncodings strings (char,enc) =

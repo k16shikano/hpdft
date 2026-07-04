@@ -294,12 +294,12 @@ letters :: PSParser T.Text
 letters = do
   char '('
   st <- getState
-  let cmap = fromMaybe [] (lookup (curfont st) (cmaps st))
-      letterParser = case lookup (curfont st) (fontmaps st) of
+  let cmap = Map.findWithDefault Map.empty (curfont st) (cmaps st)
+      letterParser = case Map.lookup (curfont st) (fontmaps st) of
         Just (Encoding m) -> psletter m
         Just (CIDmap s) -> cidletter s
         Just (WithCharSet s) -> try $ bytesletter cmap <|> cidletters
-        Just NullMap -> psletter []
+        Just NullMap -> psletter Map.empty
         Nothing -> (T.pack) <$> (many1 $ choice [ try $ ')' <$ (string "\\)")
                                                 , try $ '(' <$ (string "\\(")
                                                 , try $ noneOf ")"
@@ -359,10 +359,10 @@ adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
   Nothing -> T.pack $ "[" ++ show a ++ "]"
 
 lookupUcs :: CMap -> Int -> PSParser T.Text
-lookupUcs m h = case lookup h m of
+lookupUcs m h = case Map.lookup h m of
   Just ucs -> return $ T.pack ucs
   Nothing
-    | null m -> case Map.lookup h adobeJapanOneSixMap of
+    | Map.null m -> case Map.lookup h adobeJapanOneSixMap of
         Just cs -> return $ T.pack $ BSLU.toString cs
         Nothing -> do
           updateState (\s -> s {warnings = UnmappedCid h : warnings s})
@@ -375,7 +375,7 @@ hexletter :: PSParser T.Text
 hexletter = do
   st <- getState
   let font = curfont st
-      cmap = fromMaybe [] (lookup font (cmaps st))
+      cmap = Map.findWithDefault Map.empty font (cmaps st)
   hexDigits <- choice [ try $ count 4 $ oneOf "0123456789ABCDEFabcdef"
                       , try $ count 2 $ oneOf "0123456789ABCDEFabcdef"
                       , try $ (:"0") <$> (oneOf "0123456789ABCDEFabcdef")
@@ -387,11 +387,11 @@ hexletter = do
 octletter :: PSParser T.Text
 octletter = do
   st <- getState
-  let cmap = fromMaybe [] (lookup (curfont st) (cmaps st))
+  let cmap = Map.findWithDefault Map.empty (curfont st) (cmaps st)
   o <- octnum
   lookupUcs cmap o
 
-psletter :: [(Char,String)] -> PSParser T.Text
+psletter :: Map.Map Char String -> PSParser T.Text
 psletter fontmap = do
   c <- try (char '\\' >> oneOf "\\()")
        <|>
@@ -399,7 +399,7 @@ psletter fontmap = do
        <|>
        noneOf "\\"
   return $ replaceWithDiff fontmap c
-    where replaceWithDiff m c' = case lookup c' m of
+    where replaceWithDiff m c' = case Map.lookup c' m of
             Just s -> replaceWithCharDict s
             Nothing -> T.pack [c']
           replaceWithCharDict s = case Map.lookup s pdfcharmap of
@@ -421,7 +421,7 @@ cidletter _ = do
   o1 <- octnum
   o2 <- octnum
   let d = 256 * o1 + o2
-  lookupUcs [] d
+  lookupUcs Map.empty d
 
 octnum :: PSParser Int
 octnum = do

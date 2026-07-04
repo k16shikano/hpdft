@@ -19,6 +19,8 @@ import Data.Attoparsec.Combinator
 
 import Control.Applicative
 
+import qualified Data.Map as Map
+
 import PDF.Definition
 
 test f = do
@@ -31,7 +33,7 @@ noneOf = satisfy . notInClass
 
 encoding :: ByteString -> Encoding
 encoding c = case parseOnly encodingArray c of
-  Right ss -> Encoding ss
+  Right ss -> Encoding $ Map.fromListWith (flip const) ss
   Left _   -> NullMap
 
 encodingArray :: Parser [(Char,String)]

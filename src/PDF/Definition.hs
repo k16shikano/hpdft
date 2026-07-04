@@ -65,7 +65,7 @@ ppObjAt _ (ObjOther o) = o
 ppObjAt _ PdfNull = ""
 
 
-data Encoding = CIDmap String | Encoding [(Char,String)] | WithCharSet String | NullMap
+data Encoding = CIDmap String | Encoding (Map Char String) | WithCharSet String | NullMap
 
 instance Show Encoding where
   show (CIDmap s) = "CIDmap"++s
@@ -73,7 +73,7 @@ instance Show Encoding where
   show (WithCharSet s) = "WithCharSet"++s
   show NullMap = []
 
-type CMap = [(Int,String)]
+type CMap = Map Int String
 
 data PSR = PSR { linex      :: Double
                , liney      :: Double
@@ -87,8 +87,8 @@ data PSR = PSR { linex      :: Double
                , bottom     :: Double
                , fontfactor :: Double
                , curfont    :: String
-               , cmaps      :: [(String, CMap)]
-               , fontmaps   :: [(String, Encoding)]
+               , cmaps      :: Map String CMap
+               , fontmaps   :: Map String Encoding
                , colorspace :: String
                , xcolorspaces :: [String]
                , warnings     :: [PdfWarning]

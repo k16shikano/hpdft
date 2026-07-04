@@ -18,6 +18,8 @@ import Data.Attoparsec.Combinator
 
 import Control.Applicative
 
+import qualified Data.Map as Map
+
 import PDF.Definition
 
 data Table = Table String Integer Integer
@@ -37,10 +39,11 @@ cmap :: ByteString -> CMap
 cmap c = case parseOnly (offsetTable >>= tableRecords) c of
   Right b -> case takeCmap b of
     Just b' -> case parseOnly cmapEncRecords b' of
-                 Right records -> concatMap (subtable b') records
-                 Left _          -> []
-    Nothing -> []
-  Left _ -> []
+                 Right records -> Map.fromListWith (flip const) $
+                                  concatMap (subtable b') records
+                 Left _          -> Map.empty
+    Nothing -> Map.empty
+  Left _ -> Map.empty
   where
     offsetTable = do
       sfntVersion
@@ -65,12 +68,12 @@ subtable c (EncRecord pid eid offset) =
        Right b -> b
        Left _  -> []
 
-parserByFormat :: Integer -> Parser CMap
+parserByFormat :: Integer -> Parser [(Int, String)]
 parserByFormat 14 = do
   format <- getUint16
   length <- getUint32
   rest <- (AP.take . fromInteger) length
-  return $ []
+  return []
 
 parserByFormat 12 = do
   format <- getUint16
@@ -82,7 +85,7 @@ parserByFormat 12 = do
   return $ concat seqMapGroups
 
   where
-    seqMapGroup :: Parser CMap
+    seqMapGroup :: Parser [(Int, String)]
     seqMapGroup = do
       startCharCode <- fromInteger <$> getUint32
       endCharCode <- fromInteger <$> getUint32
@@ -114,7 +117,7 @@ parserByFormat 4 = do
       in (getGlyphID s e d rest):(getGlyphIDs ss ee dd rest')
 
     getGlyphID :: Int -> Int -> Int -> ByteString
-                -> CMap
+                -> [(Int, String)]
     getGlyphID start end delta rest =
       let offset = fromInteger $ fromBytes $ BS.take 2 rest
       in 

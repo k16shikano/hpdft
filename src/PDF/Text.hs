@@ -14,6 +14,7 @@ import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
 import PDF.Encrypt (Security)
 
+import qualified Data.Map as Map
 import qualified Data.ByteString.Lazy.Char8 as BSL
 
 initstate :: PSR
@@ -29,8 +30,8 @@ initstate = PSR { linex=0
                 , bottom=0.0
                 , fontfactor=1
                 , curfont=""
-                , fontmaps=[]
-                , cmaps=[]
+                , fontmaps=Map.empty
+                , cmaps=Map.empty
                 , colorspace=""
                 , xcolorspaces=[]
                 , warnings=[]

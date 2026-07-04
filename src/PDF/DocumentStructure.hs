@@ -658,8 +658,8 @@ pdfObjStm n s =
 
 findFontEncoding d sec os = findEncoding (fontObjs d os) sec os
 
-findEncoding :: Dict -> Maybe Security -> PDFObjIndex -> [(String, Encoding)]
-findEncoding dict sec objs = map pairwise dict
+findEncoding :: Dict -> Maybe Security -> PDFObjIndex -> Map String Encoding
+findEncoding dict sec objs = Map.fromListWith (flip const) $ map pairwise dict
   where
     pairwise (PdfName n, ObjRef r) = (n, encoding sec r objs)
     pairwise x = ("", NullMap)
@@ -775,7 +775,7 @@ encoding sec x objs = case subtype of
 
 
 charDiff :: [Obj] -> Encoding
-charDiff objs = Encoding $ charmap objs 0
+charDiff objs = Encoding $ Map.fromListWith (flip const) $ charmap objs 0
   where charmap (PdfNumber x : PdfName n : xs) i = 
           if i < truncate x then 
             (chr $ truncate x, n) : (charmap xs $ incr x)
@@ -787,11 +787,11 @@ charDiff objs = Encoding $ charmap objs 0
         incr x = (truncate x) + 1
 
 
-findCMap :: Dict -> Maybe Security -> PDFObjIndex -> [(String, CMap)]
-findCMap d sec objs = map pairwise (fontObjs d objs)
+findCMap :: Dict -> Maybe Security -> PDFObjIndex -> Map String CMap
+findCMap d sec objs = Map.fromListWith (flip const) $ map pairwise (fontObjs d objs)
   where
     pairwise (PdfName n, ObjRef r) = (n, toUnicode sec r objs)
-    pairwise x = ("", [])
+    pairwise x = ("", Map.empty)
 
 toUnicode :: Maybe Security -> Int -> PDFObjIndex -> CMap
 toUnicode sec x objs =
@@ -815,9 +815,9 @@ noToUnicode sec x objs =
                 Just (ObjRef fontfile) ->
                   case rawStreamByRef sec objs fontfile of
                     Right bs -> OpenType.cmap $ BSL.toStrict bs
-                    Left _ -> []
-                otherwise -> []
-            otherwise -> []
-        otherwise -> []
-    otherwise -> []
+                    Left _ -> Map.empty
+                otherwise -> Map.empty
+            otherwise -> Map.empty
+        otherwise -> Map.empty
+    otherwise -> Map.empty
 

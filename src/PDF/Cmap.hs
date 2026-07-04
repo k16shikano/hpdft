@@ -7,6 +7,7 @@ module PDF.Cmap
 import Data.Char (chr)
 import Data.List (intercalate)
 import Data.Maybe (mapMaybe)
+import qualified Data.Map as Map
 import Numeric (readHex)
 
 import Data.ByteString (ByteString)
@@ -22,9 +23,12 @@ import Codec.Compression.Zlib (decompress)
 
 import PDF.Definition
 
+maxBfrangeSpan :: Int
+maxBfrangeSpan = 65536
+
 parseCMap :: BSL.ByteString -> CMap
 parseCMap str
-  | BSL.null str = []
+  | BSL.null str = Map.empty
   | otherwise =
       case runParser (skipHeader >>
                       concat <$>
@@ -35,11 +39,8 @@ parseCMap str
                        ])
                        (try $ string "endcmap"))
                      () "" str of
-        Left _  -> []
-        Right cmap -> mkUniq cmap
-
-  where
-    mkUniq = reverse
+        Left _  -> Map.empty
+        Right cmap -> Map.fromList cmap
 
 readHexSafe :: String -> Maybe Int
 readHexSafe s = case readHex s of
@@ -52,7 +53,7 @@ skipHeader = do
   spaces
   return ()
 
-bfchar :: Parser CMap
+bfchar :: Parser [(Int, String)]
 bfchar = do
   many1 digit
   spaces 
@@ -71,7 +72,7 @@ bfchar = do
           (Just c, Just u) -> Just (c, [chr u])
           _                -> Nothing
 
-bfrange :: Parser [CMap]
+bfrange :: Parser [[(Int, String)]]
 bfrange = do
   d <- many1 digit
   spaces 
@@ -88,8 +89,11 @@ bfrange = do
       gethex = readHexSafe
       getRange cid cid' =
         case (gethex cid, gethex cid') of
-          (Just a, Just b) -> [a .. b]
-          _                -> []
+          (Just a, Just b) | b >= a ->
+            let span = b - a + 1
+                b' = if span > maxBfrangeSpan then a + maxBfrangeSpan - 1 else b
+            in [a .. b']
+          _ -> []
       mkStrList d src = if length src == 1
                         then case src of
                                (s:_) -> case gethex s of
