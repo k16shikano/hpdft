@@ -10,6 +10,7 @@ import PDF.Object
 import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Outlines
+import PDF.Encrypt (Security)
 
 import System.Environment (getArgs)
 
@@ -75,6 +76,7 @@ data CmdOpt = CmdOpt {
   pdfinfo :: Bool,
   pdfoutline :: Bool,
   trailer :: Bool,
+  password :: String,
   file :: FilePath
   }
 
@@ -117,46 +119,55 @@ options = CmdOpt
           <*> switch
           ( long "trailer"
             <> help "Show the trailer of PDF" )
+          <*> strOption
+          ( long "password"
+            <> short 'P'
+            <> value ""
+            <> metavar "PASSWORD"
+            <> help "Password for encrypted PDF" )
           <*> strArgument
           ( help "input pdf file"
             <> metavar "FILE"
             <> action "file" )
 
 hpdft :: CmdOpt -> IO ()
-hpdft (CmdOpt 0 0 "" False False False False False fn) = pdfToText fn  
-hpdft (CmdOpt 0 0 "" False True _ _ _ fn) = showTitle fn
-hpdft (CmdOpt 0 0 "" False _ True _ _ fn) = showInfo fn
-hpdft (CmdOpt 0 0 "" False _ _ True _ fn) = showOutlines fn
-hpdft (CmdOpt 0 0 "" False _ _ _ True fn) = print =<< getTrailer fn
-hpdft (CmdOpt 0 0 "" True  _ _ _ _ fn) = print =<< refByPage fn
-hpdft (CmdOpt n 0 "" False _ _ _ _ fn) = showPage fn n
-hpdft (CmdOpt 0 r "" False _ _ _ _ fn) = showContent fn r
-hpdft (CmdOpt 0 0 r  False _ _ _ _ fn) = grepPDF fn r
-hpdft _ = return ()
+hpdft CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
+  let mpw = Just pw
+  in case () of
+    _ | pg==0 && rf==0 && null gr && not rs && not tt && not ii && not oo && not tr -> pdfToText fn mpw
+      | pg==0 && rf==0 && null gr && not rs && tt      -> showTitle fn mpw
+      | pg==0 && rf==0 && null gr && not rs && ii      -> showInfo fn mpw
+      | pg==0 && rf==0 && null gr && not rs && oo      -> showOutlines fn mpw
+      | pg==0 && rf==0 && null gr && not rs && tr      -> print =<< getTrailer fn
+      | pg==0 && rf==0 && null gr && rs                -> print =<< refByPage fn mpw
+      | rf==0 && null gr && pg/=0                      -> showPage fn mpw pg
+      | pg==0 && null gr && rf/=0                      -> showContent fn mpw rf
+      | pg==0 && rf==0 && not (null gr)                -> grepPDF fn mpw gr
+      | otherwise -> return ()
 
 -- | Get a whole text from 'filename'. It works as:
 --    (1) grub objects
 --    (2) parse within each object, deflating its stream
 --    (3) linearize stream
 
-pdfToText filename = do
-  objs <- getPDFObjFromFile filename
+pdfToText filename mpw = do
+  (objs, sec) <- getPDFObjFromFile filename mpw
   rootref <- getRootRef filename
-  BSL.putStrLn $ walkdown initstate rootref objs
+  BSL.putStrLn $ walkdown initstate rootref sec objs
 
-walkdown :: PSR -> Int -> [PDFObj] -> PDFStream
-walkdown st parent objs = 
+walkdown :: PSR -> Int -> Maybe Security -> PDFObjIndex -> PDFStream
+walkdown st parent sec objs = 
   case findObjsByRef parent objs of
     Just os -> case findDictOfType "/Catalog" os of
       Just dict -> case findPages dict of 
-        Just pr -> walkdown st pr objs
+        Just pr -> walkdown st pr sec objs
         Nothing -> ""
       Nothing -> case findDictOfType "/Pages" os of
         Just dict -> case findKids dict of
-          Just kidsrefs -> BSL.concat $ map ((\f -> f objs) . (walkdown st)) kidsrefs
+          Just kidsrefs -> BSL.concat $ map ((\f -> f sec objs) . (walkdown st)) kidsrefs
           Nothing -> ""
         Nothing -> case findDictOfType "/Page" os of
-          Just dict -> contentsStream dict st objs
+          Just dict -> contentsStream dict st sec objs
           Nothing -> ""
     Nothing -> ""
 
@@ -165,12 +176,12 @@ data  PageTree = Nop | Page Int | Pages [PageTree]
 
 -- | Sort object references in page order.
 
-refByPage filename = do
+refByPage filename mpw = do
   root <- getRootRef filename
-  objs <- getPDFObjFromFile filename
-  return $  pageTreeToList $ pageorder root objs
+  (objs, _) <- getPDFObjFromFile filename mpw
+  return $ pageTreeToList $ pageorder root objs
 
-pageorder :: Int -> [PDFObj] -> PageTree
+pageorder :: Int -> PDFObjIndex -> PageTree
 pageorder parent objs = 
   case findObjsByRef parent objs of
     Just os -> case findDictOfType "/Catalog" os of
@@ -193,32 +204,35 @@ pageTreeToList Nop = []
 
 -- | Show contents of page 'page' in 'filename'.
 
-showPage filename page = do 
-  pagetree <- refByPage filename
+showPage filename mpw page = do
+  (objs, sec) <- getPDFObjFromFile filename mpw
+  root <- getRootRef filename
+  let pagetree = pageTreeToList $ pageorder root objs
   case length pagetree >= page of
-    True -> contentByRef filename $ pagetree !! (page - 1)
+    True -> contentByRefObjs sec objs $ pagetree !! (page - 1)
     False -> putStrLn $ "hpdft: No Page "++(show page)
 
--- | Show /Content referenced from the 'ref'ed-object in 'filename'.
-
-contentByRef filename ref = do
-  objs <- getPDFObjFromFile filename
+contentByRefObjs sec objs ref = do
   obj <- getObjectByRef ref objs
-  BSL.putStrLn $ contentInObject obj objs
-  where contentInObject obj objs =
-          case findDictOfType "/Page" obj of
-            Just dict -> contentsStream dict initstate objs
+  BSL.putStrLn $ contentInObject sec obj objs
+  where contentInObject sec' obj' objs' =
+          case findDictOfType "/Page" obj' of
+            Just dict -> contentsStream dict initstate sec' objs'
             Nothing -> ""
 
-showContent filename ref = do
-  objs <- getPDFObjFromFile filename
+contentByRef filename mpw ref = do
+  (objs, sec) <- getPDFObjFromFile filename mpw
+  contentByRefObjs sec objs ref
+
+showContent filename mpw ref = do
+  (objs, sec) <- getPDFObjFromFile filename mpw
   obj <- getObjectByRef ref objs
   let d = fromMaybe [] $ findDict obj
   if hasStream obj
     then
-      if hasSubtype d -- then it's not content stream
-        then printStreamWithDict d obj
-        else BSL.putStrLn =<< getStream False obj
+      if hasSubtype d
+        then printStreamWithDict sec ref d obj
+        else BSL.putStrLn =<< getStream sec ref False obj
     else print =<< getObjectByRef ref objs
   where
 
@@ -234,13 +248,14 @@ showContent filename ref = do
     isSubtype (PdfName "/Subtype", _) = True
     isSubtype x = False
 
-    printStreamWithDict :: Dict -> [Obj] -> IO ()
-    printStreamWithDict d obj = print (PdfDict d) >> (BSL.putStrLn =<< getStream True obj)
+    printStreamWithDict :: Maybe Security -> Int -> Dict -> [Obj] -> IO ()
+    printStreamWithDict sec' ref' d obj =
+      print (PdfDict d) >> (BSL.putStrLn =<< getStream sec' ref' True obj)
 
 -- | Show /Title from meta information in 'filename'
 
-showTitle filename = do
-  d <- getInfo filename
+showTitle filename mpw = do
+  d <- getInfo filename mpw
   let title = 
         case findObjFromDict d "/Title" of
           Just (PdfText s) -> s
@@ -251,33 +266,33 @@ showTitle filename = do
 
 -- | Show /Info from meta information in 'filename'
 
-showInfo filename = do
-  d <- getInfo filename
+showInfo filename mpw = do
+  d <- getInfo filename mpw
   putStrLn $ toString 0 (PdfDict d)
   return ()
 
 -- | Show /Outlines from meta information in 'filename'
 
-showOutlines filename = do
-  d <- getOutlines filename
+showOutlines filename mpw = do
+  d <- getOutlines filename mpw
   putStrLn $ show d
   return ()
 
 -- | Find string in each page.
 
-grepPDF filename re = do
+grepPDF filename mpw re = do
   root <- getRootRef filename
-  objs <- getPDFObjFromFile filename
+  (objs, sec) <- getPDFObjFromFile filename mpw
   mapM
-    (\(strm, pagenm) -> (grepByPage pagenm re . contentInObjs objs) strm)
+    (\(strm, pagenm) -> (grepByPage pagenm re . contentInObjs sec objs) strm)
     $ zip (pageTreeToList $ pageorder root objs) [1..]
   return ()
   
   where
-    contentInObjs objs ref =
-      case findObjsByRef ref objs of
+    contentInObjs sec' objs' ref =
+      case findObjsByRef ref objs' of
         Just obj -> case findDictOfType "/Page" obj of
-                      Just dict -> contentsStream dict initstate objs
+                      Just dict -> contentsStream dict initstate sec' objs'
                       Nothing -> ""
         Nothing -> error $ "No Object with Ref " ++ show ref
 

@@ -44,10 +44,10 @@ toString depth PDFOutlinesNE = ""
 
 -- | Get information of \/Outlines from 'filename'
 
-getOutlines :: FilePath -> IO PDFOutlines
-getOutlines filename = do
-  dict <- outlineObjFromFile filename
-  objs <- getPDFObjFromFile filename  
+getOutlines :: FilePath -> Maybe String -> IO PDFOutlines
+getOutlines filename password = do
+  dict <- outlineObjFromFile filename password
+  (objs, _) <- getPDFObjFromFile filename password  
   firstref <- case findFirst dict of
     Just r -> return r
     Nothing -> error "No top level outline entry."
@@ -87,9 +87,9 @@ outlines dict = case find isOutlinesRef dict of
     isOutlinesRef (PdfName "/Outlines", ObjRef x) = True
     isOutlinesRef (_,_)                           = False
 
-outlineObjFromFile :: String -> IO Dict
-outlineObjFromFile filename = do
-  objs <- getPDFObjFromFile filename
+outlineObjFromFile :: String -> Maybe String -> IO Dict
+outlineObjFromFile filename password = do
+  (objs, _) <- getPDFObjFromFile filename password
   rootref <- getRootRef filename
   rootobj <- case findObjsByRef rootref objs of
     Just os -> return os

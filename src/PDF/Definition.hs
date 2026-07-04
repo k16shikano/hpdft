@@ -13,6 +13,8 @@ type XREF = Map Int Int
 
 type PDFObj = (Int,[Obj])
 
+type PDFObjIndex = Map Int [Obj]
+
 type PDFStream = BSL.ByteString
 
 data Obj = PdfDict Dict -- [(Obj, Obj)]
