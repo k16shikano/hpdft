@@ -21,10 +21,10 @@ import Data.Attoparsec.Combinator
 import qualified Data.ByteString.Char8 as BS
 
 import PDF.Definition hiding (toString)
+import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
 import PDF.Error (PdfError(..), PdfResult, note)
 import PDF.Object (parseRefsArray, parsePdfLetters)
-import PDF.PDFIO
 
 data PDFOutlines = PDFOutlinesTree [PDFOutlines]
                  | PDFOutlinesEntry { dest :: Int
@@ -43,14 +43,15 @@ toString depth PDFOutlinesNE = ""
 
 getOutlines :: FilePath -> Maybe String -> IO (PdfResult PDFOutlines)
 getOutlines filename password = do
-  edict <- outlineObjFromFile filename password
-  case edict of
+  docResult <- openDocument filename password
+  case docResult of
     Left err -> return (Left err)
-    Right dict -> do
-      objResult <- getPDFObjFromFile filename password
-      case objResult of
+    Right doc -> do
+      edict <- outlineFromDoc doc
+      case edict of
         Left err -> return (Left err)
-        Right (objs, _) ->
+        Right dict -> do
+          let objs = docObjs doc
           case findFirst dict of
             Nothing -> return $ Left (MissingKey "/First" "outlines")
             Just firstref -> case findObjsByRef firstref objs of
@@ -123,16 +124,11 @@ outlinesRef dict = case find isOutlinesRef dict of
     isOutlinesRef (PdfName "/Outlines", ObjRef x) = True
     isOutlinesRef (_,_)                           = False
 
-outlineObjFromFile :: String -> Maybe String -> IO (PdfResult Dict)
-outlineObjFromFile filename password = do
-  objResult <- getPDFObjFromFile filename password
-  case objResult of
+outlineFromDoc :: Document -> IO (PdfResult Dict)
+outlineFromDoc doc =
+  case docRootRef doc of
     Left err -> return (Left err)
-    Right (objs, _) -> do
-      rootResult <- getRootRef filename
-      case rootResult of
-        Left err -> return (Left err)
-        Right rootref -> outlineFromRoot rootref objs
+    Right rootref -> outlineFromRoot rootref (docObjs doc)
 
 outlineFromRoot :: Int -> PDFObjIndex -> IO (PdfResult Dict)
 outlineFromRoot rootref objs =

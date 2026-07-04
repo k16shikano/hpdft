@@ -5,12 +5,13 @@ module PDF.Text
   , walkdown
   , pdfToTextBS
   , pdfToTextWithWarnings
+  , pdfToTextDoc
   ) where
 
 import PDF.Definition
 import PDF.Error (PdfResult, PdfWarning(..))
+import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
-import PDF.PDFIO
 import PDF.Encrypt (Security)
 
 import qualified Data.ByteString.Lazy.Char8 as BSL
@@ -42,14 +43,17 @@ pdfToTextBS filename mpw = do
 
 pdfToTextWithWarnings :: FilePath -> Maybe String -> IO (PdfResult (BSL.ByteString, [PdfWarning]))
 pdfToTextWithWarnings filename mpw = do
-  objResult <- getPDFObjFromFile filename mpw
-  case objResult of
-    Left err -> return (Left err)
-    Right (objs, sec) -> do
-      rootResult <- getRootRef filename
-      case rootResult of
-        Left err -> return (Left err)
-        Right rootref -> return (Right (walkdown initstate rootref sec objs))
+  docResult <- openDocument filename mpw
+  return $ do
+    doc <- docResult
+    rootref <- docRootRef doc
+    return (walkdown initstate rootref (docSecurity doc) (docObjs doc))
+
+pdfToTextDoc :: Document -> (BSL.ByteString, [PdfWarning])
+pdfToTextDoc doc =
+  case docRootRef doc of
+    Right rootref -> walkdown initstate rootref (docSecurity doc) (docObjs doc)
+    Left _ -> ("", [])
 
 walkdown :: PSR -> Int -> Maybe Security -> PDFObjIndex -> (BSL.ByteString, [PdfWarning])
 walkdown st parent sec objs =

@@ -9,7 +9,9 @@ Maintainer  : k16.shikano@gmail.com
 -}
 
 module PDF.DocumentStructure
-       ( expandObjStm
+       ( buildIndex
+       , buildIndexEager
+       , expandObjStm
        , rootRef
        , contentsStream
        , rawStreamByRef
@@ -20,15 +22,21 @@ module PDF.DocumentStructure
        , findDictOfType
        , findObjFromDict
        , findObjFromDictWithRef
+       , findRefs
        , findObjsByRef
+       , findObjs
        , findObjs'
        , findTrailer
+       , findTrailer'
        , indexPDFObjs
+       , extractObjBody
+       , isRootRef
+       , isInfoRef
        , rawStream
        ) where
 
 import Data.Char (chr, isDigit, ord)
-import Data.List (find, elem, foldl')
+import Data.List (find, elem, foldl', nub)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Builder as B
@@ -67,7 +75,10 @@ findObjs = collectPDFObjs
 findObjs' :: BS.ByteString -> PdfResult [PDFBS]
 findObjs' contents = case findTrailer' contents of
   Right (_, xref) ->
-    Right $ Map.toAscList $ Map.map (extractObjBody contents) xref
+    Right
+      [ (n, extractObjBody contents off)
+      | (n, InFile off) <- Map.toAscList xref
+      ]
   Left xrefErr -> case findObjs contents of
     [] -> Left xrefErr
     objs -> Right objs
@@ -90,6 +101,45 @@ findObjsByRef = Map.lookup
 
 indexPDFObjs :: [PDFObj] -> PDFObjIndex
 indexPDFObjs = Map.fromList
+
+buildIndex :: BS.ByteString -> Maybe Security -> XREF -> PDFObjIndex
+buildIndex bytes msec xref = objs
+  where
+    objs = Map.mapWithKey resolve xref
+    containerCache =
+      Map.fromList
+        [ (cnum, objStmEntries cnum)
+        | cnum <- nub [c | InObjStm c _ <- Map.elems xref]
+        ]
+    resolve objNum (InFile off) =
+      let body = extractObjBody bytes off
+      in snd (parsePDFObj msec (objNum, body))
+    resolve objNum (InObjStm cnum idx) =
+      case Map.lookup cnum containerCache of
+        Just entries ->
+          case lookup objNum entries of
+            Just o -> o
+            Nothing ->
+              case drop idx entries of
+                ((_, o) : _) -> o
+                _ -> [PdfNull]
+        Nothing -> [PdfNull]
+    objStmEntries cnum =
+      case rawStream msec cnum (Map.findWithDefault [PdfNull] cnum objs) of
+        Right streamBytes ->
+          case pdfObjStm cnum (BSL.toStrict streamBytes) of
+            Right entries -> entries
+            Left _ -> []
+        Left _ -> []
+
+buildIndexEager :: BS.ByteString -> Maybe Security -> PdfResult PDFObjIndex
+buildIndexEager bytes msec = do
+  rawObjs <- case findObjs bytes of
+    [] -> Left (BrokenXref "no objects found without xref")
+    objs -> Right objs
+  let parsed = map (parsePDFObj msec) rawObjs
+  expanded <- expandObjStm msec parsed
+  return (indexPDFObjs expanded)
 
 findObjFromDictWithRef :: Int -> String -> PDFObjIndex -> Maybe Obj
 findObjFromDictWithRef ref name objs = case findDictByRef ref objs of 
@@ -420,7 +470,16 @@ xrefStreamToMap dict s = do
   sections <- indexSections dict
   raw <- decodeStreamBytes dict s
   entries <- xrefStreamEntries ws sections raw
-  return $ Map.fromList [(n, off) | (n, typ, off) <- entries, typ == 1]
+  return $ Map.fromList
+    [ (n, entry)
+    | (n, typ, f2, f3) <- entries
+    , Just entry <- [xrefEntry typ f2 f3]
+    ]
+  where
+    xrefEntry 1 off _ = Just (InFile off)
+    xrefEntry 2 cnum idx = Just (InObjStm cnum idx)
+    xrefEntry 0 _ _ = Nothing
+    xrefEntry _ _ _ = Nothing
 
 wFields :: Dict -> PdfResult (Int, Int, Int)
 wFields d = case findObjFromDict d "/W" of
@@ -440,7 +499,7 @@ indexSections d = case findObjFromDict d "/Index" of
     indexPairs [] = Right []
     indexPairs _  = Left (BrokenXref "malformed /Index in xref stream")
 
-xrefStreamEntries :: (Int, Int, Int) -> [(Int, Int)] -> BS.ByteString -> PdfResult [(Int, Int, Int)]
+xrefStreamEntries :: (Int, Int, Int) -> [(Int, Int)] -> BS.ByteString -> PdfResult [(Int, Int, Int, Int)]
 xrefStreamEntries widths sections raw =
   fst <$> foldM (parseSection widths) ([], raw) sections
   where
@@ -451,8 +510,8 @@ xrefStreamEntries widths sections raw =
       foldM (\(es, b) objNum -> do
                 (typ, b1) <- readField w0 b
                 (f2, b2)  <- readField w1 b1
-                (_, b3)   <- readField w2 b2
-                return ((objNum, typ, f2) : es, b3))
+                (f3, b3)  <- readField w2 b2
+                return ((objNum, typ, f2, f3) : es, b3))
              ([], bs) [start .. start + count - 1]
 
 readField :: Int -> BS.ByteString -> PdfResult (Int, BS.ByteString)
@@ -511,7 +570,7 @@ parseXref xref = case parseOnly xrefParser xref of
     concatSubsections (_, _, e) =
       Left (BrokenXref ("xref subsection malformed: " ++ show e))
 
-    dropFN (n, offset, fn) = (n, offset)
+    dropFN (n, offset, fn) = (n, InFile offset)
 
 rootRef :: BS.ByteString -> PdfResult (Maybe Int)
 rootRef bs = case findTrailer bs of

@@ -7,6 +7,7 @@ module Main where
 import PDF.Definition
 
 import PDF.Object
+import PDF.Document (Document(..), openDocument, docRootRef, docInfoDict)
 import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Outlines
@@ -171,15 +172,15 @@ data  PageTree = Nop | Page Int | Pages [PageTree]
 
 showRefs :: FilePath -> Maybe String -> IO ()
 showRefs filename mpw = do
-  root <- runOrDie (getRootRef filename)
-  (objs, _) <- runOrDie (getPDFObjFromFile filename mpw)
-  print $ pageTreeToList $ pageorder root objs
+  doc <- runOrDie (openDocument filename mpw)
+  root <- runOrDie (return (docRootRef doc))
+  print $ pageTreeToList $ pageorder root (docObjs doc)
 
 refByPage :: FilePath -> Maybe String -> IO [Int]
 refByPage filename mpw = do
-  root <- runOrDie (getRootRef filename)
-  (objs, _) <- runOrDie (getPDFObjFromFile filename mpw)
-  return $ pageTreeToList $ pageorder root objs
+  doc <- runOrDie (openDocument filename mpw)
+  root <- runOrDie (return (docRootRef doc))
+  return $ pageTreeToList $ pageorder root (docObjs doc)
 
 pageorder :: Int -> PDFObjIndex -> PageTree
 pageorder parent objs = 
@@ -204,9 +205,11 @@ pageTreeToList Nop = []
 
 showPage :: FilePath -> Maybe String -> Int -> IO ()
 showPage filename mpw page = do
-  (objs, sec) <- runOrDie (getPDFObjFromFile filename mpw)
-  root <- runOrDie (getRootRef filename)
-  let pagetree = pageTreeToList $ pageorder root objs
+  doc <- runOrDie (openDocument filename mpw)
+  root <- runOrDie (return (docRootRef doc))
+  let objs = docObjs doc
+      sec = docSecurity doc
+      pagetree = pageTreeToList $ pageorder root objs
   case length pagetree >= page of
     True -> contentByRefObjs sec objs $ pagetree !! (page - 1)
     False -> putStrLn $ "hpdft: No Page "++(show page)
@@ -230,7 +233,9 @@ pageStream dict sec objs =
 
 showContent :: FilePath -> Maybe String -> Int -> IO ()
 showContent filename mpw ref = do
-  (objs, sec) <- runOrDie (getPDFObjFromFile filename mpw)
+  doc <- runOrDie (openDocument filename mpw)
+  let objs = docObjs doc
+      sec = docSecurity doc
   obj <- runOrDie (getObjectByRef ref objs)
   let d = fromMaybe [] $ findDict obj
   if hasStream obj
@@ -265,7 +270,8 @@ showContent filename mpw ref = do
 
 showTitle :: FilePath -> Maybe String -> IO ()
 showTitle filename mpw = do
-  d <- runOrDie (getInfo filename mpw)
+  doc <- runOrDie (openDocument filename mpw)
+  d <- runOrDie (return (docInfoDict doc))
   let title = 
         case findObjFromDict d "/Title" of
           Just (PdfText s) -> s
@@ -275,7 +281,8 @@ showTitle filename mpw = do
 
 showInfo :: FilePath -> Maybe String -> IO ()
 showInfo filename mpw = do
-  d <- runOrDie (getInfo filename mpw)
+  doc <- runOrDie (openDocument filename mpw)
+  d <- runOrDie (return (docInfoDict doc))
   putStrLn $ ppObj (PdfDict d)
 
 showOutlines :: FilePath -> Maybe String -> IO ()
@@ -285,13 +292,15 @@ showOutlines filename mpw = do
 
 showTrailer :: FilePath -> IO ()
 showTrailer filename = do
-  d <- runOrDie (getTrailer filename)
-  putStrLn $ ppDictEntries d
+  doc <- runOrDie (openDocument filename Nothing)
+  putStrLn $ ppDictEntries (docTrailer doc)
 
 grepPDF :: FilePath -> Maybe String -> String -> IO ()
 grepPDF filename mpw re = do
-  root <- runOrDie (getRootRef filename)
-  (objs, sec) <- runOrDie (getPDFObjFromFile filename mpw)
+  doc <- runOrDie (openDocument filename mpw)
+  root <- runOrDie (return (docRootRef doc))
+  let objs = docObjs doc
+      sec = docSecurity doc
   mapM_
     (\(ref, pagenm) -> grepByPage pagenm re (contentInObjs sec objs ref))
     $ zip (pageTreeToList $ pageorder root objs) [1..]

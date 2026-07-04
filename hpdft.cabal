@@ -27,6 +27,7 @@ data-files:          map/Adobe-Japan1-6.map
 library
   hs-source-dirs:      src/
   exposed-modules:     PDF.PDFIO
+                     , PDF.Document
                      , PDF.ContentStream
                      , PDF.Character
                      , PDF.Cmap

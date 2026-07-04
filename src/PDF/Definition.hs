@@ -10,7 +10,11 @@ import PDF.Error (PdfWarning(..))
 
 type PDFBS = (Int,BS.ByteString)
 
-type XREF = Map Int Int
+data XrefEntry = InFile Int
+               | InObjStm Int Int
+               deriving (Eq, Show)
+
+type XREF = Map Int XrefEntry
 
 type PDFObj = (Int,[Obj])
 
