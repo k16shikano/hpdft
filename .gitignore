@@ -16,3 +16,7 @@ cabal.sandbox.config
 *.hp
 .stack-work/
 *~
+
+# Local PDF fixtures (not redistributable)
+data/sample/*
+!data/sample/.gitkeep
