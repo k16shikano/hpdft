@@ -21,14 +21,13 @@ module PDF.DocumentStructure
        , findObjFromDict
        , findObjFromDictWithRef
        , findObjsByRef
-       , findObjs
        , findObjs'
        , findTrailer
        , rawStream
        ) where
 
-import Data.Char (chr, isDigit)
-import Data.List (find, elem)
+import Data.Char (chr, isDigit, ord)
+import Data.List (find, elem, foldl')
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Builder as B
@@ -264,7 +263,84 @@ findTrailerDictXREF :: BS.ByteString -> (Dict, XREF)
 findTrailerDictXREF xrefTrailer = case BS.breakSubstring "trailer" xrefTrailer of
   (xref, trailer) -> case parseOnly (pdfdictionary <* spaces) (BS.drop 7 trailer) of
     Left  err  -> error $ show (BS.take 100 trailer)
-    Right (PdfDict dict) -> (dict, parseXref xref)
+    Right (PdfDict dict) -> (dict, parseXrefBlob xref)
+
+parseXrefBlob :: BS.ByteString -> XREF
+parseXrefBlob bs =
+  let trimmed = BS.dropWhile isPdfSpace bs
+  in case BS.take 4 trimmed of
+       "xref" -> parseXref bs
+       _      -> parseXrefStream bs
+
+parseXrefStream :: BS.ByteString -> XREF
+parseXrefStream bs = case parseOnly xrefStreamObject bs of
+  Left err  -> error $ "xref stream: " ++ show err ++ ": " ++ show (BS.take 80 bs)
+  Right (dict, s) -> xrefStreamToMap dict s
+
+xrefStreamObject :: Parser (Dict, BSL.ByteString)
+xrefStreamObject = do
+  spaces
+  _ <- many1 digit
+  spaces
+  _ <- many1 digit
+  string " obj"
+  spaces
+  dict <- pdfdictionary
+  spaces
+  PdfStream s <- pdfstream
+  spaces
+  optional (string "endobj")
+  case dict of
+    PdfDict d -> return (d, s)
+    _         -> fail "expected dictionary in xref stream object"
+
+xrefStreamToMap :: Dict -> BSL.ByteString -> XREF
+xrefStreamToMap dict s =
+  let ws = wFields dict
+      sections = indexSections dict
+      raw = BSL.toStrict $ rawStream [PdfDict dict, PdfStream s]
+      entries = xrefStreamEntries ws sections raw
+  in Map.fromList $ [(n, off) | (n, typ, off) <- entries, typ == 1]
+
+wFields :: Dict -> (Int, Int, Int)
+wFields d = case findObjFromDict d "/W" of
+  Just (PdfArray [PdfNumber a, PdfNumber b, PdfNumber c]) ->
+    (truncate a, truncate b, truncate c)
+  _ -> error "xref stream missing /W"
+
+indexSections :: Dict -> [(Int, Int)]
+indexSections d = case findObjFromDict d "/Index" of
+  Just (PdfArray arr) -> indexPairs arr
+  Nothing -> case findObjFromDict d "/Size" of
+    Just (PdfNumber s) -> [(0, truncate s)]
+    _ -> error "xref stream missing /Size"
+  where
+    indexPairs (PdfNumber a : PdfNumber b : xs) =
+      (truncate a, truncate b) : indexPairs xs
+    indexPairs [] = []
+    indexPairs _  = error "malformed /Index in xref stream"
+
+xrefStreamEntries :: (Int, Int, Int) -> [(Int, Int)] -> BS.ByteString -> [(Int, Int, Int)]
+xrefStreamEntries widths sections raw =
+  fst $ foldl' (parseSection widths) ([], raw) sections
+  where
+    parseSection (w0, w1, w2) (acc, bs) (start, count) =
+      let (ents, rest) = parseN (w0, w1, w2) start count bs
+      in (acc ++ ents, rest)
+    parseN (w0, w1, w2) start count bs =
+      foldl' (\(es, b) objNum ->
+                let (typ, b1) = readField w0 b
+                    (f2, b2)  = readField w1 b1
+                    (_, b3)   = readField w2 b2
+                in ((objNum, typ, f2) : es, b3))
+             ([], bs) [start .. start + count - 1]
+
+readField :: Int -> BS.ByteString -> (Int, BS.ByteString)
+readField 0 bs = (0, bs)
+readField w bs = (bytesToInt (BS.take w bs), BS.drop w bs)
+
+bytesToInt :: BS.ByteString -> Int
+bytesToInt = BS.foldl' (\acc w -> acc * 256 + ord w) 0
 
 parseXref :: BS.ByteString -> XREF
 parseXref xref = case parseOnly xrefParser xref of

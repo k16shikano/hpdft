@@ -19,6 +19,7 @@ module PDF.Object
   , pdfletters
   , pdfarray
   , pdfdictionary
+  , pdfstream
   , xref
   ) where
 

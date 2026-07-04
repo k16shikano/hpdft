@@ -22,7 +22,7 @@ module PDF.PDFIO ( getObjectByRef
 
 import PDF.Definition
 import PDF.DocumentStructure
-  (rawStream, rawStreamByRef, findObjs, findObjs', findObjsByRef,
+  (rawStream, rawStreamByRef, findObjs', findObjsByRef,
    findDictByRef, findObjFromDict, rootRef,
    findTrailer, expandObjStm)
 import PDF.Object (parsePDFObj)
