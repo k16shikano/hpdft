@@ -16,6 +16,9 @@ module PDF.Object
   , parsePDFObj
   , parseRefsArray
   , pdfObj
+  , objectBody
+  , sliceObjectAt
+  , collectPDFObjs
   , pdfletters
   , pdfarray
   , pdfdictionary
@@ -24,6 +27,7 @@ module PDF.Object
   ) where
 
 import Data.Char (chr)
+import Data.List (find)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.Text as T
@@ -33,10 +37,11 @@ import Numeric (readOct, readHex)
 import Data.ByteString.Builder (toLazyByteString, word16BE)
 
 import Data.Attoparsec.ByteString.Char8 hiding (take, skipWhile, takeTill)
-import Data.Attoparsec.ByteString.Char8 as P (takeWhile1)
+import qualified Data.Attoparsec.ByteString.Char8 as AP
 import Data.Attoparsec.ByteString as W (skipWhile, word8, notWord8, takeTill, anyWord8)
 import Data.Attoparsec.Combinator
 import Control.Applicative
+import Control.Monad (void, guard)
 
 import Data.Word (Word8)
 
@@ -51,27 +56,73 @@ noneOf = satisfy . notInClass
 
 pdfObj :: Parser PDFBS
 pdfObj = do
+  objn <- objectHeader
+  (body, _) <- match (objectBody Nothing objn)
   spaces
-  objn <- many1 digit <* (spaces >> oneOf "0123456789" >> string " obj")
-  object <- manyTill' anyChar (try $ string "endobj")
+  string "endobj"
   spaces
   many xref
   many startxref
-  return $ (read objn, BS.pack object)
+  return (objn, body)
+
+objectHeader :: Parser Int
+objectHeader = do
+  spaces
+  objn <- read <$> many1 digit
+  spaces
+  _ <- many1 digit
+  string " obj"
+  spaces
+  return objn
+
+sliceOneObject :: BS.ByteString -> Maybe ((Int, BS.ByteString), BS.ByteString)
+sliceOneObject bs = case AP.parse objectSlice bs of
+  AP.Done rest (objn, body) -> Just ((objn, body), rest)
+  _ -> Nothing
+  where
+    objectSlice = do
+      objn <- objectHeader
+      (body, _) <- match (objectBody Nothing objn)
+      spaces
+      string "endobj"
+      return (objn, body)
+
+sliceObjectAt :: BS.ByteString -> Maybe BS.ByteString
+sliceObjectAt bs = fmap snd $ fmap fst $ sliceOneObject bs
+
+collectPDFObjs :: BS.ByteString -> [PDFBS]
+collectPDFObjs bs = loop (BS.dropWhile isPdfSpaceChar bs)
+  where
+    loop rest
+      | BS.null rest = []
+      | otherwise = case sliceOneObject rest of
+          Just ((n, body), after) -> (n, body) : loop (BS.dropWhile isPdfSpaceChar after)
+          Nothing -> []
+
+isPdfSpaceChar :: Char -> Bool
+isPdfSpaceChar c = c `elem` ['\0', '\t', '\n', '\f', '\r', ' ']
 
 pdfspaces = do
   W.word8 0 <|> W.word8 9 <|> W.word8 10 <|> W.word8 12 <|> W.word8 13 <|> W.word8 32
   return ""
 
+objectBody :: Maybe Security -> Int -> Parser [Obj]
+objectBody sec objNum = pdfobjElem sec objNum
+
+pdfobjElem :: Maybe Security -> Int -> Parser [Obj]
+pdfobjElem sec objNum =
+  try (dictAndStream sec objNum) <|>
+  fmap (:[]) (pdfobjAtom sec objNum)
+
 parsePDFObj :: Maybe Security -> PDFBS -> PDFObj
 parsePDFObj sec (n,pdfobject) =
-  case parseOnly (spaces >> many1 (try (pdfobjSec sec n) <|> try objother)) pdfobject of
+  case parseOnly (spaces >> objectBody sec n) pdfobject of
     Left  err -> (n,[PdfNull])
     Right obj -> (n, obj)
 
-pdfobjSec :: Maybe Security -> Int -> Parser Obj
-pdfobjSec Nothing _ = pdfobj
-pdfobjSec (Just sec) objNum = choice
+pdfobjAtom :: Maybe Security -> Int -> Parser Obj
+pdfobjAtom Nothing _ = pdfobjAtomPlain
+pdfobjAtom (Just sec) objNum = choice
   [ try rrefs
   , try pdfname
   , try pdfnumber
@@ -80,9 +131,28 @@ pdfobjSec (Just sec) objNum = choice
   , try pdfnull <* spaces
   , try (pdfarraySec (Just sec) objNum) <* spaces
   , try (pdfdictionarySec (Just sec) objNum) <* spaces
-  , try (pdfstreamSec (Just sec) objNum) <* spaces
   , pdflettersSec (Just sec) objNum <* spaces
   ]
+
+pdfobjAtomPlain :: Parser Obj
+pdfobjAtomPlain = choice
+  [ try rrefs
+  , try pdfname
+  , try pdfnumber
+  , try pdfhex <* spaces
+  , try pdfbool <* spaces
+  , try pdfnull <* spaces
+  , try pdfarray <* spaces
+  , try pdfdictionary <* spaces
+  , pdfletters <* spaces
+  ]
+
+pdfobjSec :: Maybe Security -> Int -> Parser Obj
+pdfobjSec sec objNum = do
+  elems <- pdfobjElem sec objNum
+  case elems of
+    [o] -> return o
+    _   -> fail "multi-element object in nested context"
 
 pdfdictionarySec :: Maybe Security -> Int -> Parser Obj
 pdfdictionarySec sec objNum =
@@ -146,14 +216,59 @@ decodeHexBytes bs =
       hexByte s = chr (fst (head (readHex s)))
   in BS.pack $ map hexByte pairs
 
-pdfstreamSec :: Maybe Security -> Int -> Parser Obj
-pdfstreamSec sec objNum = PdfStream <$> streamSec sec objNum
+lookupDictInt :: Dict -> String -> Maybe Int
+lookupDictInt d key =
+  find (\(PdfName k, _) -> k == key) d >>= \(_, o) -> case o of
+    PdfNumber x | x >= 0 -> Just (truncate x)
+    _ -> Nothing
 
-streamSec :: Maybe Security -> Int -> Parser PDFStream
-streamSec _ _ = do
-  string "stream"
+skipStreamEOL :: Parser ()
+skipStreamEOL =
+  void $ optional $ try (string "\r\n") <|> try (string "\n") <|> try (string "\r")
+
+streamEndMarker :: Parser ()
+streamEndMarker = void $ do
+  optional (try (string "\r\n") <|> try (string "\n") <|> try (string "\r"))
+  string "endstream"
+
+scanTillEndstream :: Parser BS.ByteString
+scanTillEndstream = go BS.empty
+  where
+    go acc =
+      (try $ do
+         guard (BS.null acc || isPdfEol (BS.last acc))
+         string "endstream"
+         return acc) <|>
+      (do w <- W.anyWord8; go (BS.snoc acc (chr (fromIntegral w))))
+    isPdfEol c = c == '\r' || c == '\n'
+
+readStreamBody :: Dict -> Parser BSL.ByteString
+readStreamBody dict = do
+  skipStreamEOL
+  case lookupDictInt dict "/Length" of
+    Just len ->
+      (try $ do
+        data_ <- AP.take len
+        streamEndMarker
+        return $ BSL.fromStrict data_) <|>
+      (BSL.fromStrict <$> scanTillEndstream)
+    Nothing ->
+      BSL.fromStrict <$> scanTillEndstream
+
+dictAndStream :: Maybe Security -> Int -> Parser [Obj]
+dictAndStream sec objNum = do
+  d@(PdfDict dict) <- case sec of
+    Nothing -> pdfdictionary
+    Just s  -> pdfdictionarySec (Just s) objNum
   spaces
-  BSL.pack <$> manyTill anyChar (try $ string "endstream")
+  more <- optional (lookAhead (string "stream"))
+  case more of
+    Nothing -> return [d]
+    Just _  -> do
+      string "stream"
+      stm <- readStreamBody dict
+      spaces
+      return [d, PdfStream stm]
 
 comment = do
   W.word8 37 >> W.notWord8 37 >> W.takeTill (\w-> w == 13 || w == 10)
@@ -180,9 +295,7 @@ startxref = do
 stream :: Parser PDFStream
 stream = do
   string "stream"
-  spaces
-  stm <- BSL.pack <$> manyTill anyChar (try $ string "endstream")
-  return stm
+  readStreamBody []
 
 pdfdictionary :: Parser Obj
 pdfdictionary = PdfDict <$> (spaces >> string "<<" >> spaces *> manyTill dictEntry (try $ spaces >> string ">>"))
@@ -276,17 +389,7 @@ pdfnull :: Parser Obj
 pdfnull = PdfNull <$ string "null"
 
 pdfobj :: Parser Obj
-pdfobj = choice [ try rrefs
-                , try pdfname
-                , try pdfnumber
-                , try pdfhex <* spaces -- Hexadecimal String
-                , try pdfbool <* spaces
-                , try pdfnull <* spaces
-                , try pdfarray <* spaces
-                , try pdfdictionary <* spaces
-                , try pdfstream <* spaces
-                , pdfletters <* spaces -- Literal String
-                ]
+pdfobj = pdfobjAtomPlain
 
 rrefs :: Parser Obj
 rrefs = do  

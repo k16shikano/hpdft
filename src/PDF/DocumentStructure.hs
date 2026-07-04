@@ -64,9 +64,7 @@ noneOf = satisfy . notInClass
 -- find objects
 
 findObjs :: BS.ByteString -> [PDFBS]
-findObjs contents = case parseOnly (many1 pdfObj) contents of
-  Left  err -> []
-  Right rlt -> rlt
+findObjs = collectPDFObjs
 
 findObjs' :: BS.ByteString -> PdfResult [PDFBS]
 findObjs' contents = case findTrailer' contents of
@@ -78,10 +76,13 @@ findObjs' contents = case findTrailer' contents of
 
 extractObjBody :: BS.ByteString -> Int -> BS.ByteString
 extractObjBody contents offset =
-  case BS.breakSubstring "endobj" (BS.drop offset contents) of
-    (before, _) ->
-      let (_, body) = BS.breakSubstring " obj" before
-      in BS.dropWhile isPdfSpace body
+  case sliceObjectAt (BS.drop offset contents) of
+    Just body -> body
+    Nothing ->
+      case BS.breakSubstring "endobj" (BS.drop offset contents) of
+        (before, _) ->
+          let (_, body) = BS.breakSubstring " obj" before
+          in BS.dropWhile isPdfSpace body
 
 isPdfSpace :: Char -> Bool
 isPdfSpace w = w `elem` ['\0', '\t', '\n', '\f', '\r', ' ']

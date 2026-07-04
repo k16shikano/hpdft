@@ -411,9 +411,7 @@ main = do
   let outdir = case args of
         (d : _) -> d
         []      -> "data" </> "fixtures"
-      knownFailing = outdir </> "known-failing"
   createDirectoryIfMissing True outdir
-  createDirectoryIfMissing True knownFailing
   mapM_ (write outdir)
     [ ("classic.pdf", classic)
     , ("xrefstream.pdf", xrefstream)
@@ -421,9 +419,7 @@ main = do
     , ("objstm.pdf", objstm)
     , ("indirect-length.pdf", indirectLength)
     , ("encrypted-rc4.pdf", encryptedRc4)
-    ]
-  mapM_ (write knownFailing)
-    [ ("binary-endstream.pdf", binaryEndstream)
+    , ("binary-endstream.pdf", binaryEndstream)
     ]
   where
     write dir (name, bytes) = do
