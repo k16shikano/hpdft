@@ -316,12 +316,13 @@ findTrailer' bs = case BS.breakEnd (== '\n') bs of
     isPrev (PdfName "/Prev", _) = True
     isPrev (_,_) = False
 
+    -- sofar holds entries from newer sections; left-biased union keeps them.
     xrefs n all (dict, sofar) = case findTrailerDictXREF $ BS.drop n all of
       (dict', xref) ->
         let xref' = mergeXRefStm all dict' xref
         in case find isPrev dict' of
-          Just (PdfName "/Prev", PdfNumber x) -> xrefs (truncate x) all (dict, Map.union xref' sofar)
-          Nothing -> Just (dict, Map.union xref' sofar)
+          Just (PdfName "/Prev", PdfNumber x) -> xrefs (truncate x) all (dict, Map.union sofar xref')
+          Nothing -> Just (dict, Map.union sofar xref')
 
 findTrailerDictXREF :: BS.ByteString -> (Dict, XREF)
 findTrailerDictXREF xrefTrailer =
@@ -624,12 +625,12 @@ encoding sec x objs = case subtype of
     fontDescriptor :: [Obj] -> [Dict]
     fontDescriptor [] = []
     fontDescriptor ((ObjRef r):rs) = (fontDescriptor' r):(fontDescriptor rs)
+    -- Base-14 fonts legally omit /FontDescriptor; treat as empty dict.
     fontDescriptor' :: Int -> Dict
     fontDescriptor' fdr = case findObjFromDictWithRef fdr "/FontDescriptor" objs of
-      Just (ObjRef r) -> case findDictByRef r objs of
-                           Just dict -> dict
-                           _ -> error $ "No /FontDescriptor entries in " ++ show r
-      _ -> error $ "Can not find /FontDescriptor itself in " ++ show fdr
+      Just (ObjRef r) -> fromMaybe [] $ findDictByRef r objs
+      Just (PdfDict d) -> d
+      _ -> []
 
     getCIDSystemInfo d =
       let registry = case findObjFromDict d "/Registry" of
