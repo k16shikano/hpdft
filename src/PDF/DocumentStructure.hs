@@ -67,12 +67,18 @@ findObjs contents = case parseOnly (many1 pdfObj) contents of
 
 findObjs' :: BS.ByteString -> [PDFBS]
 findObjs' contents = case findTrailer' contents of
-  Just (dict, xref) -> Map.toList $ Map.map (chopRest . chopHead) xref
-  where
-    chopHead d = BS.drop d contents
-    chopRest bs = case BS.breakSubstring "endobj" bs of
-      (obj', _) -> case BS.breakSubstring " obj" obj' of
-        (ref', obj) -> BS.drop 4 obj
+  Just (_, xref) -> Map.toAscList $ Map.map (extractObjBody contents) xref
+  Nothing -> findObjs contents
+
+extractObjBody :: BS.ByteString -> Int -> BS.ByteString
+extractObjBody contents offset =
+  case BS.breakSubstring "endobj" (BS.drop offset contents) of
+    (before, _) ->
+      let (_, body) = BS.breakSubstring " obj" before
+      in BS.dropWhile isPdfSpace body
+
+isPdfSpace :: Char -> Bool
+isPdfSpace w = w `elem` ['\0', '\t', '\n', '\f', '\r', ' ']
 
 findObjsByRef :: Int -> [PDFObj] -> Maybe [Obj]
 findObjsByRef x pdfobjs = case find (isRefObj (Just x)) pdfobjs of
@@ -263,7 +269,7 @@ findTrailerDictXREF xrefTrailer = case BS.breakSubstring "trailer" xrefTrailer o
 parseXref :: BS.ByteString -> XREF
 parseXref xref = case parseOnly xrefParser xref of
   Left  err  -> error $ show (BS.take 100 xref)
-  Right xs -> Map.fromList $ map dropFN $ concatMap concatSubsections xs
+  Right xs -> Map.fromList $ map dropFN $ filter (\(_,_,inUse) -> inUse) $ concatMap concatSubsections xs
   
   where 
     xrefParser = do
@@ -278,7 +284,7 @@ parseXref xref = case parseOnly xrefParser xref of
     entries = do
       offset <- P.take 10 <* spaces
       gennum <- P.take 5 <* spaces
-      status <- P.take 1 <* string "\r\n"
+      status <- P.take 1 <* (string "\r\n" <|> string "\n")
       return $ (readDec' offset, forn status)
     forn "f" = False
     forn "n" = True

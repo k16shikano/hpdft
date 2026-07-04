@@ -38,7 +38,7 @@ import qualified Data.ByteString.Lazy.Char8 as BSL
 getPDFBSFromFile :: FilePath -> IO [PDFBS]
 getPDFBSFromFile f = do
   c <- BS.readFile f
-  let bs = findObjs c
+  let bs = findObjs' c
   return bs
 
 -- | Get PDF objects each parsed as 'PDFObj' without being sorted. 

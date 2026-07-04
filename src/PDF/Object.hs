@@ -20,7 +20,6 @@ module PDF.Object
   , pdfarray
   , pdfdictionary
   , xref
-  ,
   ) where
 
 import Data.Char (chr)
