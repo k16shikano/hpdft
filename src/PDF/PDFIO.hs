@@ -27,6 +27,7 @@ import PDF.DocumentStructure
    findDict, findDictByRef, findObjFromDict, rootRef,
    findTrailer, expandObjStm)
 import PDF.Encrypt (Security, securityFromEncryptDict)
+import PDF.Error (orError)
 
 import Data.List (find)
 import Data.Maybe (fromMaybe)
@@ -38,8 +39,8 @@ import qualified Data.ByteString.Lazy.Char8 as BSL
 loadSecurity :: BS.ByteString -> Maybe String -> Maybe (Maybe Security)
 loadSecurity c password =
   case findTrailer c of
-    Nothing -> Just Nothing
-    Just trailer ->
+    Left _ -> Just Nothing
+    Right trailer ->
       case findObjFromDict trailer "/Encrypt" of
         Nothing -> Just Nothing
         Just (ObjRef ref) ->
@@ -55,7 +56,7 @@ loadSecurity c password =
 
 findEncryptDict :: BS.ByteString -> Int -> Maybe Dict
 findEncryptDict c ref =
-  case find ((== ref) . fst) (findObjs' c) of
+  case find ((== ref) . fst) (orError $ findObjs' c) of
     Nothing -> Nothing
     Just objbs -> findDict $ snd $ parsePDFObj Nothing objbs
 
@@ -64,7 +65,7 @@ findEncryptDict c ref =
 getPDFBSFromFile :: FilePath -> IO [PDFBS]
 getPDFBSFromFile f = do
   c <- BS.readFile f
-  let bs = findObjs' c
+  let bs = orError $ findObjs' c
   return bs
 
 -- | Get PDF objects each parsed as 'PDFObj' without being sorted. 
@@ -75,7 +76,7 @@ getPDFObjFromFile f password = do
   case loadSecurity c password of
     Nothing -> error "Encrypted PDF: invalid or missing password"
     Just msec ->
-      let objs = indexPDFObjs $ expandObjStm msec $ map (parsePDFObj msec) $ findObjs' c
+      let objs = indexPDFObjs $ orError $ expandObjStm msec $ map (parsePDFObj msec) $ orError $ findObjs' c
       in return (objs, msec)
 
 -- | Get a PDF object from a whole 'PDFObj' by specifying `ref :: Int`
@@ -89,7 +90,7 @@ getObjectByRef ref pdfobjs = do
 -- | Get a PDF stream from a whole 'PDFObj' by specifying `ref :: Int`
 
 getStream :: Maybe Security -> Int -> Bool -> [Obj] -> IO BSL.ByteString
-getStream sec objNum hex obj = return $ showBSL hex $ rawStream sec objNum obj
+getStream sec objNum hex obj = return $ showBSL hex $ orError $ rawStream sec objNum obj
 
 showBSL hex s =
   let strm' = (B.toLazyByteString . B.lazyByteStringHex) s
@@ -102,7 +103,7 @@ showBSL hex s =
 getRootRef :: FilePath -> IO Int
 getRootRef filename = do
   c <- BS.readFile filename
-  let n = rootRef c
+  let n = orError $ rootRef c
   case n of
     Just i -> return i
     Nothing -> error "Could not find rood object"
@@ -123,8 +124,8 @@ getTrailer :: FilePath -> IO Dict
 getTrailer filename = do
   c <- BS.readFile filename
   case findTrailer c of
-    Just d -> return d
-    Nothing -> return []
+    Right d -> return d
+    Left _ -> return []
 
 -- | /Info of `filename`.
 
@@ -135,13 +136,13 @@ getInfo filename password = do
     Nothing -> error "Encrypted PDF: invalid or missing password"
     Just s -> return s
   trailer <- case findTrailer c of
-    Just d -> return d
-    Nothing -> error "Could not find trailer"
+    Right d -> return d
+    Left _ -> error "Could not find trailer"
   let inforef = case findObjFromDict trailer "/Info" of
                   Just (ObjRef ref) -> ref
                   Just _ -> error "There seems to be no Info"
                   Nothing -> error "There seems to be no Info"
-  case find ((== inforef) . fst) (findObjs' c) of
+  case find ((== inforef) . fst) (orError $ findObjs' c) of
     Just objbs -> case findDict $ snd $ parsePDFObj msec objbs of
       Just d -> return d
       Nothing -> getInfoFromIndex c msec inforef
@@ -149,7 +150,7 @@ getInfo filename password = do
 
 getInfoFromIndex :: BS.ByteString -> Maybe Security -> Int -> IO Dict
 getInfoFromIndex c msec inforef = do
-  let objs = indexPDFObjs $ expandObjStm msec $ map (parsePDFObj msec) $ findObjs' c
+  let objs = indexPDFObjs $ orError $ expandObjStm msec $ map (parsePDFObj msec) $ orError $ findObjs' c
   case findDictByRef inforef objs of
     Just d -> return d
     Nothing -> error "Could not get info object"
