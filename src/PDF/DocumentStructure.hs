@@ -173,18 +173,58 @@ rawStream objs = case find isStream objs of
     isStream _             = False
 
     rawStream' :: Dict -> BSL.ByteString -> BSL.ByteString
-    rawStream' d s = streamFilter d s
+    rawStream' d s = BSL.fromStrict $ decodeStreamBytes d s
 
-    streamFilter d = case find withFilter d of
-      Just (PdfName "/Filter", PdfName "/FlateDecode")
-        -> decompress
-      Just (PdfName "/Filter", PdfName f)
-        -> error $ "Unknown Stream Compression: " ++ f -- need fix
-      Just _ -> error $ "No Stream Compression Filter."
-      Nothing -> id
+decodeStreamBytes :: Dict -> BSL.ByteString -> BS.ByteString
+decodeStreamBytes d s =
+  applyPredictor d $ BSL.toStrict $ case find isFilter d of
+    Just (PdfName "/Filter", PdfName "/FlateDecode") -> decompress s
+    Nothing -> s
+    Just (PdfName "/Filter", PdfName f) ->
+      error $ "Unknown Stream Compression: " ++ f
+    Just _ -> error "No Stream Compression Filter."
+  where
+    isFilter (PdfName "/Filter", _) = True
+    isFilter _                      = False
 
-    withFilter (PdfName "/Filter", _) = True
-    withFilter _                      = False
+applyPredictor :: Dict -> BS.ByteString -> BS.ByteString
+applyPredictor d bs = case findObjFromDict d "/DecodeParms" of
+  Just (PdfDict parms) ->
+    case findObjFromDict parms "/Predictor" of
+      Just (PdfNumber p) | truncate p >= 12 ->
+        case findObjFromDict parms "/Columns" of
+          Just (PdfNumber c) -> decodePNGPredictors bs (truncate c)
+          _ -> bs
+      _ -> bs
+  _ -> bs
+
+decodePNGPredictors :: BS.ByteString -> Int -> BS.ByteString
+decodePNGPredictors bs columns = go BS.empty bs
+  where
+    go _ rest | BS.null rest = BS.empty
+    go prev rest =
+      let filt = BS.head rest
+          enc  = BS.take columns (BS.drop 1 rest)
+          rest' = BS.drop (1 + columns) rest
+          prevRow = if BS.null prev then BS.replicate columns (chr 0) else prev
+          row = pngFilter filt enc prevRow
+      in BS.append row (go row rest')
+
+pngFilter :: Char -> BS.ByteString -> BS.ByteString -> BS.ByteString
+pngFilter filt row prev
+  | ord filt == 0 = row
+  | ord filt == 1 = pngSub row
+  | ord filt == 2 = pngUp row prev
+  | otherwise = error $ "unsupported PNG predictor " ++ show (ord filt)
+
+pngUp :: BS.ByteString -> BS.ByteString -> BS.ByteString
+pngUp row prev = BS.pack $ zipWith addByte (BS.unpack row) (BS.unpack prev)
+  where addByte a b = chr ((ord a + ord b) `mod` 256)
+
+pngSub :: BS.ByteString -> BS.ByteString
+pngSub row =
+  BS.pack $ snd $ foldl' (\(prev, out) x ->
+    let n = (ord x + prev) `mod` 256 in (n, out ++ [chr n])) (0, []) (BS.unpack row)
 
 contentsColorSpace :: Dict -> PSR -> [PDFObj] -> [T.Text]
 contentsColorSpace dict st objs = case find contents dict of
@@ -260,10 +300,22 @@ findTrailer' bs = case BS.breakEnd (== '\n') bs of
         Nothing -> Just $ (dict, Map.union xref sofar)
 
 findTrailerDictXREF :: BS.ByteString -> (Dict, XREF)
-findTrailerDictXREF xrefTrailer = case BS.breakSubstring "trailer" xrefTrailer of
+findTrailerDictXREF xrefTrailer =
+  let trimmed = BS.dropWhile isPdfSpace xrefTrailer
+  in case BS.take 4 trimmed of
+       "xref" -> findTrailerDictXREFTable xrefTrailer
+       _      -> findTrailerDictXREFStream xrefTrailer
+
+findTrailerDictXREFTable :: BS.ByteString -> (Dict, XREF)
+findTrailerDictXREFTable xrefTrailer = case BS.breakSubstring "trailer" xrefTrailer of
   (xref, trailer) -> case parseOnly (pdfdictionary <* spaces) (BS.drop 7 trailer) of
     Left  err  -> error $ show (BS.take 100 trailer)
-    Right (PdfDict dict) -> (dict, parseXrefBlob xref)
+    Right (PdfDict dict) -> (dict, parseXref xref)
+
+findTrailerDictXREFStream :: BS.ByteString -> (Dict, XREF)
+findTrailerDictXREFStream blob = case parseOnly xrefStreamObject blob of
+  Left err  -> error $ "xref stream: " ++ show err ++ ": " ++ show (BS.take 80 blob)
+  Right (dict, s) -> (dict, xrefStreamToMap dict s)
 
 parseXrefBlob :: BS.ByteString -> XREF
 parseXrefBlob bs =
@@ -298,7 +350,7 @@ xrefStreamToMap :: Dict -> BSL.ByteString -> XREF
 xrefStreamToMap dict s =
   let ws = wFields dict
       sections = indexSections dict
-      raw = BSL.toStrict $ rawStream [PdfDict dict, PdfStream s]
+      raw = decodeStreamBytes dict s
       entries = xrefStreamEntries ws sections raw
   in Map.fromList $ [(n, off) | (n, typ, off) <- entries, typ == 1]
 
