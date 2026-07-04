@@ -7,6 +7,7 @@ module PDF.Text
   ) where
 
 import PDF.Definition
+import PDF.Error (orError)
 import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Encrypt (Security)
@@ -50,6 +51,6 @@ walkdown st parent sec objs =
           Just kidsrefs -> BSL.concat $ map ((\f -> f sec objs) . (walkdown st)) kidsrefs
           Nothing -> ""
         Nothing -> case findDictOfType "/Page" os of
-          Just dict -> contentsStream dict st sec objs
+          Just dict -> orError $ contentsStream dict st sec objs
           Nothing -> ""
     Nothing -> ""

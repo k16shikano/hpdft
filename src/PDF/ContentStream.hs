@@ -14,8 +14,9 @@ import qualified Data.Map as Map
 
 import GHC.Word (Word8)
 import qualified Data.ByteString as B (pack)
-import qualified Data.ByteString.Lazy.Char8 as BSLC (ByteString, pack)
+import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Char8 as BSSC (unpack)
+import qualified Data.ByteString.Lazy.Char8 as BSLC (ByteString, pack)
 import qualified Data.ByteString.Lazy.UTF8 as BSLU (toString)
 import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8, decodeUtf16BE)
@@ -24,30 +25,29 @@ import Text.Parsec hiding (many, (<|>))
 import Text.Parsec.ByteString.Lazy
 import Control.Applicative
 
-import Debug.Trace
-
 import PDF.Definition
 import PDF.Object
 import PDF.Character (pdfcharmap, extendedAscii, adobeJapanOneSixMap)
+import PDF.Error (PdfError(..), PdfResult)
 
 type PSParser a = GenParser Char PSR a
 
 parseContentStream p st = runParser p st ""
 
-parseStream :: PSR -> PDFStream -> PDFStream
+parseStream :: PSR -> PDFStream -> PdfResult PDFStream
 parseStream psr pdfstream = 
   case parseContentStream (T.concat <$> (spaces >> many (try elems <|> skipOther))) psr pdfstream of
-    Left  err -> error $ "Nothing to be parsed: " ++ (show err) 
-    Right str -> BSLC.pack $ BSSC.unpack $ encodeUtf8 str
+    Left  err -> Left (ParseError ("content stream: " ++ show err) BS.empty)
+    Right str -> Right $ BSLC.pack $ BSSC.unpack $ encodeUtf8 str
 
-parseColorSpace :: PSR -> BSLC.ByteString -> [T.Text]
+parseColorSpace :: PSR -> BSLC.ByteString -> PdfResult [T.Text]
 parseColorSpace psr pdfstream = 
   case parseContentStream (many (choice [ try colorSpace
                                         , try $ T.concat <$> xObject
                                         , (T.empty <$ elems)
                                         ])) psr pdfstream of
-    Left  err -> error "Nothing to be parsed"
-    Right str -> str
+    Left  err -> Left (ParseError ("color space: " ++ show err) BS.empty)
+    Right str -> Right str
 
 
 -- | Parsers for Content Stream
@@ -413,7 +413,7 @@ cidletter cidmapName = do
   return $
     if cidmapName == "Adobe-Japan1"
     then adobeOneSix d
-    else error $ "Unknown cidmap" ++ cidmapName
+    else adobeOneSix d
 
 octnum :: PSParser Int
 octnum = do
@@ -424,7 +424,7 @@ octnum = do
   return $ d
   where
     octToDec [(o, "")] = o
-    octToDec _ = error "Unable to take Character in Octet"
+    octToDec _ = ord '?'
     escapedToDec 'n' = ord '\n'
     escapedToDec 'r' = ord '\r'
     escapedToDec 't' = ord '\t'

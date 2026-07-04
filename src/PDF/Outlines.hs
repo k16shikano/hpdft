@@ -14,8 +14,6 @@ module PDF.Outlines
        ( getOutlines
        ) where
 
-import Debug.Trace
-
 import Data.List (find)
 import Data.Attoparsec.ByteString hiding (inClass, notInClass, satisfy)
 import Data.Attoparsec.ByteString.Char8
@@ -24,6 +22,7 @@ import qualified Data.ByteString.Char8 as BS
 
 import PDF.Definition hiding (toString)
 import PDF.DocumentStructure
+import PDF.Error (PdfError(..), PdfResult, note)
 import PDF.Object (parseRefsArray, parsePdfLetters)
 import PDF.PDFIO
 
@@ -42,92 +41,125 @@ toString depth PDFOutlinesEntry {dest=d, text=t, subs=s} = (replicate depth ' ' 
 toString depth (PDFOutlinesTree os) = concatMap (toString depth) os
 toString depth PDFOutlinesNE = ""
 
--- | Get information of \/Outlines from 'filename'
-
-getOutlines :: FilePath -> Maybe String -> IO PDFOutlines
+getOutlines :: FilePath -> Maybe String -> IO (PdfResult PDFOutlines)
 getOutlines filename password = do
-  dict <- outlineObjFromFile filename password
-  (objs, _) <- getPDFObjFromFile filename password  
-  firstref <- case findFirst dict of
-    Just r -> return r
-    Nothing -> error "No top level outline entry."
-  firstdict <- case findObjsByRef firstref objs of
-    Just [PdfDict d] -> return d
-    Just s -> error $ "Unknown Object: " ++ show s
-    Nothing -> error $ "No Object with Ref " ++ show firstref
-  return $ gatherOutlines firstdict objs
+  edict <- outlineObjFromFile filename password
+  case edict of
+    Left err -> return (Left err)
+    Right dict -> do
+      (objs, _) <- getPDFObjFromFile filename password
+      case findFirst dict of
+        Nothing -> return $ Left (MissingKey "/First" "outlines")
+        Just firstref -> case findObjsByRef firstref objs of
+          Just [PdfDict d] -> return $ gatherOutlines d objs
+          Just s -> return $ Left (ParseError ("Unknown outline object: " ++ show s) BS.empty)
+          Nothing -> return $ Left (MissingObject firstref)
 
+gatherChildren :: Dict -> PDFObjIndex -> PdfResult PDFOutlines
 gatherChildren dict objs = case findFirst dict of
   Just r -> case findObjsByRef r objs of
     Just [PdfDict d] -> gatherOutlines d objs
-    Just s -> error $ "Unknown Object at " ++ show r
-    Nothing -> error $ "No Object with Ref " ++ show r
-  Nothing -> PDFOutlinesNE
+    Just s -> Left (ParseError ("Unknown outline child: " ++ show s) BS.empty)
+    Nothing -> Left (MissingObject r)
+  Nothing -> Right PDFOutlinesNE
 
-gatherOutlines dict objs =
-  let c = gatherChildren dict objs
-  in case findNext dict of 
+gatherOutlines :: Dict -> PDFObjIndex -> PdfResult PDFOutlines
+gatherOutlines dict objs = do
+  c <- gatherChildren dict objs
+  dest <- destPage dict objs
+  title <- findTitle dict objs
+  case findNext dict of
     Just r -> case findObjsByRef r objs of
-      Just [PdfDict d] -> PDFOutlinesTree (PDFOutlinesEntry { dest = head $ findDest dict
-                                                            , text = findTitle dict objs ++ "\n"
-                                                            , subs = c}
-                                           : [gatherOutlines d objs])
-      Just s -> error $ "Unknown Object at " ++ show r
-      Nothing -> error $ "No Object with Ref " ++ show r
-    Nothing -> PDFOutlinesEntry { dest = head $ findDest dict
-                                , text = findTitle dict objs ++ "\n"
-                                , subs = c}
+      Just [PdfDict d] -> do
+        next <- gatherOutlines d objs
+        return $ PDFOutlinesTree (PDFOutlinesEntry { dest = dest
+                                                   , text = title ++ "\n"
+                                                   , subs = c}
+                                  : [next])
+      Just s -> Left (ParseError ("Unknown outline sibling: " ++ show s) BS.empty)
+      Nothing -> Left (MissingObject r)
+    Nothing -> return $ PDFOutlinesEntry { dest = dest
+                                         , text = title ++ "\n"
+                                         , subs = c}
 
-outlines :: Dict -> Int
-outlines dict = case find isOutlinesRef dict of
-  Just (_, ObjRef x) -> x
-  Just s -> error $ "Unknown Object: " ++ show s
-  Nothing            -> error "There seems no /Outlines in the root"
+destPage :: Dict -> PDFObjIndex -> PdfResult Int
+destPage dict objs =
+  note (MissingKey "/Dest" "outline") $ listToMaybe $ findDest dict objs
+
+findDest :: Dict -> PDFObjIndex -> [Int]
+findDest dict objs =
+  case findObjFromDict dict "/Dest" of
+    Just o -> destFromObj o
+    Nothing -> case findObjFromDict dict "/A" of
+      Just (ObjRef r) -> actionDest r objs
+      Just (PdfDict d) -> destFromAction d
+      _ -> []
+
+destFromObj :: Obj -> [Int]
+destFromObj (PdfArray a) = parseRefsArray a
+destFromObj (ObjRef r)   = [r]
+destFromObj (PdfNumber n)| truncate n >= 0 = [truncate n]
+destFromObj _            = []
+
+actionDest :: Int -> PDFObjIndex -> [Int]
+actionDest r objs = case findObjsByRef r objs of
+  Just (PdfDict d : _) -> destFromAction d
+  _ -> []
+
+destFromAction :: Dict -> [Int]
+destFromAction d = case findObjFromDict d "/D" of
+  Just o -> destFromObj o
+  Nothing -> []
+
+outlinesRef :: Dict -> PdfResult Int
+outlinesRef dict = case find isOutlinesRef dict of
+  Just (_, ObjRef x) -> Right x
+  Just s -> Left (ParseError ("Unknown /Outlines: " ++ show s) BS.empty)
+  Nothing -> Left (MissingKey "/Outlines" "root")
   where
     isOutlinesRef (PdfName "/Outlines", ObjRef x) = True
     isOutlinesRef (_,_)                           = False
 
-outlineObjFromFile :: String -> Maybe String -> IO Dict
+outlineObjFromFile :: String -> Maybe String -> IO (PdfResult Dict)
 outlineObjFromFile filename password = do
   (objs, _) <- getPDFObjFromFile filename password
   rootref <- getRootRef filename
-  rootobj <- case findObjsByRef rootref objs of
-    Just os -> return os
-    Nothing -> error "Could not get root object."
-  outlineref <- case findDict rootobj of
-    Just dict -> return $ outlines dict
-    Nothing   -> error "Something wrong..."
-  case findObjsByRef outlineref objs of
-    Just [PdfDict d] -> return d
-    Just s -> error $ "Unknown Object: " ++ show s
-    Nothing -> error "Could not get outlines object"
+  case findObjsByRef rootref objs of
+    Nothing -> return $ Left (MissingObject rootref)
+    Just rootobj -> case findDict rootobj of
+      Nothing -> return $ Left (ParseError "root is not a dictionary" BS.empty)
+      Just dict -> case outlinesRef dict of
+        Left err -> return (Left err)
+        Right outlineref -> case findObjsByRef outlineref objs of
+          Just [PdfDict d] -> return (Right d)
+          Just s -> return $ Left (ParseError ("Unknown outlines object: " ++ show s) BS.empty)
+          Nothing -> return $ Left (MissingObject outlineref)
 
-findTitle dict objs = 
+findTitle :: Dict -> PDFObjIndex -> PdfResult String
+findTitle dict objs =
   case findObjFromDict dict "/Title" of
     Just (PdfText s) -> case parseOnly parsePdfLetters (BS.pack s) of
-      Right t -> t
-      Left err -> s
+      Right t -> Right t
+      Left _  -> Right s
     Just (ObjRef r) -> case findObjsByRef r objs of
-      Just [PdfText s] -> s
-      Just s -> error $ "Unknown Object at " ++ show r
-      Nothing -> error $ "No title object in " ++ show r
-    Just x -> show x
-    Nothing -> error "No title object."
+      Just [PdfText s] -> Right s
+      Just s -> Left (ParseError ("Unknown title object: " ++ show s) BS.empty)
+      Nothing -> Left (MissingObject r)
+    Just x -> Right (show x)
+    Nothing -> Left (MissingKey "/Title" "outline")
 
-findDest dict = 
-  case findObjFromDict dict "/Dest" of
-    Just (PdfArray a) -> parseRefsArray a
-    Just s -> error $ "Unknown Object: " ++ show s
-    Nothing -> error "No destination object."
+listToMaybe :: [a] -> Maybe a
+listToMaybe (x:_) = Just x
+listToMaybe []    = Nothing
 
-findNext dict = 
+findNext :: Dict -> Maybe Int
+findNext dict =
   case findObjFromDict dict "/Next" of
     Just (ObjRef x) -> Just x
-    Just s -> error $ "Unknown Object: " ++ show s
-    Nothing -> Nothing
+    _ -> Nothing
 
+findFirst :: Dict -> Maybe Int
 findFirst dict =
   case findObjFromDict dict "/First" of
     Just (ObjRef x) -> Just x
-    Just s -> error $ "Unknown Object: " ++ show s
-    Nothing -> Nothing
+    _ -> Nothing

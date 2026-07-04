@@ -19,8 +19,6 @@ import Data.Attoparsec.Combinator
 
 import Control.Applicative
 
-import Debug.Trace
-
 import PDF.Definition
 
 test f = do
@@ -34,7 +32,7 @@ noneOf = satisfy . notInClass
 encoding :: ByteString -> Encoding
 encoding c = case parseOnly encodingArray c of
   Right ss -> Encoding ss
-  Left e -> error "Can not find /Encoding in the Type1 Font"
+  Left _   -> NullMap
 
 encodingArray :: Parser [(Char,String)]
 encodingArray = do

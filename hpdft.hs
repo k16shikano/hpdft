@@ -12,8 +12,11 @@ import PDF.PDFIO
 import PDF.Outlines
 import PDF.Encrypt (Security)
 import PDF.Text (initstate, pdfToTextBS)
+import PDF.Error (orError)
 
 import System.Environment (getArgs)
+import System.Exit (exitWith, ExitCode(..))
+import System.IO (hPutStrLn, stderr)
 
 import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
@@ -35,8 +38,6 @@ import PDF.Definition (Obj(PdfStream))
 
 import qualified Paths_hpdft as Autogen (version)
 import Data.Version (showVersion)
-
-import Debug.Trace
 
 main :: IO ()
 main = hpdft =<< execParser opts
@@ -182,7 +183,7 @@ contentByRefObjs sec objs ref = do
   BSL.putStrLn $ contentInObject sec obj objs
   where contentInObject sec' obj' objs' =
           case findDictOfType "/Page" obj' of
-            Just dict -> contentsStream dict initstate sec' objs'
+            Just dict -> orError $ contentsStream dict initstate sec' objs'
             Nothing -> ""
 
 contentByRef filename mpw ref = do
@@ -239,9 +240,12 @@ showInfo filename mpw = do
 -- | Show /Outlines from meta information in 'filename'
 
 showOutlines filename mpw = do
-  d <- getOutlines filename mpw
-  putStrLn $ show d
-  return ()
+  result <- getOutlines filename mpw
+  case result of
+    Right d -> putStrLn $ show d
+    Left e -> do
+      hPutStrLn stderr (show e)
+      exitWith (ExitFailure 1)
 
 -- | Find string in each page.
 
@@ -257,7 +261,7 @@ grepPDF filename mpw re = do
     contentInObjs sec' objs' ref =
       case findObjsByRef ref objs' of
         Just obj -> case findDictOfType "/Page" obj of
-                      Just dict -> contentsStream dict initstate sec' objs'
+                      Just dict -> orError $ contentsStream dict initstate sec' objs'
                       Nothing -> ""
         Nothing -> error $ "No Object with Ref " ++ show ref
 

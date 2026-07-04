@@ -6,7 +6,8 @@ module PDF.Cmap
 
 import Data.Char (chr)
 import Data.List (intercalate)
-import Numeric (readOct, readHex)
+import Data.Maybe (mapMaybe)
+import Numeric (readHex)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
@@ -18,8 +19,6 @@ import Text.Parsec hiding (many, (<|>))
 import Control.Applicative
 import Text.Parsec.ByteString.Lazy
 import Codec.Compression.Zlib (decompress) 
-
-import Debug.Trace
 
 import PDF.Definition
 
@@ -42,6 +41,10 @@ parseCMap str
   where
     mkUniq = reverse
 
+readHexSafe :: String -> Maybe Int
+readHexSafe s = case readHex s of
+  [(n, "")] -> Just n
+  _         -> Nothing
 
 skipHeader :: Parser ()
 skipHeader = do
@@ -59,8 +62,14 @@ bfchar = do
   spaces
   string "endbfchar"
   spaces
-  return ms
-    where toCmap cid ucs = ((fst.head.readHex) cid, ((:[]).chr.fst.head.readHex) $ take 4 ucs)
+  return $ concatMap maybeToList ms
+    where
+      maybeToList Nothing = []
+      maybeToList (Just x) = [x]
+      toCmap cid ucs =
+        case (readHexSafe cid, readHexSafe (take 4 ucs)) of
+          (Just c, Just u) -> Just (c, [chr u])
+          _                -> Nothing
 
 bfrange :: Parser [CMap]
 bfrange = do
@@ -74,13 +83,20 @@ bfrange = do
   spaces
   string "endbfrange"
   spaces
-  return $ ms
+  return ms
     where 
-      gethex = fst.head.readHex
-      getRange cid cid' = [gethex cid .. gethex cid']
-      mkStrList d src = if (length src) == 1
-                        then [gethex $ head src .. ]
-                        else map gethex src
+      gethex = readHexSafe
+      getRange cid cid' =
+        case (gethex cid, gethex cid') of
+          (Just a, Just b) -> [a .. b]
+          _                -> []
+      mkStrList d src = if length src == 1
+                        then case src of
+                               (s:_) -> case gethex s of
+                                          Just n -> [n .. ]
+                                          Nothing -> []
+                               [] -> []
+                        else mapMaybe gethex src
       toCmap range ucs = zip range (map ((:[]).chr) ucs)
 
 

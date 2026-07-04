@@ -33,7 +33,7 @@ import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf16BEWith)
 import Data.Text.Encoding.Error (strictDecode)
-import Numeric (readOct, readHex)
+import Numeric (readOct, readHex, readDec)
 import Data.ByteString.Builder (toLazyByteString, word16BE)
 
 import Data.Attoparsec.ByteString.Char8 hiding (take, skipWhile, takeTill)
@@ -47,6 +47,16 @@ import Data.Word (Word8)
 
 import PDF.Definition
 import PDF.Encrypt (Security, decryptString, decryptStream)
+
+octalCharSafe :: String -> Char
+octalCharSafe ds = case readOct ds of
+  [(n, "")] -> chr n
+  _         -> '?'
+
+hexCharSafe :: String -> Char
+hexCharSafe s = case readHex s of
+  [(n, "")] -> chr n
+  _         -> '?'
 
 spaces = many (comment <|> pdfspaces)
 oneOf = satisfy . inClass
@@ -68,12 +78,14 @@ pdfObj = do
 objectHeader :: Parser Int
 objectHeader = do
   spaces
-  objn <- read <$> many1 digit
+  objnStr <- many1 digit
   spaces
   _ <- many1 digit
   string " obj"
   spaces
-  return objn
+  case readDec objnStr of
+    [(n, "")] -> return n
+    _         -> fail ("invalid object number: " ++ objnStr)
 
 sliceOneObject :: BS.ByteString -> Maybe ((Int, BS.ByteString), BS.ByteString)
 sliceOneObject bs = case AP.parse objectSlice bs of
@@ -194,7 +206,7 @@ pdfLiteralBytes = BS.pack <$> (char '(' *> manyTill pdfEscapedChar (char ')'))
       , noneOf "\\"
       , '\\' <$ string "\\"
       ]
-    octChar = chr . fst . head . readOct
+    octChar = octalCharSafe
 
 pdfhexSec :: Maybe Security -> Int -> Parser Obj
 pdfhexSec sec objNum = hexSec sec objNum
@@ -213,7 +225,7 @@ decodeHexBytes :: BS.ByteString -> BS.ByteString
 decodeHexBytes bs =
   let hex = filter (`elem` ("0123456789abcdefABCDEF" :: String)) (BS.unpack bs)
       pairs = [ take 2 (drop i hex) | i <- [0,2..length hex - 1], i + 1 < length hex ]
-      hexByte s = chr (fst (head (readHex s)))
+      hexByte s = hexCharSafe s
   in BS.pack $ map hexByte pairs
 
 lookupDictInt :: Dict -> String -> Maybe Int
@@ -334,7 +346,7 @@ parsePdfLetters = concat <$> (char '(' *>
                  , "" <$ string "\\"
                  ]
 
-        octal = return . chr . fst . head . readOct
+        octal = return . octalCharSafe
         
         pdfutf :: Parser String
         pdfutf = do 
@@ -377,7 +389,9 @@ pdfhexletter s = case parseOnly (concat <$> many1 pdfhexutf16be) s of
 pdfhexutf16be :: Parser String
 pdfhexutf16be = do
   c <- count 4 $ oneOf "0123456789ABCDEFabcdef"
-  let b = BSL.unpack . toLazyByteString . word16BE $ fst . head . readHex $ c
+  let b = case readHex c of
+        [(n, "")] -> BSL.unpack . toLazyByteString . word16BE $ n
+        _         -> "?"
   return $ b
 
 pdfbool :: Parser Obj
@@ -399,7 +413,9 @@ rrefs = do
   spaces
   string "R"
   spaces
-  return $ ObjRef (read objnum)
+  case readDec objnum of
+    [(n, "")] -> return $ ObjRef n
+    _         -> fail ("invalid object reference: " ++ objnum)
 
 objother :: Parser Obj
 objother = ObjOther . show <$> (W.takeTill (\w-> w == 10 || w == 13) <* (W.word8 10 <|> W.word8 13))

@@ -45,8 +45,6 @@ import Codec.Compression.Zlib (decompress)
 import qualified Data.Map as Map
 import Data.Map (Map)
 
-import Debug.Trace
-
 import PDF.Definition
 import PDF.Object
 import PDF.Error (PdfError(..), PdfResult, orError)
@@ -142,24 +140,26 @@ findKids dict = case find isKidsRefs dict of
     isKidsRefs (PdfName "/Kids", PdfArray x) = True
     isKidsRefs (_,_)                         = False
 
-contentsStream :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> PDFStream
+contentsStream :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> PdfResult PDFStream
 contentsStream dict st sec objs = case find contents dict of
   Just (PdfName "/Contents", PdfArray arr) -> getContentArray arr
   Just (PdfName "/Contents", ObjRef r) ->
     case findObjsByRef r objs of
       Just [PdfArray arr] -> getContentArray arr
       Just _ -> getContent r
-      Nothing -> error "No content to be shown"
-  Nothing -> error "No content to be shown"
+      Nothing -> Left (MissingKey "/Contents" (show r))
+  Nothing -> Left (MissingKey "/Contents" "page")
   where
     contents (PdfName "/Contents", _) = True
     contents _ = False
 
     getContentArray arr = parseContentStream dict st sec objs $
                           BSL.concat $ map (orError . rawStreamByRef sec objs) (parseRefsArray arr)
-    getContent r = parseContentStream dict st sec objs $ orError $ rawStreamByRef sec objs r
+    getContent r = do
+      s <- rawStreamByRef sec objs r
+      parseContentStream dict st sec objs s
 
-parseContentStream :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> BSL.ByteString -> PDFStream
+parseContentStream :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> BSL.ByteString -> PdfResult PDFStream
 parseContentStream dict st sec objs s = 
   parseStream (st {fontmaps=fontdict, cmaps=cmap}) s
   where fontdict = findFontEncoding dict sec objs
@@ -239,15 +239,20 @@ pngSub row =
   BS.pack $ snd $ foldl' (\(prev, out) x ->
     let n = (ord x + prev) `mod` 256 in (n, out ++ [chr n])) (0, []) (BS.unpack row)
 
-contentsColorSpace :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> [T.Text]
+contentsColorSpace :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> PdfResult [T.Text]
 contentsColorSpace dict st sec objs = case find contents dict of
-  Just (PdfName "/Contents", PdfArray arr) -> concat $ map (parseColorSpace (st {xcolorspaces=xobjcs}) . orError . rawStreamByRef sec objs) (parseRefsArray arr)
-  Just (PdfName "/Contents", ObjRef x)     -> parseColorSpace (st {xcolorspaces=xobjcs}) $ orError $ rawStreamByRef sec objs x
-  Nothing                                  -> error "No content to be shown"
+  Just (PdfName "/Contents", PdfArray arr) ->
+    Right $ concat $ map (orError . parseColorSpaceEntry) (parseRefsArray arr)
+  Just (PdfName "/Contents", ObjRef x) ->
+    parseColorSpaceEntry x
+  Nothing -> Left (MissingKey "/Contents" "page")
   where
     contents (PdfName "/Contents", _) = True
     contents _                        = False
     xobjcs = findXObjectColorSpace dict objs
+    parseColorSpaceEntry ref = do
+      s <- rawStreamByRef sec objs ref
+      parseColorSpace (st {xcolorspaces=xobjcs}) s
 
 
 -- find XObject
@@ -561,10 +566,15 @@ objStm sec (n, obj) = case findDictOfType "/ObjStm" obj of
   
 refOffset :: Parser ([(Int, Int)], String)
 refOffset = spaces *> ((,) 
-                       <$> many1 ((\r o -> (read r :: Int, read o :: Int))
-                                  <$> (many1 digit <* spaces) 
-                                  <*> (many1 digit <* spaces))
+                       <$> many1 refPair
                        <*> many1 anyChar)
+  where
+    refPair = do
+      rStr <- many1 digit <* spaces
+      oStr <- many1 digit <* spaces
+      case (readDec rStr, readDec oStr) of
+        ([(r, "")], [(o, "")]) -> return (r, o)
+        _ -> fail "invalid object stream reference"
 
 pdfObjStm n s =
   case parseOnly refOffset s of
@@ -599,15 +609,15 @@ fontObjs dict objs = case findResourcesDict dict objs of
     Just (PdfDict d') -> d'
     Just (ObjRef x) -> case findDictByRef x objs of
                          Just d' -> d'
-                         otherwise -> error "cannot find /Font dictionary"
-    otherwise -> trace (show d) $ []
+                         _       -> []
+    _ -> []
   Nothing -> []
 
 findResourcesDict :: Dict -> PDFObjIndex -> Maybe Dict
 findResourcesDict dict objs = case find resources dict of
   Just (_, ObjRef x)  -> findDictByRef x objs
   Just (_, PdfDict d) -> Just d
-  otherwise -> error (show dict)
+  _ -> Nothing
   where
     resources (PdfName "/Resources", _) = True
     resources _                         = False
@@ -619,16 +629,15 @@ encoding sec x objs = case subtype of
     Just (PdfName "/Identity-H") -> case cidSysInfo descendantFonts of
       (e:_) -> e
       []    -> NullMap
-    -- TODO" when /Encoding is stream of CMap
-    Just (PdfName s) -> error $ "Unknown Encoding " ++ (show s) ++ " for a Type0 font. Check " ++ show x
-    _ -> error $ "Something wrong with a Type0 font. Check " ++ (show x)
+    Just (PdfName _) -> NullMap
+    _ -> NullMap
   Just (PdfName "/Type1") -> case encoding of
     Just (ObjRef r) -> case findObjFromDictWithRef r "/Differences" objs of
                      Just (PdfArray arr) -> charDiff arr
-                     _ -> error "No /Differences"
+                     _ -> NullMap
     Just (PdfDict d) -> case findObjFromDict d "/Differences" of
                      Just (PdfArray arr) -> charDiff arr
-                     _ -> error "No /Differences"
+                     _ -> NullMap
     Just (PdfName "/MacRomanEncoding") -> NullMap
     Just (PdfName "/MacExpertEncoding") -> NullMap
     Just (PdfName "/WinAnsiEncoding") -> NullMap
@@ -674,8 +683,8 @@ encoding sec x objs = case subtype of
       Just (PdfDict dict) -> getCIDSystemInfo dict
       Just (ObjRef r) -> case findDictByRef r objs of
                            Just dict -> getCIDSystemInfo dict
-                           _ -> error $ "Can not find /CIDSystemInfo entries in" ++ show r
-      _ -> error $ "Can not find /CidSystemInfo itself " ++ show dfr
+                           _ -> WithCharSet ""
+      _ -> WithCharSet ""
 
     fontDescriptor :: [Obj] -> [Dict]
     fontDescriptor [] = []
@@ -690,14 +699,11 @@ encoding sec x objs = case subtype of
     getCIDSystemInfo d =
       let registry = case findObjFromDict d "/Registry" of
                        Just (PdfText r) -> r
-                       otherwise -> error "Can not find /Registry"
+                       _ -> ""
           ordering = case findObjFromDict d "/Ordering" of
                        Just (PdfText o) -> o
-                       othserwise -> error "Can not find /Ordering"
-          supplement = case findObjFromDict d "/Supplement" of
-                         Just (PdfNumber s) -> s
-                         otherwise -> error "Can not find /Supprement"
-          cmap = registry ++ "-" ++ ordering -- ex. "Adobe-Japan1"
+                       _ -> ""
+          cmap = registry ++ "-" ++ ordering
       in if cmap == "Adobe-Japan1"
          then CIDmap cmap
          else WithCharSet ""
@@ -711,7 +717,8 @@ charDiff objs = Encoding $ charmap objs 0
           else 
             (chr $ i, n) : (charmap xs $ i+1)
         charmap (PdfName n : xs) i = (chr i, n) : (charmap xs $ i+1)
-        charmap [] i               = []
+        charmap (_:xs) i = charmap xs i
+        charmap [] _               = []
         incr x = (truncate x) + 1
 
 

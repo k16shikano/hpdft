@@ -18,8 +18,6 @@ import Data.Attoparsec.Combinator
 
 import Control.Applicative
 
-import Debug.Trace
-
 import PDF.Definition
 
 data Table = Table String Integer Integer
@@ -37,11 +35,12 @@ test f = do
 
 cmap :: ByteString -> CMap
 cmap c = case parseOnly (offsetTable >>= tableRecords) c of
-  Right b -> let b' = (takeCmap b)
-             in case parseOnly cmapEncRecords b' of
-                  Right records -> concatMap (subtable b') records
-                  Left e -> error e
-  Left e -> error e
+  Right b -> case takeCmap b of
+    Just b' -> case parseOnly cmapEncRecords b' of
+                 Right records -> concatMap (subtable b') records
+                 Left _          -> []
+    Nothing -> []
+  Left _ -> []
   where
     offsetTable = do
       sfntVersion
@@ -50,9 +49,9 @@ cmap c = case parseOnly (offsetTable >>= tableRecords) c of
       return $ fromIntegral n
 
     takeCmap ((Table "cmap" start end):_)
-      = BS.take (fromInteger end) $ BS.drop (fromInteger start) c
+      = Just $ BS.take (fromInteger end) $ BS.drop (fromInteger start) c
     takeCmap (_:rest) = takeCmap rest
-    takeCmap [] = error "no cmap"
+    takeCmap [] = Nothing
 
     cmapEncRecords =
       cmapVersion >>
@@ -64,7 +63,7 @@ subtable c (EncRecord pid eid offset) =
       format = fromBytes $ BS.take 2 body
   in case parseOnly (parserByFormat format) body of
        Right b -> b
-       Left e -> error e
+       Left _  -> []
 
 parserByFormat :: Integer -> Parser CMap
 parserByFormat 14 = do

@@ -20,8 +20,6 @@ import Data.Attoparsec.Combinator
 
 import Control.Applicative
 
-import Debug.Trace
-
 import PDF.Definition
 
 type SID = Integer
@@ -32,23 +30,27 @@ test f = do
 
 encoding :: ByteString -> Encoding
 encoding c =
-  Encoding $ map findEncodings $ zip charset encodings
+  case parseOnly (header >> index *> index) c of
+    Left _ -> NullMap
+    Right ds | null ds -> NullMap
+    Right ds ->
+      let encodings  = concatMap (parseEncoding c) ds
+          charset    = concatMap (parseCharset c) ds
+          strings    = case parseOnly stringInd c of
+                         Right arr -> arr
+                         Left _    -> []
+      in Encoding $ map (findEncodings strings) $ zip charset encodings
 
   where
-    ds = parseTopDictInd c
-    encodings  = concatMap (parseEncoding c) ds
-    charset = concatMap (parseCharset c) ds
-    fontname = concat $ map (parseFontname c) ds
-    strings = case parseOnly stringInd c of
-                Right arr -> arr
-                Left e -> error "Failed to parse STRING Index"
-
-    findEncodings :: (SID, Char) -> (Char, String)
-    findEncodings (char,enc) =
+    findEncodings strings (char,enc) =
       case char of
-        s | s > 390 -> (enc, stringToText $ strings !! fromInteger (char - 390 - 1))
+        s | s > 390 ->
+          let idx = fromInteger (char - 390 - 1)
+          in (enc, stringToText $ safeAt strings idx)
           | s > 95 -> (enc, sidToText s)
           | otherwise -> (enc, [enc])
+
+    safeAt xs i = if i >= 0 && i < length xs then xs !! i else ""
 
     -- defined in String INDEX of each font
     stringToText "a113" = "‡"
@@ -57,56 +59,59 @@ encoding c =
     stringToText x = "[CFF:String " <> x <> "]"
 
     -- pre-defined in Appendix C of CFF specs
-    sidToText n = [complementSID 0 predefinedChars !! fromInteger n]
+    sidToText n =
+      let i = fromInteger n
+          chars = complementSID 0 predefinedChars
+      in if i >= 0 && i < length chars then [chars !! i] else "?"
 
 parseTopDictInd :: ByteString -> [ByteString]
 parseTopDictInd c = case parseOnly (header >> index *> index) c of
   Right ds -> ds
-  Left e -> error "Can not find Top DICT INDEX"
+  Left _   -> []
 
 parseEncoding :: ByteString -> ByteString -> [Char]
 parseEncoding c d = case parseOnly (many1 dict) d of
-  -- '16' is key for 'Encoding' in Top DICT
   Right dictData -> case lookup [16] dictData of 
-    Just (DictInt 0:[]) -> [] -- Standard Encoding (not supported)
-    Just (DictInt 1:[]) -> [] -- Expert Encoding (not supported)
-    Just (DictInt n:[]) -> -- n is offset
-      case parseOnly encodingArray $ BS.drop n c of
+    Just (DictInt 0:[]) -> []
+    Just (DictInt 1:[]) -> []
+    Just (DictInt n:[]) ->
+      case parseOnly encodingArray $ BS.drop (fromIntegral n) c of
         Right arr -> map (chr . fromInteger) arr
-        Left e -> error "Failed to parse Encoding Array"
-    Just a -> error (show a)
-    Nothing -> error $ "No Encodind Array in " ++ show dictData
-  Left _ -> error "Failed to parse Top DICT in CFF"
+        Left _    -> []
+    Just _    -> []
+    Nothing   -> []
+  Left _ -> []
 
 parseFontname c d = case parseOnly (many1 dict) d of
   Right dictData -> case lookup [2] dictData of
     Just (DictInt n:[]) ->
       case parseOnly stringInd c of
-        Right arr -> arr !! (n - 390 - 1) -- 390 seems to be a magic number
-        Left e -> error "Failed to parse Fontname"
-    Just a -> error (show a)
-    Nothing -> error $ "No Fontname in " <> show dictData
-  Left _ -> error "Failed to parse Top DICT in CFF"
+        Right arr ->
+          let idx = fromIntegral n - 390 - 1
+          in if idx >= 0 && idx < length arr then [arr !! idx] else []
+        Left _ -> []
+    Just _    -> []
+    Nothing   -> []
+  Left _ -> []
 
 parseCharset c d = case parseOnly (many1 dict) d of
   Right dictData -> case lookup [15] dictData of
     Just (DictInt offset:[]) -> 
       case parseOnly (charsetData $ charStringsInd c dictData) $
-           BS.drop offset c of
+           BS.drop (fromIntegral offset) c of
         Right arr -> arr
-        Left _ -> error ""
-    Just a -> error (show a)
-    Nothing -> error $ "No Charset in " <> show dictData
-  Left _ -> error "Failed to parse Top DICT in CFF"
+        Left _    -> []
+    Just _    -> []
+    Nothing   -> []
+  Left _ -> []
 
 charStringsInd c dictData = 
   case lookup [17] dictData of
     Just (DictInt offset:[]) -> 
-      case parseOnly index (BS.drop offset c) of
-        Right [] -> error "failed to get CharStrings"
+      case parseOnly index (BS.drop (fromIntegral offset) c) of
         Right ind -> ind
-        Left "" -> error "failed to get CharStrings"
-    Nothing -> error $ "No CharStrings in " <> show dictData
+        Left _    -> []
+    Nothing -> []
 
 nameInd = map BSC.unpack <$> (header *> index)
 
@@ -134,7 +139,7 @@ encodingArray = do
     encodeObj :: Integer -> Int -> Parser [Integer]
     encodeObj 0 p = count (p - 1) (getCard 1)
     encodeObj 1 p = concat <$> count p getRange1
-    encodeObj _ p = error "CFF Supplement Format is not supported."
+    encodeObj _ _ = return []
 
     getRange1 :: Parser [Integer]
     getRange1 = do
@@ -175,7 +180,7 @@ dictOp = do
                  r <- many1 $ AP.satisfy (\w -> (240 .|. w) `xor` 255 /= 0)
                  f <- getCard 1
                  return $ DictReal $ readNibble r f
-             | otherwise = error (show b0)
+             | otherwise = fail (show b0)
     readNibble s1 s2 = 0
 
 dictKey :: Parser [Word8]
