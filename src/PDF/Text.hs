@@ -7,7 +7,7 @@ module PDF.Text
   ) where
 
 import PDF.Definition
-import PDF.Error (orError)
+import PDF.Error (PdfResult)
 import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Encrypt (Security)
@@ -33,11 +33,16 @@ initstate = PSR { linex=0
                 , xcolorspaces=[]
                 }
 
-pdfToTextBS :: FilePath -> Maybe String -> IO BSL.ByteString
+pdfToTextBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
 pdfToTextBS filename mpw = do
-  (objs, sec) <- getPDFObjFromFile filename mpw
-  rootref <- getRootRef filename
-  return $ walkdown initstate rootref sec objs
+  objResult <- getPDFObjFromFile filename mpw
+  case objResult of
+    Left err -> return (Left err)
+    Right (objs, sec) -> do
+      rootResult <- getRootRef filename
+      case rootResult of
+        Left err -> return (Left err)
+        Right rootref -> return (Right (walkdown initstate rootref sec objs))
 
 walkdown :: PSR -> Int -> Maybe Security -> PDFObjIndex -> PDFStream
 walkdown st parent sec objs =
@@ -51,6 +56,12 @@ walkdown st parent sec objs =
           Just kidsrefs -> BSL.concat $ map ((\f -> f sec objs) . (walkdown st)) kidsrefs
           Nothing -> ""
         Nothing -> case findDictOfType "/Page" os of
-          Just dict -> orError $ contentsStream dict st sec objs
+          Just dict -> pageContent dict st sec objs
           Nothing -> ""
     Nothing -> ""
+
+pageContent :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> PDFStream
+pageContent dict st sec objs =
+  case contentsStream dict st sec objs of
+    Right s -> s
+    Left _ -> ""

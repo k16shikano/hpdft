@@ -43,16 +43,19 @@ checkFixture pdf = do
   if not exists
     then return [name ++ ": FAIL (missing expected " ++ expectedPath ++ ")"]
     else do
-      actual <- pdfToTextBS pdf (Just "")
-      expected <- BSL.readFile expectedPath
-      let actualOut = BSLC.append actual "\n"
-      if actualOut == expected
-        then do
-          putStrLn $ name ++ ": OK"
-          return []
-        else do
-          putStrLn $ name ++ ": FAIL"
-          return [diffMessage name actualOut expected]
+      result <- pdfToTextBS pdf (Just "")
+      case result of
+        Left err -> return [name ++ ": FAIL (" ++ show err ++ ")"]
+        Right actual -> do
+          expected <- BSL.readFile expectedPath
+          let actualOut = BSLC.append actual "\n"
+          if actualOut == expected
+            then do
+              putStrLn $ name ++ ": OK"
+              return []
+            else do
+              putStrLn $ name ++ ": FAIL"
+              return [diffMessage name actualOut expected]
 
 diffMessage :: String -> BSL.ByteString -> BSL.ByteString -> String
 diffMessage name actual expected =

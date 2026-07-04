@@ -37,7 +37,7 @@ instance Show Obj where
   
 toString depth (PdfDict d) = concat $ map dictentry d
     where dictentry (PdfName n, o) = concat $ ["\n"] ++ replicate depth "  " ++ [n, ": ", toString (depth+1) o]
-          dictentry e = error $ "Illegular dictionary entry "++show e 
+          dictentry (k, o) = concat $ ["\n"] ++ replicate depth "  " ++ [toString depth k, ": ", toString (depth+1) o]
 toString depth (PdfText t) = t 
 --toString depth (PdfStream s) = "\n  " ++ (BSL.unpack $ decompress s)
 toString depth (PdfStream s) = "\n  " ++ (BSL.unpack $ s)

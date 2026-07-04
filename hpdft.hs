@@ -12,11 +12,13 @@ import PDF.PDFIO
 import PDF.Outlines
 import PDF.Encrypt (Security)
 import PDF.Text (initstate, pdfToTextBS)
-import PDF.Error (orError)
+import PDF.Error (PdfError(..), PdfResult)
 
 import System.Environment (getArgs)
 import System.Exit (exitWith, ExitCode(..))
 import System.IO (hPutStrLn, stderr)
+import System.IO.Error (isDoesNotExistError)
+import Control.Exception (catch, IOException, ioError, throwIO)
 
 import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
@@ -48,7 +50,33 @@ main = hpdft =<< execParser opts
 
 versionInfo = "hpdft - a PDF to text converter, version " <> showVersion Autogen.version
 
--- option parser
+describeError :: PdfError -> String
+describeError (ParseError msg _) = "parse error: " ++ msg
+describeError (BrokenXref msg) = "broken cross-reference: " ++ msg
+describeError (MissingObject n) = "missing object: " ++ show n ++ " 0 R"
+describeError (MissingKey key ctx) = "missing key " ++ key ++ " in " ++ ctx
+describeError (UnsupportedFeature msg) = "unsupported feature: " ++ msg
+describeError (DecryptionError msg) =
+  "cannot decrypt: " ++ msg ++ ". Use -P to supply a password."
+describeError (FontError n msg) = "font error in object " ++ show n ++ ": " ++ msg
+
+runOrDie :: IO (PdfResult a) -> IO a
+runOrDie action = do
+  result <- action
+  case result of
+    Right a -> return a
+    Left err -> do
+      hPutStrLn stderr ("hpdft: " ++ describeError err)
+      exitWith (ExitFailure 1)
+
+withFile :: FilePath -> IO () -> IO ()
+withFile fp action =
+  action `catch` \e -> do
+    if isDoesNotExistError (e :: IOException)
+      then do
+        hPutStrLn stderr ("hpdft: " ++ fp ++ ": does not exist")
+        exitWith (ExitFailure 1)
+      else ioError e
 
 data CmdOpt = CmdOpt {
   page :: Int,
@@ -114,37 +142,39 @@ options = CmdOpt
             <> action "file" )
 
 hpdft :: CmdOpt -> IO ()
-hpdft CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
+hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
+  withFile fn $
   let mpw = Just pw
   in case () of
     _ | pg==0 && rf==0 && null gr && not rs && not tt && not ii && not oo && not tr -> pdfToText fn mpw
       | pg==0 && rf==0 && null gr && not rs && tt      -> showTitle fn mpw
       | pg==0 && rf==0 && null gr && not rs && ii      -> showInfo fn mpw
       | pg==0 && rf==0 && null gr && not rs && oo      -> showOutlines fn mpw
-      | pg==0 && rf==0 && null gr && not rs && tr      -> print =<< getTrailer fn
-      | pg==0 && rf==0 && null gr && rs                -> print =<< refByPage fn mpw
+      | pg==0 && rf==0 && null gr && not rs && tr      -> showTrailer fn
+      | pg==0 && rf==0 && null gr && rs                -> showRefs fn mpw
       | rf==0 && null gr && pg/=0                      -> showPage fn mpw pg
       | pg==0 && null gr && rf/=0                      -> showContent fn mpw rf
       | pg==0 && rf==0 && not (null gr)                -> grepPDF fn mpw gr
       | otherwise -> return ()
 
--- | Get a whole text from 'filename'. It works as:
---    (1) grub objects
---    (2) parse within each object, deflating its stream
---    (3) linearize stream
-
+pdfToText :: FilePath -> Maybe String -> IO ()
 pdfToText filename mpw = do
-  txt <- pdfToTextBS filename mpw
+  txt <- runOrDie (pdfToTextBS filename mpw)
   BSL.putStrLn txt
 
 data  PageTree = Nop | Page Int | Pages [PageTree]
                  deriving Show
 
--- | Sort object references in page order.
+showRefs :: FilePath -> Maybe String -> IO ()
+showRefs filename mpw = do
+  root <- runOrDie (getRootRef filename)
+  (objs, _) <- runOrDie (getPDFObjFromFile filename mpw)
+  print $ pageTreeToList $ pageorder root objs
 
+refByPage :: FilePath -> Maybe String -> IO [Int]
 refByPage filename mpw = do
-  root <- getRootRef filename
-  (objs, _) <- getPDFObjFromFile filename mpw
+  root <- runOrDie (getRootRef filename)
+  (objs, _) <- runOrDie (getPDFObjFromFile filename mpw)
   return $ pageTreeToList $ pageorder root objs
 
 pageorder :: Int -> PDFObjIndex -> PageTree
@@ -168,38 +198,43 @@ pageTreeToList (Pages ps) = concatMap pageTreeToList ps
 pageTreeToList (Page n) = [n]
 pageTreeToList Nop = []
 
--- | Show contents of page 'page' in 'filename'.
-
+showPage :: FilePath -> Maybe String -> Int -> IO ()
 showPage filename mpw page = do
-  (objs, sec) <- getPDFObjFromFile filename mpw
-  root <- getRootRef filename
+  (objs, sec) <- runOrDie (getPDFObjFromFile filename mpw)
+  root <- runOrDie (getRootRef filename)
   let pagetree = pageTreeToList $ pageorder root objs
   case length pagetree >= page of
     True -> contentByRefObjs sec objs $ pagetree !! (page - 1)
     False -> putStrLn $ "hpdft: No Page "++(show page)
 
+contentByRefObjs :: Maybe Security -> PDFObjIndex -> Int -> IO ()
 contentByRefObjs sec objs ref = do
-  obj <- getObjectByRef ref objs
+  obj <- runOrDie (getObjectByRef ref objs)
   BSL.putStrLn $ contentInObject sec obj objs
   where contentInObject sec' obj' objs' =
           case findDictOfType "/Page" obj' of
-            Just dict -> orError $ contentsStream dict initstate sec' objs'
+            Just dict -> pageStream dict sec' objs'
             Nothing -> ""
 
-contentByRef filename mpw ref = do
-  (objs, sec) <- getPDFObjFromFile filename mpw
-  contentByRefObjs sec objs ref
+pageStream :: Dict -> Maybe Security -> PDFObjIndex -> BSL.ByteString
+pageStream dict sec objs =
+  case contentsStream dict initstate sec objs of
+    Right s -> s
+    Left _ -> ""
 
+showContent :: FilePath -> Maybe String -> Int -> IO ()
 showContent filename mpw ref = do
-  (objs, sec) <- getPDFObjFromFile filename mpw
-  obj <- getObjectByRef ref objs
+  (objs, sec) <- runOrDie (getPDFObjFromFile filename mpw)
+  obj <- runOrDie (getObjectByRef ref objs)
   let d = fromMaybe [] $ findDict obj
   if hasStream obj
     then
       if hasSubtype d
         then printStreamWithDict sec ref d obj
-        else BSL.putStrLn =<< getStream sec ref False obj
-    else print =<< getObjectByRef ref objs
+        else do
+          strm <- runOrDie (getStream sec ref False obj)
+          BSL.putStrLn strm
+    else print =<< runOrDie (getObjectByRef ref objs)
   where
 
     hasStream obj = case find isStream obj of
@@ -215,55 +250,51 @@ showContent filename mpw ref = do
     isSubtype x = False
 
     printStreamWithDict :: Maybe Security -> Int -> Dict -> [Obj] -> IO ()
-    printStreamWithDict sec' ref' d obj =
-      print (PdfDict d) >> (BSL.putStrLn =<< getStream sec' ref' True obj)
+    printStreamWithDict sec' ref' d obj = do
+      print (PdfDict d)
+      strm <- runOrDie (getStream sec' ref' True obj)
+      BSL.putStrLn strm
 
--- | Show /Title from meta information in 'filename'
-
+showTitle :: FilePath -> Maybe String -> IO ()
 showTitle filename mpw = do
-  d <- getInfo filename mpw
+  d <- runOrDie (getInfo filename mpw)
   let title = 
         case findObjFromDict d "/Title" of
           Just (PdfText s) -> s
           Just x -> show x
           Nothing -> "No title anyway"
   putStrLn title
-  return ()
 
--- | Show /Info from meta information in 'filename'
-
+showInfo :: FilePath -> Maybe String -> IO ()
 showInfo filename mpw = do
-  d <- getInfo filename mpw
+  d <- runOrDie (getInfo filename mpw)
   putStrLn $ toString 0 (PdfDict d)
-  return ()
 
--- | Show /Outlines from meta information in 'filename'
-
+showOutlines :: FilePath -> Maybe String -> IO ()
 showOutlines filename mpw = do
-  result <- getOutlines filename mpw
-  case result of
-    Right d -> putStrLn $ show d
-    Left e -> do
-      hPutStrLn stderr (show e)
-      exitWith (ExitFailure 1)
+  d <- runOrDie (getOutlines filename mpw)
+  putStrLn $ show d
 
--- | Find string in each page.
+showTrailer :: FilePath -> IO ()
+showTrailer filename = do
+  d <- runOrDie (getTrailer filename)
+  print d
 
+grepPDF :: FilePath -> Maybe String -> String -> IO ()
 grepPDF filename mpw re = do
-  root <- getRootRef filename
-  (objs, sec) <- getPDFObjFromFile filename mpw
-  mapM
+  root <- runOrDie (getRootRef filename)
+  (objs, sec) <- runOrDie (getPDFObjFromFile filename mpw)
+  mapM_
     (\(strm, pagenm) -> (grepByPage pagenm re . contentInObjs sec objs) strm)
     $ zip (pageTreeToList $ pageorder root objs) [1..]
-  return ()
   
   where
     contentInObjs sec' objs' ref =
       case findObjsByRef ref objs' of
         Just obj -> case findDictOfType "/Page" obj of
-                      Just dict -> orError $ contentsStream dict initstate sec' objs'
+                      Just dict -> pageStream dict sec' objs'
                       Nothing -> ""
-        Nothing -> error $ "No Object with Ref " ++ show ref
+        Nothing -> ""
 
     grepByPage :: Int -> String -> PDFStream -> IO ()
     grepByPage pagenm re txt = do
@@ -285,4 +316,3 @@ grepPDF filename mpw re = do
          Nothing           -> ""
 
     highlight m = "\ESC[31m" <> m <> "\ESC[0m"
-

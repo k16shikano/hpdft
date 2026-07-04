@@ -47,13 +47,16 @@ getOutlines filename password = do
   case edict of
     Left err -> return (Left err)
     Right dict -> do
-      (objs, _) <- getPDFObjFromFile filename password
-      case findFirst dict of
-        Nothing -> return $ Left (MissingKey "/First" "outlines")
-        Just firstref -> case findObjsByRef firstref objs of
-          Just [PdfDict d] -> return $ gatherOutlines d objs
-          Just s -> return $ Left (ParseError ("Unknown outline object: " ++ show s) BS.empty)
-          Nothing -> return $ Left (MissingObject firstref)
+      objResult <- getPDFObjFromFile filename password
+      case objResult of
+        Left err -> return (Left err)
+        Right (objs, _) ->
+          case findFirst dict of
+            Nothing -> return $ Left (MissingKey "/First" "outlines")
+            Just firstref -> case findObjsByRef firstref objs of
+              Just [PdfDict d] -> return $ gatherOutlines d objs
+              Just s -> return $ Left (ParseError ("Unknown outline object: " ++ show s) BS.empty)
+              Nothing -> return $ Left (MissingObject firstref)
 
 gatherChildren :: Dict -> PDFObjIndex -> PdfResult PDFOutlines
 gatherChildren dict objs = case findFirst dict of
@@ -122,8 +125,17 @@ outlinesRef dict = case find isOutlinesRef dict of
 
 outlineObjFromFile :: String -> Maybe String -> IO (PdfResult Dict)
 outlineObjFromFile filename password = do
-  (objs, _) <- getPDFObjFromFile filename password
-  rootref <- getRootRef filename
+  objResult <- getPDFObjFromFile filename password
+  case objResult of
+    Left err -> return (Left err)
+    Right (objs, _) -> do
+      rootResult <- getRootRef filename
+      case rootResult of
+        Left err -> return (Left err)
+        Right rootref -> outlineFromRoot rootref objs
+
+outlineFromRoot :: Int -> PDFObjIndex -> IO (PdfResult Dict)
+outlineFromRoot rootref objs =
   case findObjsByRef rootref objs of
     Nothing -> return $ Left (MissingObject rootref)
     Just rootobj -> case findDict rootobj of
