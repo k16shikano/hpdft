@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.1.0 (2026-07-05)
+
+### Changed
+
+- CLI refactored into subcommands: `extract`, `info`, `title`, `toc`, `trailer`, `object`, `refs`, `grep`
+- Text extraction flags (`-p`, `--geom`, `--tagged`, `--legacy`, `--footnotes`, `--ruby`, `-P`) moved under `hpdft extract`
+- Legacy flat-flag invocation (`hpdft FILE`, `hpdft -p 3 FILE`, etc.) retained with a one-time deprecation warning on stderr
+
+### Migration
+
+- Replace `hpdft FILE` with `hpdft extract FILE`
+- Replace `hpdft -I FILE` with `hpdft info FILE`, `-T` → `title`, `-O` → `toc`, `-R` → `refs`, `-r` → `object -r`, `-g` → `grep -g`
+
 ## 0.4.0.0 (2026-07-05)
 
 ### Added

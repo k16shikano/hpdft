@@ -6,42 +6,39 @@ hpdft is a PDF parsing tool and library. It extracts text, metadata, and outline
 
 ```bash
 cabal install
-hpdft document.pdf              # default: tagged → geometry extraction
-hpdft -p 3 document.pdf         # page 3 only
-hpdft --legacy document.pdf     # pre-0.3 stream-order extractor
+hpdft extract document.pdf           # default: tagged → geometry extraction
+hpdft extract -p 3 document.pdf      # page 3 only
+hpdft extract --legacy document.pdf  # pre-0.3 stream-order extractor
 ```
+
+Legacy flat-flag invocation (`hpdft document.pdf`, `hpdft -p 3 document.pdf`) still works but prints a deprecation warning; prefer the subcommands below.
 
 ## Command usage
 
 ```
-hpdft [-p|--page PAGE] [-r|--ref REF] [-g|--grep RegExp] [-R|--refs]
-             [--geom] [--tagged] [--legacy] [--footnotes] [--ruby]
-             [-T|--title] [-I|--info] [-O|--toc] [--trailer]
-             [-P|--password PASSWORD] FILE
+hpdft extract [OPTIONS] FILE              # text extraction (tagged → geom)
+hpdft extract text [OPTIONS] FILE         # explicit text extraction
+hpdft info FILE                           # PDF metadata
+hpdft title FILE                          # document title
+hpdft toc FILE                            # table of contents
+hpdft trailer FILE                        # PDF trailer dictionary
+hpdft object -r REF FILE                  # show object by reference
+hpdft refs FILE                           # page object references
+hpdft grep -g REGEXP FILE                 # search extracted text
 
-Available options:
-  -p,--page PAGE           Page number (nomble)
-  -r,--ref REF             Object reference
-  -g,--grep RegExp         grep PDF
-  -R,--refs                Show object references in page order
-  --geom                   Extract text using geometry-based layout
-  --tagged                 Extract text using tagged PDF structure
-  --legacy                 Extract text using the pre-0.3 stream-order extractor
-  --footnotes              Inline footnote bodies at their anchors as <footnote> tags (geometry pipeline)
-  --ruby                   Embed ruby in Aozora bunko notation (geometry/tagged pipeline)
-  -T,--title               Show title (from metadata)
-  -I,--info                Show PDF metainfo
-  -O,--toc                 Show table of contents (from metadata)
-  --trailer                Show the trailer of PDF
+Extract options:
+  -p,--page PAGE           Page number (1-based; 0 = all pages)
+  --geom                   Geometry-based layout extraction
+  --tagged                 Tagged PDF structure extraction
+  --legacy                 Pre-0.3 stream-order extractor
+  --footnotes              Inline footnote bodies as <footnote> tags
+  --ruby                   Embed ruby in Aozora bunko notation
   -P,--password PASSWORD   Password for encrypted PDF
   FILE                     input pdf file
-  -h,--help                Show this help text
+  -h,--help                Show help text
 ```
 
-By default, `hpdft FILE` extracts text in logical order using the tagged
-PDF structure when the document has a usable one, and otherwise falls
-back to geometry-based paragraph reconstruction (equivalent to `--geom`).
-Use `--legacy` for the pre-0.3 stream-order extractor.
+By default, `hpdft extract FILE` extracts text in logical order using the tagged PDF structure when the document has a usable one, and otherwise falls back to geometry-based paragraph reconstruction (equivalent to `--geom`). Use `--legacy` for the pre-0.3 stream-order extractor.
 
 ## Install
 
@@ -82,5 +79,5 @@ cabal run interpret-page -- FILE PAGE   # debug glyph positions
 
 ## Version
 
-Released: **0.4.0.0** on `feature/0.4-api` (2026-07-05).
-Previous release: **0.3.1.0**.
+Released: **0.4.1.0** on `feature/0.4-api` (2026-07-05).
+Previous release: **0.4.0.0**.

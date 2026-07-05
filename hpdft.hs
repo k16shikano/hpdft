@@ -20,7 +20,8 @@ import System.Environment (getArgs)
 import System.Exit (exitWith, ExitCode(..))
 import System.IO (hPutStrLn, stderr)
 import System.IO.Error (isDoesNotExistError)
-import Control.Exception (catch, IOException, ioError, throwIO)
+import Control.Exception (catch, IOException, ioError)
+import Control.Monad (when)
 
 import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
@@ -28,8 +29,7 @@ import qualified Data.ByteString.Lazy.Char8 as BSL
 import Data.Text.Lazy as TL (unpack)
 import Data.Text.Lazy.Encoding as TL
 import qualified Data.Text as T
-import Data.List (nub, find, intercalate)
-import Data.Maybe (fromMaybe)
+import Data.List (find, intercalate)
 
 import Options.Applicative
 import Data.Semigroup ((<>))
@@ -37,21 +37,312 @@ import Data.Semigroup ((<>))
 import Text.Regex.Base.RegexLike ( makeRegex )
 import Text.Regex.TDFA.String    ( regexec )
 
-import Options.Applicative (strOption)
-import Control.Monad (when)
 import PDF.Definition (Obj(PdfStream))
 
 import qualified Paths_hpdft as Autogen (version)
 import Data.Version (showVersion)
 
-main :: IO ()
-main = hpdft =<< execParser opts
-  where
-    opts = info (options <**> helper <**> (simpleVersioner versionInfo))
-      (fullDesc
-       <> header versionInfo)
+deprecationMsg :: String
+deprecationMsg =
+  "hpdft: flat flags are deprecated; use 'hpdft extract ...'"
 
+subcommandNames :: [String]
+subcommandNames =
+  [ "extract", "info", "title", "toc", "trailer", "object", "refs", "grep" ]
+
+main :: IO ()
+main = do
+  args <- getArgs
+  let useSubcommands = not (null args) && head args `elem` subcommandNames
+      isMeta = any (`elem` args) ["--help", "-h", "--version", "-V"]
+      parserExtras = helper <**> simpleVersioner versionInfo
+  cmd <- if useSubcommands
+         then execParser (info (commandParser <**> parserExtras) (fullDesc <> header versionInfo))
+         else if isMeta
+              then execParser (info (legacyCmd <**> parserExtras) (fullDesc <> header versionInfo))
+              else do
+                hPutStrLn stderr deprecationMsg
+                execParser (info (legacyCmd <**> parserExtras) (fullDesc <> header versionInfo))
+  runCmd cmd
+
+versionInfo :: String
 versionInfo = "hpdft - a PDF to text converter, version " <> showVersion Autogen.version
+
+-- | Top-level command dispatch.
+data Cmd
+  = CmdExtract ExtractOpt
+  | CmdInfo FilePath (Maybe String)
+  | CmdTitle FilePath (Maybe String)
+  | CmdToc FilePath (Maybe String)
+  | CmdTrailer FilePath
+  | CmdObject Int FilePath (Maybe String)
+  | CmdRefs FilePath (Maybe String)
+  | CmdGrep String FilePath (Maybe String)
+
+data ExtractOpt = ExtractOpt
+  { eoPage      :: Int
+  , eoGeom      :: Bool
+  , eoTagged    :: Bool
+  , eoLegacy    :: Bool
+  , eoFootnotes :: Bool
+  , eoRuby      :: Bool
+  , eoPassword  :: String
+  , eoFile      :: FilePath
+  }
+
+commandParser :: Parser Cmd
+commandParser = subparser
+  (  command "extract" (info extractCommand (progDesc "Extract text from PDF"))
+  <> command "info" (info infoCommand (progDesc "Show PDF metadata"))
+  <> command "title" (info titleCommand (progDesc "Show document title"))
+  <> command "toc" (info tocCommand (progDesc "Show table of contents"))
+  <> command "trailer" (info trailerCommand (progDesc "Show PDF trailer"))
+  <> command "object" (info objectCommand (progDesc "Show object by reference"))
+  <> command "refs" (info refsCommand (progDesc "Show page object references"))
+  <> command "grep" (info grepCommand (progDesc "Search text in PDF"))
+  )
+
+extractCommand :: Parser Cmd
+extractCommand = CmdExtract <$> extractSub
+
+extractSub :: Parser ExtractOpt
+extractSub =
+  subparser
+    (command "text" (info extractOpts (progDesc "Extract text (explicit)")))
+  <|> extractOpts
+
+extractOpts :: Parser ExtractOpt
+extractOpts = ExtractOpt
+  <$> option auto
+      ( long "page"
+        <> short 'p'
+        <> value 0
+        <> metavar "PAGE"
+        <> help "Page number (1-based; 0 = all pages)" )
+  <*> switch
+      ( long "geom"
+        <> help "Extract text using geometry-based layout" )
+  <*> switch
+      ( long "tagged"
+        <> help "Extract text using tagged PDF structure" )
+  <*> switch
+      ( long "legacy"
+        <> help "Extract text using the pre-0.3 stream-order extractor" )
+  <*> switch
+      ( long "footnotes"
+        <> help "Inline footnote bodies at their anchors as <footnote> tags (geometry pipeline)" )
+  <*> switch
+      ( long "ruby"
+        <> help "Embed ruby in Aozora bunko notation (geometry/tagged pipeline)" )
+  <*> strOption
+      ( long "password"
+        <> short 'P'
+        <> value ""
+        <> metavar "PASSWORD"
+        <> help "Password for encrypted PDF" )
+  <*> strArgument
+      ( help "input pdf file"
+        <> metavar "FILE"
+        <> action "file" )
+
+passwordOpt :: Parser String
+passwordOpt = strOption
+  ( long "password"
+    <> short 'P'
+    <> value ""
+    <> metavar "PASSWORD"
+    <> help "Password for encrypted PDF" )
+
+fileArg :: Parser FilePath
+fileArg = strArgument
+  ( help "input pdf file"
+    <> metavar "FILE"
+    <> action "file" )
+
+maybePassword :: String -> Maybe String
+maybePassword pw = if null pw then Nothing else Just pw
+
+infoCommand :: Parser Cmd
+infoCommand = CmdInfo <$> fileArg <*> (maybePassword <$> passwordOpt)
+
+titleCommand :: Parser Cmd
+titleCommand = CmdTitle <$> fileArg <*> (maybePassword <$> passwordOpt)
+
+tocCommand :: Parser Cmd
+tocCommand = CmdToc <$> fileArg <*> (maybePassword <$> passwordOpt)
+
+trailerCommand :: Parser Cmd
+trailerCommand = CmdTrailer <$> fileArg
+
+objectCommand :: Parser Cmd
+objectCommand = CmdObject
+  <$> option auto
+      ( long "ref"
+        <> short 'r'
+        <> metavar "REF"
+        <> help "Object reference number" )
+  <*> fileArg
+  <*> (maybePassword <$> passwordOpt)
+
+refsCommand :: Parser Cmd
+refsCommand = CmdRefs <$> fileArg <*> (maybePassword <$> passwordOpt)
+
+grepCommand :: Parser Cmd
+grepCommand = CmdGrep
+  <$> strOption
+      ( long "grep"
+        <> short 'g'
+        <> metavar "REGEXP"
+        <> help "Regular expression to search for" )
+  <*> fileArg
+  <*> (maybePassword <$> passwordOpt)
+
+-- Legacy flat-flag parser (deprecated).
+legacyCmd :: Parser Cmd
+legacyCmd = legacyToCmd <$> legacyOptions
+
+legacyOptions :: Parser LegacyOpt
+legacyOptions = LegacyOpt
+  <$> option auto
+      ( long "page"
+        <> short 'p'
+        <> value 0
+        <> metavar "PAGE"
+        <> help "Page number (nomble)" )
+  <*> option auto
+      ( long "ref"
+        <> short 'r'
+        <> value 0
+        <> metavar "REF"
+        <> help "Object reference" )
+  <*> strOption
+      ( long "grep"
+        <> short 'g'
+        <> value ""
+        <> metavar "RegExp"
+        <> help "grep PDF" )
+  <*> switch
+      ( long "refs"
+        <> short 'R'
+        <> help "Show object references in page order" )
+  <*> switch
+      ( long "geom"
+        <> help "Extract text using geometry-based layout" )
+  <*> switch
+      ( long "tagged"
+        <> help "Extract text using tagged PDF structure" )
+  <*> switch
+      ( long "legacy"
+        <> help "Extract text using the pre-0.3 stream-order extractor" )
+  <*> switch
+      ( long "footnotes"
+        <> help "Inline footnote bodies at their anchors as <footnote> tags (geometry pipeline)" )
+  <*> switch
+      ( long "ruby"
+        <> help "Embed ruby in Aozora bunko notation (geometry/tagged pipeline)" )
+  <*> switch
+      ( long "title"
+        <> short 'T'
+        <> help "Show title (from metadata)" )
+  <*> switch
+      ( long "info"
+        <> short 'I'
+        <> help "Show PDF metainfo" )
+  <*> switch
+      ( long "toc"
+        <> short 'O'
+        <> help "Show table of contents (from metadata) " )
+  <*> switch
+      ( long "trailer"
+        <> help "Show the trailer of PDF" )
+  <*> strOption
+      ( long "password"
+        <> short 'P'
+        <> value ""
+        <> metavar "PASSWORD"
+        <> help "Password for encrypted PDF" )
+  <*> strArgument
+      ( help "input pdf file"
+        <> metavar "FILE"
+        <> action "file" )
+
+data LegacyOpt = LegacyOpt
+  { loPage      :: Int
+  , loRef       :: Int
+  , loGrep      :: String
+  , loRefs      :: Bool
+  , loGeom      :: Bool
+  , loTagged    :: Bool
+  , loLegacy    :: Bool
+  , loFootnotes :: Bool
+  , loRuby      :: Bool
+  , loTitle     :: Bool
+  , loInfo      :: Bool
+  , loToc       :: Bool
+  , loTrailer   :: Bool
+  , loPassword  :: String
+  , loFile      :: FilePath
+  }
+
+legacyToCmd :: LegacyOpt -> Cmd
+legacyToCmd LegacyOpt{loPage=pg, loRef=rf, loGrep=gr, loRefs=rs, loGeom=gm,
+                      loTagged=tg, loLegacy=lg, loFootnotes=fnn, loRuby=rb,
+                      loTitle=tt, loInfo=ii, loToc=oo, loTrailer=tr,
+                      loPassword=pw, loFile=fn} =
+  let mpw = maybePassword pw
+      noMode = not gm && not tg && not lg
+      extract = ExtractOpt pg gm tg lg fnn rb pw fn
+  in case () of
+    _ | pg==0 && rf==0 && null gr && not rs && lg && not gm && not tg && not tt && not ii && not oo && not tr ->
+        CmdExtract extract
+      | pg==0 && rf==0 && null gr && not rs && gm && not tg && not lg && not tt && not ii && not oo && not tr ->
+        CmdExtract extract
+      | pg==0 && rf==0 && null gr && not rs && (tg || noMode) && not gm && not lg && not tt && not ii && not oo && not tr ->
+        CmdExtract extract
+      | pg==0 && rf==0 && null gr && not rs && noMode && tt ->
+        CmdTitle fn mpw
+      | pg==0 && rf==0 && null gr && not rs && noMode && ii ->
+        CmdInfo fn mpw
+      | pg==0 && rf==0 && null gr && not rs && noMode && oo ->
+        CmdToc fn mpw
+      | pg==0 && rf==0 && null gr && not rs && noMode && tr ->
+        CmdTrailer fn
+      | pg==0 && rf==0 && null gr && rs && noMode ->
+        CmdRefs fn mpw
+      | rf==0 && null gr && pg/=0 ->
+        CmdExtract extract
+      | pg==0 && null gr && rf/=0 ->
+        CmdObject rf fn mpw
+      | pg==0 && rf==0 && not (null gr) ->
+        CmdGrep gr fn mpw
+      | otherwise ->
+        CmdExtract extract
+
+runCmd :: Cmd -> IO ()
+runCmd cmd = case cmd of
+  CmdExtract opt -> runExtract opt
+  CmdInfo fn mpw -> withFile fn $ showInfo fn mpw
+  CmdTitle fn mpw -> withFile fn $ showTitle fn mpw
+  CmdToc fn mpw -> withFile fn $ showOutlines fn mpw
+  CmdTrailer fn -> withFile fn $ showTrailer fn
+  CmdObject rf fn mpw -> withFile fn $ showContent fn mpw rf
+  CmdRefs fn mpw -> withFile fn $ showRefs fn mpw
+  CmdGrep re fn mpw -> withFile fn $ grepPDF defaultLayoutOptions fn mpw re
+
+runExtract :: ExtractOpt -> IO ()
+runExtract ExtractOpt{eoPage=pg, eoGeom=gm, eoTagged=tg, eoLegacy=lg,
+                      eoFootnotes=fnn, eoRuby=rb, eoPassword=pw, eoFile=fn} =
+  withFile fn $
+  let mpw = maybePassword pw
+      lopts = defaultLayoutOptions {optFootnotes = fnn, optRuby = rb}
+      noMode = not gm && not tg && not lg
+  in if pg /= 0
+     then showPage lopts fn mpw pg
+     else case () of
+       _ | lg && not gm && not tg -> pdfToText fn mpw
+         | gm && not tg && not lg -> pdfToTextGeom lopts fn mpw
+         | tg || noMode           -> pdfToTextTagged lopts fn mpw
+         | otherwise              -> pdfToTextTagged lopts fn mpw
 
 describeError :: PdfError -> String
 describeError (ParseError msg _) = "parse error: " ++ msg
@@ -84,109 +375,6 @@ withFile fp action =
         exitWith (ExitFailure 1)
       else ioError e
 
-data CmdOpt = CmdOpt {
-  page :: Int,
-  ref  :: Int,
-  grep :: String,
-  refs :: Bool,
-  geom :: Bool,
-  tagged :: Bool,
-  legacy :: Bool,
-  footnotes :: Bool,
-  ruby :: Bool,
-  pdftitle :: Bool,
-  pdfinfo :: Bool,
-  pdfoutline :: Bool,
-  trailer :: Bool,
-  password :: String,
-  file :: FilePath
-  }
-
-options :: Parser CmdOpt
-options = CmdOpt
-          <$> option auto
-          ( long "page"
-            <> short 'p'
-            <> value 0
-            <> metavar "PAGE"
-            <> help "Page number (nomble)" )
-          <*> option auto
-          ( long "ref"
-            <> short 'r'
-            <> value 0
-            <> metavar "REF"
-            <> help "Object reference" )
-          <*> strOption
-          ( long "grep"
-            <> short 'g'
-            <> value ""
-            <> metavar "RegExp"
-            <> help "grep PDF" )
-          <*> switch
-          ( long "refs"
-            <> short 'R'
-            <> help "Show object references in page order" )
-          <*> switch
-          ( long "geom"
-            <> help "Extract text using geometry-based layout" )
-          <*> switch
-          ( long "tagged"
-            <> help "Extract text using tagged PDF structure" )
-          <*> switch
-          ( long "legacy"
-            <> help "Extract text using the pre-0.3 stream-order extractor" )
-          <*> switch
-          ( long "footnotes"
-            <> help "Inline footnote bodies at their anchors as <footnote> tags (geometry pipeline)" )
-          <*> switch
-          ( long "ruby"
-            <> help "Embed ruby in Aozora bunko notation (geometry/tagged pipeline)" )
-          <*> switch
-          ( long "title"
-            <> short 'T'
-            <> help "Show title (from metadata)" )
-          <*> switch
-          ( long "info"
-            <> short 'I'
-            <> help "Show PDF metainfo" )
-          <*> switch
-          ( long "toc"
-            <> short 'O'
-            <> help "Show table of contents (from metadata) " )
-          <*> switch
-          ( long "trailer"
-            <> help "Show the trailer of PDF" )
-          <*> strOption
-          ( long "password"
-            <> short 'P'
-            <> value ""
-            <> metavar "PASSWORD"
-            <> help "Password for encrypted PDF" )
-          <*> strArgument
-          ( help "input pdf file"
-            <> metavar "FILE"
-            <> action "file" )
-
-hpdft :: CmdOpt -> IO ()
-hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, geom=gm, tagged=tg, legacy=lg, footnotes=fnn, ruby=rb, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
-  withFile fn $
-  let mpw = Just pw
-      noMode = not gm && not tg && not lg
-      lopts = defaultLayoutOptions {optFootnotes = fnn, optRuby = rb}
-  in case () of
-    _ | pg==0 && rf==0 && null gr && not rs && lg && not gm && not tg && not tt && not ii && not oo && not tr -> pdfToText fn mpw
-      | pg==0 && rf==0 && null gr && not rs && gm && not tg && not lg && not tt && not ii && not oo && not tr -> pdfToTextGeom lopts fn mpw
-      | pg==0 && rf==0 && null gr && not rs && (tg || noMode) && not gm && not lg && not tt && not ii && not oo && not tr -> pdfToTextTagged lopts fn mpw
-      | pg==0 && rf==0 && null gr && not rs && noMode && tt      -> showTitle fn mpw
-      | pg==0 && rf==0 && null gr && not rs && noMode && ii      -> showInfo fn mpw
-      | pg==0 && rf==0 && null gr && not rs && noMode && oo      -> showOutlines fn mpw
-      | pg==0 && rf==0 && null gr && not rs && noMode && tr      -> showTrailer fn
-      | pg==0 && rf==0 && null gr && rs && noMode                -> showRefs fn mpw
-      | rf==0 && null gr && pg/=0                      -> showPage lopts fn mpw pg
-      | pg==0 && null gr && rf/=0                      -> showContent fn mpw rf
-      | pg==0 && rf==0 && not (null gr)                -> grepPDF lopts fn mpw gr
-      | otherwise -> return ()
-
 pdfToText :: FilePath -> Maybe String -> IO ()
 pdfToText filename mpw = do
   (txt, ws) <- runOrDie (pdfToTextWithWarnings filename mpw)
@@ -203,8 +391,8 @@ pdfToTextTagged lopts filename mpw = do
   txt <- runOrDie (pdfToTextTaggedBSWith lopts filename mpw)
   BSL.putStrLn txt
 
-data  PageTree = Nop | Page Int | Pages [PageTree]
-                 deriving Show
+data PageTree = Nop | Page Int | Pages [PageTree]
+  deriving Show
 
 showRefs :: FilePath -> Maybe String -> IO ()
 showRefs filename mpw = do
@@ -219,10 +407,10 @@ refByPage filename mpw = do
   return $ pageTreeToList $ pageorder root (docObjs doc)
 
 pageorder :: Int -> PDFObjIndex -> PageTree
-pageorder parent objs = 
+pageorder parent objs =
   case findObjsByRef parent objs of
     Just os -> case findDictOfType "/Catalog" os of
-      Just dict -> case findPages dict of 
+      Just dict -> case findPages dict of
         Just pr -> pageorder pr objs
         Nothing -> Nop
       Nothing -> case findDictOfType "/Pages" os of
@@ -287,7 +475,7 @@ showTitle :: FilePath -> Maybe String -> IO ()
 showTitle filename mpw = do
   doc <- runOrDie (openDocument filename mpw)
   d <- runOrDie (return (docInfoDict doc))
-  let title = 
+  let title =
         case findObjFromDict d "/Title" of
           Just (PdfText s) -> T.unpack s
           Just x -> ppObj x
@@ -318,7 +506,7 @@ grepPDF lopts filename mpw re = do
   mapM_
     (\(ref, pagenm) -> grepByPage pagenm re (pageText doc ref))
     $ zip (pageTreeToList $ pageorder root objs) [1..]
-  
+
   where
     pageText doc ref =
       case pageTextGeomWith lopts doc ref of
