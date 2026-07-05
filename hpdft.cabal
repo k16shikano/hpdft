@@ -42,6 +42,7 @@ library
                      , PDF.Text
                      , PDF.Type1
                      , PDF.Matrix
+                     , PDF.Interpret
   other-modules:       Paths_hpdft
   other-extensions:    OverloadedStrings
   build-depends:       attoparsec >= 0.14.4 && < 0.15
@@ -99,6 +100,17 @@ test-suite hpdft-unit
   main-is:             Unit.hs
   hs-source-dirs:      test
   build-depends:       base >= 4.20.0 && < 4.23
+                     , bytestring >= 0.11.5 && < 0.13
                      , containers >= 0.7 && < 0.9
                      , hpdft
+                     , text >= 2.1.2 && < 2.2.2
   default-language:    Haskell2010
+
+executable interpret-page
+  main-is:             scripts/interpret_page.hs
+  hs-source-dirs:      .
+  build-depends:       base >= 4.20.0 && < 4.23
+                     , hpdft
+                     , text >= 2.1.2 && < 2.2.2
+  default-language:    Haskell2010
+  buildable:           True

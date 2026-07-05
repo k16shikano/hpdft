@@ -1,8 +1,11 @@
-import PDF.Matrix
-import PDF.Definition (Obj(..))
+import PDF.Matrix (Matrix, identity, multiply, apply, applyVec, translate, scale, mkMatrix, components)
+import PDF.Definition (Obj(..), FontInfo(..), Encoding(..))
 import PDF.DocumentStructure (parseCIDWidths, simpleWidthAt)
+import PDF.Interpret (Glyph(..), interpretContentWithFonts)
 
 import qualified Data.Map as M
+import qualified Data.ByteString.Lazy.Char8 as BSLC
+import qualified Data.Text as T
 
 import System.Exit (exitFailure)
 import Control.Monad (when)
@@ -57,6 +60,26 @@ assertDoubleEq label expected actual =
     then pass label
     else testFail label ("expected " ++ show expected ++ ", got " ++ show actual)
 
+assertTextEq :: String -> T.Text -> T.Text -> Result
+assertTextEq label expected actual =
+  if expected == actual
+    then pass label
+    else testFail label ("expected " ++ show expected ++ ", got " ++ show actual)
+
+assertGlyphOrigin :: String -> Double -> Double -> Glyph -> Result
+assertGlyphOrigin label x y g =
+  if approxEq x (glyphX g) && approxEq y (glyphY g)
+    then pass label
+    else testFail label ("expected origin (" ++ show x ++ "," ++ show y ++ "), got (" ++ show (glyphX g) ++ "," ++ show (glyphY g) ++ ")")
+
+assertGlyphWidth :: String -> Double -> Glyph -> Result
+assertGlyphWidth label w g =
+  assertDoubleEq label w (glyphWidth g)
+
+assertGlyphSize :: String -> Double -> Glyph -> Result
+assertGlyphSize label s g =
+  assertDoubleEq label s (glyphSize g)
+
 assertMapEq :: String -> M.Map Int Double -> M.Map Int Double -> Result
 assertMapEq label expected actual =
   if expected == actual
@@ -92,8 +115,10 @@ main = do
           ++ composeApplyResults
           ++ translateScaleResults
           ++ compoundPdfResults
+          ++ cmPremultiplyResults
           ++ parseCIDWidthsResults
           ++ simpleWidthAtResults
+          ++ interpretGeometryResults
   let failures = [msg | Fail msg <- results]
       passed = length results - length failures
   mapM_ reportResult results
@@ -158,6 +183,89 @@ compoundPdfResults =
   let m = multiply (scale 12 12) (translate 100 700)
    in [ assertPointEq "compound scale*translate at origin" (100, 700) (apply m (0, 0))
       , assertPointEq "compound scale*translate at (1,0)" (112, 700) (apply m (1, 0))
+      ]
+
+cmPremultiplyResults :: [Result]
+cmPremultiplyResults =
+  let cmMat = scale 2 2
+      ctm1 = multiply cmMat identity
+      textMat = scale 10 10
+      trm = multiply (multiply textMat (translate 30 200)) ctm1
+   in [ assertPointEq "cm premultiply: multiply cmMat ctm stores scale"
+          (0, 0) (apply ctm1 (0, 0))
+      , assertPointEq "cm premultiply: scaled text rendering origin"
+          (60, 400) (apply trm (0, 0))
+      , assertPointEq "cm premultiply: unit x vector length"
+          (2, 0) (applyVec ctm1 (1, 0))
+      ]
+
+testFontWidth :: Int -> Double
+testFontWidth 65 = 600
+testFontWidth 66 = 700
+testFontWidth 81 = 550
+testFontWidth 88 = 500
+testFontWidth 89 = 600
+testFontWidth _  = 500
+
+testFontInfo :: FontInfo
+testFontInfo = FontInfo
+  { fiEncoding = NullMap
+  , fiToUnicode = M.empty
+  , fiWidth = testFontWidth
+  , fiWidthV = const (-500)
+  , fiWMode = 0
+  , fiBytesPerCode = 1
+  , fiDefaultWidth = 500
+  }
+
+verticalFontInfo :: FontInfo
+verticalFontInfo = testFontInfo {fiWMode = 1}
+
+testResources :: M.Map String Obj
+testResources = M.fromList [("/Font", PdfDict M.empty)]
+
+testFonts :: M.Map String FontInfo
+testFonts = M.fromList [("/F1", testFontInfo)]
+
+runInterp :: String -> [Glyph]
+runInterp content =
+  interpretContentWithFonts Nothing M.empty testResources testFonts (BSLC.pack content)
+
+runInterpVertical :: String -> [Glyph]
+runInterpVertical content =
+  interpretContentWithFonts Nothing M.empty testResources (M.singleton "/F1" verticalFontInfo) (BSLC.pack content)
+
+interpretGeometryResults :: [Result]
+interpretGeometryResults =
+  let ab = runInterp "BT /F1 10 Tf 100 700 Td (AB) Tj ET"
+      tmxy = runInterp "BT /F1 10 Tf 1 0 0 1 200 500 Tm (X) Tj ET"
+      tj = runInterp "BT /F1 10 Tf 50 400 Td [(A) -200 (B)] TJ ET"
+      scaled = runInterp "q 2 0 0 2 0 0 cm BT /F1 10 Tf 30 200 Td (Q) Tj Q ET"
+      restore = runInterp "q 2 0 0 2 0 0 cm BT /F1 10 Tf 10 10 Td (A) Tj ET Q BT /F1 10 Tf 10 10 Td (B) Tj ET"
+      vert = runInterpVertical "BT /F1 10 Tf 100 200 Td (A) Tj ET"
+   in [ assertBool "interpret Tj AB produces one segment" (length ab == 1)
+      , assertTextEq "interpret Tj AB text" (T.pack "AB") (glyphText (head ab))
+      , assertGlyphOrigin "interpret Tj AB origin" 100 700 (head ab)
+      , assertGlyphWidth "interpret Tj AB width" 13 (head ab)
+      , assertGlyphSize "interpret Tj AB size" 10 (head ab)
+      , assertBool "interpret Tm produces one segment" (length tmxy == 1)
+      , assertGlyphOrigin "interpret Tm origin" 200 500 (head tmxy)
+      , assertGlyphWidth "interpret Tm width" 5 (head tmxy)
+      , assertBool "interpret TJ produces two segments" (length tj == 2)
+      , assertGlyphOrigin "interpret TJ first origin" 50 400 (tj !! 0)
+      , assertGlyphWidth "interpret TJ first width" 6 (tj !! 0)
+      , assertGlyphOrigin "interpret TJ second origin" 58 400 (tj !! 1)
+      , assertGlyphWidth "interpret TJ second width" 7 (tj !! 1)
+      , assertBool "interpret CTM scale produces one segment" (length scaled == 1)
+      , assertGlyphOrigin "interpret CTM scale origin" 60 400 (head scaled)
+      , assertGlyphSize "interpret CTM scale size" 20 (head scaled)
+      , assertGlyphWidth "interpret CTM scale width" 11 (head scaled)
+      , assertBool "interpret q/Q restore produces two segments" (length restore == 2)
+      , assertGlyphOrigin "interpret q/Q first origin scaled" 20 20 (restore !! 0)
+      , assertGlyphOrigin "interpret q/Q second origin restored" 10 10 (restore !! 1)
+      , assertBool "interpret vertical produces one segment" (length vert == 1)
+      , assertGlyphOrigin "interpret vertical origin" 100 200 (head vert)
+      , assertGlyphWidth "interpret vertical width" 5 (head vert)
       ]
 
 parseCIDWidthsResults :: [Result]

@@ -34,6 +34,7 @@ module PDF.DocumentStructure
        , fontInfo
        , parseCIDWidths
        , simpleWidthAt
+       , findResourcesDict
        ) where
 
 import Data.Char (chr, isDigit, ord)

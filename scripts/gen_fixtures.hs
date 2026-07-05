@@ -405,6 +405,57 @@ encryptedRc4 =
         , "\n%%EOF\n" ]
   in body <> xrefTable offsets 7 <> trailer
 
+geometryWidthsPlain :: [Int]
+geometryWidthsPlain =
+  map (pick ws) [0..24]
+  where
+    ws = [(0, 600), (1, 700), (16, 550), (23, 500), (24, 600)]
+    pick overrides i =
+      case lookup i overrides of
+        Just w -> w
+        Nothing -> 500
+
+geometryFont :: BS.ByteString
+geometryFont =
+  BS.concat
+    [ "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica"
+    , " /FirstChar 65 /LastChar 89 /Widths ["
+    , BS.intercalate " " (map (BS.pack . show) geometryWidthsPlain)
+    , "] >>"
+    ]
+
+geometryStream :: BS.ByteString
+geometryStream =
+  BS.concat
+    [ "BT /F1 10 Tf 100 700 Td (AB) Tj ET\n"
+    , "BT /F1 10 Tf 1 0 0 1 200 500 Tm (XY) Tj ET\n"
+    , "BT /F1 10 Tf 50 400 Td [(A) -200 (B)] TJ ET\n"
+    , "q 2 0 0 2 0 0 cm BT /F1 10 Tf 30 200 Td (Q) Tj Q ET\n"
+    , "q 2 0 0 2 0 0 cm BT /F1 10 Tf 10 10 Td (A) Tj ET Q BT /F1 10 Tf 10 10 Td (B) Tj ET"
+    ]
+
+geometryContentStream :: BS.ByteString
+geometryContentStream =
+  BS.concat
+    [ "<< /Length ", BS.pack (show (BS.length geometryStream)), " >>\nstream\n"
+    , geometryStream
+    , "\nendstream"
+    ]
+
+geometry :: BS.ByteString
+geometry =
+  let objects =
+        [ (1, "<< /Type /Catalog /Pages 2 0 R >>")
+        , (2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+        , (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+              \/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>")
+        , (4, geometryContentStream)
+        , (5, geometryFont)
+        ]
+      (body, offsets) = buildBody objects
+      xrefPos = BS.length body
+  in body <> xrefTable offsets 6 <> trailerPart Nothing xrefPos
+
 main :: IO ()
 main = do
   args <- getArgs
@@ -420,6 +471,7 @@ main = do
     , ("indirect-length.pdf", indirectLength)
     , ("encrypted-rc4.pdf", encryptedRc4)
     , ("binary-endstream.pdf", binaryEndstream)
+    , ("geometry.pdf", geometry)
     ]
   where
     write dir (name, bytes) = do
