@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.14.1'
+          cabal-version: 'latest'
+
+      - run: cabal update
+
+      - run: cabal build all
+
+      - name: Resolve hpdft binary
+        id: hpdft
+        run: echo "bin=$(cabal list-bin hpdft)" >> "$GITHUB_OUTPUT"
+
+      - run: cabal test all
+
+      - name: Verify text fixtures
+        env:
+          HPDFT: ${{ steps.hpdft.outputs.bin }}
+        run: bash scripts/verify_text.sh

@@ -22,6 +22,7 @@ import PDF.Image
   , encodePngRgb
   , extractPageImages
   )
+import PDF.FormExtract (pageFormNames, extractFormPdf)
 import PDF.Text (pdfToTextTaggedBS)
 import PDF.Error (PdfResult)
 
@@ -33,6 +34,8 @@ import qualified Data.Text as T
 
 import System.Exit (exitFailure)
 import System.IO.Unsafe (unsafePerformIO)
+import System.Directory (doesFileExist, getTemporaryDirectory)
+import System.FilePath ((</>))
 import Control.Monad (when)
 import Data.Word (Word8)
 
@@ -157,6 +160,7 @@ main = do
           ++ diffResults
           ++ filterDecodeResults
           ++ imageExtractResults
+          ++ formExtractResults
           ++ taggedEndToEndResults
   let failures = [msg | Fail msg <- results]
       passed = length results - length failures
@@ -797,7 +801,7 @@ interpretMCIDResults =
 
 mkTestDoc :: M.Map Int [Obj] -> Document
 mkTestDoc objs =
-  Document (M.fromList [("/Root", ObjRef 1)]) objs Nothing
+  Document (M.fromList [("/Root", ObjRef 1)]) objs Nothing M.empty M.empty
 
 structureTreeResults :: [Result]
 structureTreeResults =
@@ -1041,6 +1045,7 @@ pageImageFixtureResults :: [Result]
 pageImageFixtureResults =
   [ runJpegImageFixture
   , runJpegImageHits
+  , runFormNestedImageHits
   ]
 
 runJpegImageFixture :: Result
@@ -1080,6 +1085,111 @@ runJpegImageHits =
 
 {-# NOINLINE runJpegImageFixture #-}
 {-# NOINLINE runJpegImageHits #-}
+
+runFormNestedImageHits :: Result
+runFormNestedImageHits =
+  let path = "test/fixtures/form-nested-image.pdf"
+  in unsafePerformIO $ do
+    result <- openDocument path Nothing
+    return $ case result of
+      Right doc ->
+        case pageRefAt doc 1 of
+          Right r ->
+            case interpretPageImageHits doc r of
+              Right [(ref, bbox)]
+                | ref == 5 && approxEq 50 (rectX0 bbox) ->
+                    pass "form-nested-image interpretPageImageHits"
+              Right xs -> testFail "form-nested-image hits" ("unexpected hits " ++ show xs)
+              Left err -> testFail "form-nested-image hits" (show err)
+          Left err -> testFail "form-nested-image pageRefAt" (show err)
+      Left err -> testFail "form-nested-image open hits" (show err)
+
+{-# NOINLINE runFormNestedImageHits #-}
+
+formExtractResults :: [Result]
+formExtractResults =
+  [ runFormExportParentNames
+  , runFormExportParentExtract
+  , runFm42Integration
+  ]
+
+runFormExportParentNames :: Result
+runFormExportParentNames =
+  let path = "test/fixtures/form-export-parent.pdf"
+  in unsafePerformIO $ do
+    result <- openDocument path Nothing
+    return $ case result of
+      Right doc ->
+        case pageFormNames doc 1 of
+          Right names ->
+            assertBool "form-export-parent pageFormNames"
+              (names == [T.pack "Fm0"])
+          Left err -> testFail "form-export-parent pageFormNames" (show err)
+      Left err -> testFail "form-export-parent open names" (show err)
+
+runFormExportParentExtract :: Result
+runFormExportParentExtract =
+  let path = "test/fixtures/form-export-parent.pdf"
+  in unsafePerformIO $ do
+    result <- openDocument path Nothing
+    case result of
+      Right doc ->
+        case extractFormPdf doc 1 (T.pack "Fm0") of
+          Right bytes
+            | BSC.take 4 bytes /= BSC.pack "%PDF" ->
+                return $ testFail "form-export-parent extractFormPdf" "missing %PDF header"
+            | otherwise -> do
+                tmpDir <- getTemporaryDirectory
+                let out = tmpDir </> "hpdft-form-export-test.pdf"
+                BS.writeFile out bytes
+                opened <- openDocument out Nothing
+                return $ case opened of
+                  Right doc2 ->
+                    case pageCount doc2 of
+                      Right 1 -> pass "form-export-parent extractFormPdf"
+                      Right n ->
+                        testFail "form-export-parent extractFormPdf"
+                          ("expected 1 page, got " ++ show n)
+                      Left err -> testFail "form-export-parent extractFormPdf pageCount" (show err)
+                  Left err -> testFail "form-export-parent extractFormPdf reopen" (show err)
+          Left err -> return $ testFail "form-export-parent extractFormPdf" (show err)
+      Left err -> return $ testFail "form-export-parent open extract" (show err)
+
+runFm42Integration :: Result
+runFm42Integration =
+  unsafePerformIO $ do
+    let path = "/home/k16/work/wwtawwta-systems/publish/8965333188777.pdf"
+    exists <- doesFileExist path
+    if not exists
+      then return $ pass "8965333188777 Fm42 integration (skipped)"
+      else do
+        result <- openDocument path Nothing
+        case result of
+          Right doc ->
+            case extractFormPdf doc 205 (T.pack "Fm42") of
+              Right bytes
+                | BSC.take 4 bytes /= BSC.pack "%PDF" ->
+                    return $ testFail "8965333188777 Fm42 extract" "missing %PDF header"
+                | otherwise -> do
+                    tmpDir <- getTemporaryDirectory
+                    let out = tmpDir </> "hpdft-fm42-test.pdf"
+                    BS.writeFile out bytes
+                    opened <- openDocument out Nothing
+                    return $ case opened of
+                      Right doc2 ->
+                        case pageCount doc2 of
+                          Right 1 -> pass "8965333188777 Fm42 extract"
+                          Right n ->
+                            testFail "8965333188777 Fm42 extract"
+                              ("expected 1 page, got " ++ show n)
+                          Left err -> testFail "8965333188777 Fm42 pageCount" (show err)
+                      Left err -> testFail "8965333188777 Fm42 reopen" (show err)
+              Left err -> return $ testFail "8965333188777 Fm42 extract" (show err)
+          Left err -> return $ testFail "8965333188777 open" (show err)
+
+{-# NOINLINE runFormExportParentNames #-}
+{-# NOINLINE runFormExportParentExtract #-}
+{-# NOINLINE runFm42Integration #-}
 
 runTaggedFixture :: Result
 runTaggedFixture =

@@ -26,6 +26,7 @@ import PDF.DocumentStructure
   , findResourcesDict
   , fontInfo
   , fontInfoFromDict
+  , rawStream
   , rawStreamByRef
   )
 import PDF.Matrix
@@ -100,6 +101,8 @@ data IState = IState
   , depth         :: Int
   , isSec         :: Maybe Security
   , isObjs        :: PDFObjIndex
+  , isStreamCache :: M.Map Int (PdfResult BSL.ByteString)
+  , isFontCache   :: M.Map Int FontInfo
   , isRes         :: Dict
   , fontOverrides :: M.Map T.Text FontInfo
   , operandStack  :: [Obj]
@@ -120,8 +123,14 @@ initialGState = GState
   , gsRender = 0
   }
 
-initialIState :: Maybe Security -> PDFObjIndex -> Dict -> IState
-initialIState sec objs res = IState
+initialIState
+  :: Maybe Security
+  -> PDFObjIndex
+  -> M.Map Int (PdfResult BSL.ByteString)
+  -> M.Map Int FontInfo
+  -> Dict
+  -> IState
+initialIState sec objs streamCache fontCache res = IState
   { gsCur = initialGState
   , gsStack = []
   , tsCur = Nothing
@@ -132,11 +141,35 @@ initialIState sec objs res = IState
   , depth = 0
   , isSec = sec
   , isObjs = objs
+  , isStreamCache = streamCache
+  , isFontCache = fontCache
   , isRes = res
   , fontOverrides = M.empty
   , operandStack = []
   , mcStack = []
   }
+
+buildCaches
+  :: Maybe Security
+  -> PDFObjIndex
+  -> (M.Map Int (PdfResult BSL.ByteString), M.Map Int FontInfo)
+buildCaches sec objs =
+  ( M.mapWithKey (\r os -> rawStream sec r os) objs
+  , M.mapWithKey
+      (\r _ -> fontInfoFromDict sec objs (fromMaybe M.empty (findDictByRef r objs)))
+      objs
+  )
+
+lookupStreamCache
+  :: Maybe Security
+  -> PDFObjIndex
+  -> M.Map Int (PdfResult BSL.ByteString)
+  -> Int
+  -> PdfResult BSL.ByteString
+lookupStreamCache sec objs cache ref =
+  case M.lookup ref cache of
+    Just r -> r
+    Nothing -> rawStreamByRef sec objs ref
 
 maxFormDepth :: Int
 maxFormDepth = 12
@@ -155,7 +188,8 @@ interpretContentWithFonts sec objs res fonts bytes =
 
 interpretContentWithFontsItems :: Maybe Security -> PDFObjIndex -> Dict -> M.Map T.Text FontInfo -> BSL.ByteString -> [PageItem]
 interpretContentWithFontsItems sec objs res fonts bytes =
-  let st0 = initialIState sec objs res
+  let (streamCache, fontCache) = buildCaches sec objs
+      st0 = initialIState sec objs streamCache fontCache res
       st1 = st0 {fontOverrides = fonts}
   in reverse (itemsRev (runStream st1 bytes))
 
@@ -167,13 +201,24 @@ interpretPage doc pageRef = do
 interpretPageItems :: Document -> Int -> PdfResult [PageItem]
 interpretPageItems doc pageRef = do
   (_, content, res) <- pageInterpretInputs doc pageRef
-  return $ interpretContentItems (docSecurity doc) (docObjs doc) res content
+  let st0 = initialIState
+        (docSecurity doc)
+        (docObjs doc)
+        (docStreamCache doc)
+        (docFontCache doc)
+        res
+  return $ reverse (itemsRev (runStream st0 content))
 
 interpretPageImageHits :: Document -> Int -> PdfResult [(Int, Rect)]
 interpretPageImageHits doc pageRef = do
   (_, content, res) <- pageInterpretInputs doc pageRef
   let st0 =
-        (initialIState (docSecurity doc) (docObjs doc) res)
+        (initialIState
+          (docSecurity doc)
+          (docObjs doc)
+          (docStreamCache doc)
+          (docFontCache doc)
+          res)
           {collectImages = True}
   return $ reverse (imagesRev (runStream st0 content))
 
@@ -187,7 +232,7 @@ pageInterpretInputs doc pageRef = do
   res <- case pageResourcesInherited pageDict (docObjs doc) of
     Just r -> Right r
     Nothing -> Right M.empty
-  content <- pageContentsBytes (docSecurity doc) (docObjs doc) pageDict
+  content <- pageContentsBytes (docSecurity doc) (docObjs doc) (docStreamCache doc) pageDict
   return (pageDict, content, res)
 
 pageResourcesInherited :: Dict -> PDFObjIndex -> Maybe Dict
@@ -201,8 +246,13 @@ pageResourcesInherited dict objs =
           Nothing -> Nothing
       _ -> Nothing
 
-pageContentsBytes :: Maybe Security -> PDFObjIndex -> Dict -> PdfResult BSL.ByteString
-pageContentsBytes sec objs dict = case M.lookup "/Contents" dict of
+pageContentsBytes
+  :: Maybe Security
+  -> PDFObjIndex
+  -> M.Map Int (PdfResult BSL.ByteString)
+  -> Dict
+  -> PdfResult BSL.ByteString
+pageContentsBytes sec objs streamCache dict = case M.lookup "/Contents" dict of
   Nothing -> Left (MissingKey "/Contents" "page")
   Just (PdfArray arr) -> concatContentRefs (parseRefsArray arr)
   Just (ObjRef r) ->
@@ -214,7 +264,7 @@ pageContentsBytes sec objs dict = case M.lookup "/Contents" dict of
     concatContentRefs refs = do
       parts <- mapM singleStream refs
       return $ BSL.intercalate (BSLC.pack "\n") parts
-    singleStream ref = rawStreamByRef sec objs ref
+    singleStream ref = lookupStreamCache sec objs streamCache ref
 
 data Token = TokOperand Obj | TokOperator String
 
@@ -482,30 +532,43 @@ modifyGStateSt f st = st {gsCur = f (gsCur st)}
 
 resolveFontSt :: T.Text -> Double -> IState -> IState
 resolveFontSt fontName size st =
-  let fi = lookupFont (isSec st) (isObjs st) (isRes st) fontName st
+  let fi = lookupFont (isRes st) fontName st
   in modifyGStateSt
        (\gs -> gs {gsFontRes = Just fontName, gsFont = fi, gsFontSize = size})
        st
 
-lookupFont sec objs res fontName st =
+lookupFont res fontName st =
   case M.lookup fontName (fontOverrides st) of
     Just fi -> Just fi
-    Nothing -> lookupFontResource sec objs res fontName
+    Nothing -> lookupFontResource (isFontCache st) (isSec st) (isObjs st) res fontName
 
-lookupFontResource :: Maybe Security -> PDFObjIndex -> Dict -> T.Text -> Maybe FontInfo
-lookupFontResource sec objs res fontName =
+lookupFontResource
+  :: M.Map Int FontInfo
+  -> Maybe Security
+  -> PDFObjIndex
+  -> Dict
+  -> T.Text
+  -> Maybe FontInfo
+lookupFontResource fontCache sec objs res fontName =
   case findObjFromDict res "/Font" of
-    Just (PdfDict fd) -> fontFromDict sec objs fd fontName
+    Just (PdfDict fd) -> fontFromDict fontCache sec objs fd fontName
     Just (ObjRef r) ->
       case findDictByRef r objs of
-        Just fd -> fontFromDict sec objs fd fontName
+        Just fd -> fontFromDict fontCache sec objs fd fontName
         Nothing -> Nothing
     _ -> Nothing
 
-fontFromDict :: Maybe Security -> PDFObjIndex -> Dict -> T.Text -> Maybe FontInfo
-fontFromDict sec objs fd name =
+fontFromDict
+  :: M.Map Int FontInfo
+  -> Maybe Security
+  -> PDFObjIndex
+  -> Dict
+  -> T.Text
+  -> Maybe FontInfo
+fontFromDict fontCache sec objs fd name =
   case M.lookup name fd of
-    Just (ObjRef r) -> Just (repairCidFontInfo name (fontInfo sec r objs))
+    Just (ObjRef r) ->
+      Just (repairCidFontInfo name (M.findWithDefault (fontInfo sec r objs) r fontCache))
     Just (PdfDict d) -> Just (repairCidFontInfo name (fontInfoFromDict sec objs d))
     _ -> Nothing
 
@@ -737,7 +800,7 @@ runXObjectSt ref st0
         Just os -> case findDict os of
           Just d -> case M.lookup "/Subtype" d of
             Just (PdfName "/Form") ->
-              case rawStreamByRef (isSec st0) (isObjs st0) ref of
+              case lookupStreamCache (isSec st0) (isObjs st0) (isStreamCache st0) ref of
                 Right stream ->
                   let formMat = formMatrix d
                       formRes = fromMaybe (isRes st0) (findResourcesDict d (isObjs st0))
@@ -746,7 +809,12 @@ runXObjectSt ref st0
                       stRun = stMat {isRes = formRes, depth = depth st0 + 1, operandStack = []}
                       stDone = runStream stRun stream
                       stPop = popGStateSt st0
-                  in stPop {itemsRev = itemsRev stDone, depth = depth st0, isRes = isRes st0}
+                  in stPop
+                       { itemsRev = itemsRev stDone
+                       , imagesRev = imagesRev stDone
+                       , depth = depth st0
+                       , isRes = isRes st0
+                       }
                 Left _ -> st0
             Just (PdfName "/Image") ->
               let bbox = ctmUnitSquare (ctm (gsCur st0))

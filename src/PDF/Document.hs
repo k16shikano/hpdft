@@ -1,5 +1,20 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+{-|
+Module      : PDF.Document
+Description : Single-read PDF document handle
+License     : MIT
+
+Open a PDF once and reuse the parsed object index for text extraction,
+page APIs, diff, images, and form export.
+
+@example
+import PDF.Document (Document, openDocument)
+import PDF.Error (PdfResult)
+
+load :: FilePath -> IO (PdfResult Document)
+load path = openDocument path Nothing
+-}
 module PDF.Document
   ( Document(..)
   , openDocument
@@ -19,6 +34,8 @@ import PDF.DocumentStructure
   , findRefs
   , extractObjBody
   , findObjs
+  , rawStream
+  , fontInfoFromDict
   )
 import PDF.Encrypt (Security, securityFromEncryptDict)
 import PDF.Error (PdfError(..), PdfResult)
@@ -28,14 +45,30 @@ import Data.List (find)
 import Data.Maybe (fromMaybe)
 
 import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map as Map
 
+-- | Parsed PDF: trailer dictionary, object index, and optional encryption state.
+-- Use 'openDocument' to construct; pass the same value to extraction and page APIs.
 data Document = Document
   { docTrailer  :: Dict
   , docObjs     :: PDFObjIndex
   , docSecurity :: Maybe Security
+  , docStreamCache :: Map.Map Int (PdfResult BSL.ByteString)
+  , docFontCache   :: Map.Map Int FontInfo
   }
 
+-- | Read a PDF file from disk. @password@ is @Nothing@ for unencrypted files,
+-- or @Just@ the user password for encrypted documents.
+--
+-- Returns 'PdfResult' so xref, object, and decryption failures are reported
+-- without crashing the process.
+--
+-- @example
+-- result <- openDocument "paper.pdf" Nothing
+-- case result of
+--   Left err  -> print err
+--   Right doc -> ...
 openDocument :: FilePath -> Maybe String -> IO (PdfResult Document)
 openDocument f password = do
   bytes <- BS.readFile f
@@ -47,12 +80,22 @@ openDocumentBytes bytes password =
     Right (trailer, xref) -> do
       msec <- loadSecurity bytes trailer xref password
       let objs = buildIndex bytes msec xref
-      return (Document trailer objs msec)
+          streamCache = Map.mapWithKey (\r os -> rawStream msec r os) objs
+          fontCache =
+            Map.mapWithKey
+              (\r _ -> fontInfoFromDict msec objs (fromMaybe Map.empty (findDictByRef r objs)))
+              objs
+      return (Document trailer objs msec streamCache fontCache)
     Left _ -> do
       trailer <- findTrailer bytes
       msec <- loadSecurityScan bytes trailer password
       objs <- buildIndexEager bytes msec
-      return (Document trailer objs msec)
+      let streamCache = Map.mapWithKey (\r os -> rawStream msec r os) objs
+          fontCache =
+            Map.mapWithKey
+              (\r _ -> fontInfoFromDict msec objs (fromMaybe Map.empty (findDictByRef r objs)))
+              objs
+      return (Document trailer objs msec streamCache fontCache)
 
 loadSecurity :: BS.ByteString -> Dict -> XREF -> Maybe String -> PdfResult (Maybe Security)
 loadSecurity bytes trailer xref password =

@@ -16,6 +16,7 @@ import PDF.Text (pdfToTextWithWarnings, pdfToTextGeomBSWith, pdfToTextTaggedBSWi
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions)
 import PDF.Diff (TextChange(..), compareDocuments)
 import PDF.Image (extractPageImagesToDir)
+import PDF.FormExtract (pageFormNames, extractFormToFile)
 import PDF.Error (PdfError(..), PdfResult, PdfWarning(..), renderPdfWarning)
 
 import System.Environment (getArgs)
@@ -32,6 +33,7 @@ import Data.Text.Lazy as TL (unpack)
 import Data.Text.Lazy.Encoding as TL
 import qualified Data.Text as T
 import Data.List (find, intercalate)
+import Data.Maybe (listToMaybe)
 
 import Options.Applicative
 import Data.Semigroup ((<>))
@@ -46,16 +48,23 @@ import Data.Version (showVersion)
 
 deprecationMsg :: String
 deprecationMsg =
-  "hpdft: flat flags are deprecated; use 'hpdft extract ...'"
+  "hpdft: flat flags are deprecated; use subcommands (e.g. hpdft text, hpdft info)"
 
 subcommandNames :: [String]
 subcommandNames =
-  [ "extract", "diff", "info", "title", "toc", "trailer", "object", "refs", "grep" ]
+  [ "text", "image", "form"
+  , "diff", "info", "title", "toc", "trailer", "object", "refs", "grep"
+  ]
 
 main :: IO ()
 main = do
   args <- getArgs
-  let useSubcommands = not (null args) && head args `elem` subcommandNames
+  when (listToMaybe args == Just "extract") $ do
+    hPutStrLn stderr "hpdft: 'extract' subcommand removed; use text, image, or form"
+    exitWith (ExitFailure 1)
+  let useSubcommands = case listToMaybe args of
+        Just a | a `elem` subcommandNames -> True
+        _ -> False
       isMeta = any (`elem` args) ["--help", "-h", "--version", "-V"]
       parserExtras = helper <**> simpleVersioner versionInfo
   cmd <- if useSubcommands
@@ -63,7 +72,8 @@ main = do
          else if isMeta
               then execParser (info (legacyCmd <**> parserExtras) (fullDesc <> header versionInfo))
               else do
-                hPutStrLn stderr deprecationMsg
+                when (legacyNeedsDeprecation args) $
+                  hPutStrLn stderr deprecationMsg
                 execParser (info (legacyCmd <**> parserExtras) (fullDesc <> header versionInfo))
   runCmd cmd
 
@@ -72,7 +82,9 @@ versionInfo = "hpdft - a PDF to text converter, version " <> showVersion Autogen
 
 -- | Top-level command dispatch.
 data Cmd
-  = CmdExtract ExtractSub
+  = CmdText ExtractOpt
+  | CmdImage ImagesOpt
+  | CmdForm FormOpt
   | CmdDiff DiffOpt
   | CmdInfo FilePath (Maybe String)
   | CmdTitle FilePath (Maybe String)
@@ -81,10 +93,6 @@ data Cmd
   | CmdObject Int FilePath (Maybe String)
   | CmdRefs FilePath (Maybe String)
   | CmdGrep String FilePath (Maybe String)
-
-data ExtractSub
-  = SubExtractText ExtractOpt
-  | SubExtractImages ImagesOpt
 
 data ExtractOpt = ExtractOpt
   { eoPage      :: Int
@@ -104,6 +112,14 @@ data ImagesOpt = ImagesOpt
   , ioFile     :: FilePath
   }
 
+data FormOpt = FormOpt
+  { foPage     :: Int
+  , foName     :: Maybe String
+  , foOut      :: FilePath
+  , foPassword :: String
+  , foFile     :: FilePath
+  }
+
 data DiffOpt = DiffOpt
   { doGeom      :: Bool
   , doLegacy    :: Bool
@@ -116,7 +132,9 @@ data DiffOpt = DiffOpt
 
 commandParser :: Parser Cmd
 commandParser = subparser
-  (  command "extract" (info extractCommand (progDesc "Extract text from PDF"))
+  (  command "text" (info (CmdText <$> extractOpts) (progDesc "Extract text from PDF"))
+  <> command "image" (info (CmdImage <$> imagesOpts) (progDesc "Extract image XObjects from a page"))
+  <> command "form" (info (CmdForm <$> formOpts) (progDesc "List or extract top-level Form XObjects on a page"))
   <> command "diff" (info diffCommand (progDesc "Compare two PDFs (paragraph-level diff)"))
   <> command "info" (info infoCommand (progDesc "Show PDF metadata"))
   <> command "title" (info titleCommand (progDesc "Show document title"))
@@ -127,17 +145,6 @@ commandParser = subparser
   <> command "grep" (info grepCommand (progDesc "Search text in PDF"))
   )
 
-extractCommand :: Parser Cmd
-extractCommand = CmdExtract <$> extractSub
-
-extractSub :: Parser ExtractSub
-extractSub =
-  subparser
-    (  command "text" (info (SubExtractText <$> extractOpts) (progDesc "Extract text (explicit)"))
-    <> command "images" (info (SubExtractImages <$> imagesOpts) (progDesc "Extract image XObjects from a page"))
-    )
-  <|> SubExtractText <$> extractOpts
-
 imagesOpts :: Parser ImagesOpt
 imagesOpts = ImagesOpt
   <$> option auto
@@ -145,6 +152,35 @@ imagesOpts = ImagesOpt
         <> short 'p'
         <> metavar "PAGE"
         <> help "Page number (1-based, required)" )
+  <*> strOption
+      ( long "output"
+        <> short 'o'
+        <> value "."
+        <> metavar "DIR"
+        <> help "Output directory (default: current directory)" )
+  <*> strOption
+      ( long "password"
+        <> short 'P'
+        <> value ""
+        <> metavar "PASSWORD"
+        <> help "Password for encrypted PDF" )
+  <*> strArgument
+      ( help "input pdf file"
+        <> metavar "FILE"
+        <> action "file" )
+formOpts :: Parser FormOpt
+formOpts = FormOpt
+  <$> option auto
+      ( long "page"
+        <> short 'p'
+        <> metavar "PAGE"
+        <> help "Page number (1-based, required)" )
+  <*> optional
+      ( strOption
+          ( long "name"
+            <> short 'n'
+            <> metavar "NAME"
+            <> help "Top-level Form XObject name (e.g. Fm42); omit to list extractable names on stdout" ) )
   <*> strOption
       ( long "output"
         <> short 'o'
@@ -373,14 +409,14 @@ legacyToCmd LegacyOpt{loPage=pg, loRef=rf, loGrep=gr, loRefs=rs, loGeom=gm,
                       loPassword=pw, loFile=fn} =
   let mpw = maybePassword pw
       noMode = not gm && not tg && not lg
-      extract = SubExtractText (ExtractOpt pg gm tg lg fnn rb pw fn)
+      textCmd = CmdText (ExtractOpt pg gm tg lg fnn rb pw fn)
   in case () of
     _ | pg==0 && rf==0 && null gr && not rs && lg && not gm && not tg && not tt && not ii && not oo && not tr ->
-        CmdExtract extract
+        textCmd
       | pg==0 && rf==0 && null gr && not rs && gm && not tg && not lg && not tt && not ii && not oo && not tr ->
-        CmdExtract extract
+        textCmd
       | pg==0 && rf==0 && null gr && not rs && (tg || noMode) && not gm && not lg && not tt && not ii && not oo && not tr ->
-        CmdExtract extract
+        textCmd
       | pg==0 && rf==0 && null gr && not rs && noMode && tt ->
         CmdTitle fn mpw
       | pg==0 && rf==0 && null gr && not rs && noMode && ii ->
@@ -392,17 +428,29 @@ legacyToCmd LegacyOpt{loPage=pg, loRef=rf, loGrep=gr, loRefs=rs, loGeom=gm,
       | pg==0 && rf==0 && null gr && rs && noMode ->
         CmdRefs fn mpw
       | rf==0 && null gr && pg/=0 ->
-        CmdExtract extract
+        textCmd
       | pg==0 && null gr && rf/=0 ->
         CmdObject rf fn mpw
       | pg==0 && rf==0 && not (null gr) ->
         CmdGrep gr fn mpw
       | otherwise ->
-        CmdExtract extract
+        textCmd
+
+legacyNeedsDeprecation :: [String] -> Bool
+legacyNeedsDeprecation args =
+  any (`elem` args)
+    [ "-I","--info","-T","--title","-O","--toc","--trailer","-R","--refs","-g","--grep" ]
+  || containsFlag args "-r"
+
+containsFlag :: [String] -> String -> Bool
+containsFlag [] _ = False
+containsFlag (a:as) f = a == f || containsFlag as f
 
 runCmd :: Cmd -> IO ()
 runCmd cmd = case cmd of
-  CmdExtract sub -> runExtractSub sub
+  CmdText opt -> runExtractText opt
+  CmdImage opt -> runExtractImages opt
+  CmdForm opt -> runExtractForm opt
   CmdDiff opt -> runDiff opt
   CmdInfo fn mpw -> withFile fn $ showInfo fn mpw
   CmdTitle fn mpw -> withFile fn $ showTitle fn mpw
@@ -411,11 +459,6 @@ runCmd cmd = case cmd of
   CmdObject rf fn mpw -> withFile fn $ showContent fn mpw rf
   CmdRefs fn mpw -> withFile fn $ showRefs fn mpw
   CmdGrep re fn mpw -> withFile fn $ grepPDF defaultLayoutOptions fn mpw re
-
-runExtractSub :: ExtractSub -> IO ()
-runExtractSub sub = case sub of
-  SubExtractText opt -> runExtractText opt
-  SubExtractImages opt -> runExtractImages opt
 
 runExtractText :: ExtractOpt -> IO ()
 runExtractText ExtractOpt{eoPage=pg, eoGeom=gm, eoTagged=tg, eoLegacy=lg,
@@ -437,12 +480,33 @@ runExtractImages ImagesOpt{ioPage=pg, ioOut=out, ioPassword=pw, ioFile=fn} =
   withFile fn $
   if pg < 1
     then do
-      hPutStrLn stderr "hpdft: extract images requires -p PAGE (1-based)"
+      hPutStrLn stderr "hpdft: image requires -p PAGE (1-based)"
       exitWith (ExitFailure 1)
     else do
       doc <- runOrDie (openDocument fn (maybePassword pw))
       paths <- runOrDie (extractPageImagesToDir doc pg out)
-      mapM_ putStrLn paths
+      if null paths
+        then hPutStrLn stderr ("hpdft: no image XObjects on page " ++ show pg)
+        else mapM_ putStrLn paths
+
+runExtractForm :: FormOpt -> IO ()
+runExtractForm FormOpt{foPage=pg, foName=mn, foOut=out, foPassword=pw, foFile=fn} =
+  withFile fn $
+  if pg < 1
+    then do
+      hPutStrLn stderr "hpdft: form requires -p PAGE (1-based)"
+      exitWith (ExitFailure 1)
+    else do
+      doc <- runOrDie (openDocument fn (maybePassword pw))
+      case mn of
+        Nothing -> do
+          names <- runOrDie (return (pageFormNames doc pg))
+          if null names
+            then hPutStrLn stderr ("hpdft: no Form XObjects on page " ++ show pg)
+            else mapM_ (putStrLn . T.unpack) names
+        Just nm -> do
+          path <- runOrDie (extractFormToFile doc pg (T.pack nm) out)
+          putStrLn path
 
 runDiff :: DiffOpt -> IO ()
 runDiff DiffOpt{doRuby=rb, doJson=json, doPassword=pw, doFileA=fa, doFileB=fb} =

@@ -234,6 +234,35 @@ trailerPartSize size mprev xrefPos = BS.concat
   , BS.pack (show xrefPos)
   , "\n%%EOF\n" ]
 
+formStreamBody :: BS.ByteString -> BS.ByteString -> BS.ByteString -> BS.ByteString
+formStreamBody bbox resPart stream =
+  BS.concat
+    [ "<< /Type /XObject /Subtype /Form /FormType 1 /BBox [", bbox, "]"
+    , resPart
+    , " /Length ", BS.pack (show (BS.length stream))
+    , " >>\nstream\n"
+    , stream
+    , "\nendstream"
+    ]
+
+formExportParent :: BS.ByteString
+formExportParent =
+  let fm1 = formStreamBody "0 0 20 20" BS.empty "0 0 20 20 re f"
+      fm0Res = " /Resources << /XObject << /Fm1 6 0 R >> >>"
+      fm0 = formStreamBody "0 0 100 50" fm0Res "10 10 80 30 re S q 1 0 0 1 60 10 cm /Fm1 Do Q"
+      page = contentStream "q /Fm0 Do Q"
+      objects =
+        [ (1, "<< /Type /Catalog /Pages 2 0 R >>")
+        , (2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+        , (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Fm0 5 0 R >> >> /Contents 4 0 R >>")
+        , (4, page)
+        , (5, fm0)
+        , (6, fm1)
+        ]
+      (body, offsets) = buildBody objects
+      xrefPos = BS.length body
+  in body <> xrefTable offsets 7 <> trailerPartSize 7 Nothing xrefPos
+
 binaryEndstream :: BS.ByteString
 binaryEndstream =
   let decoyData = BS.concat
@@ -598,6 +627,7 @@ main = do
     , ("paragraphs.pdf", paragraphs)
     , ("tagged.pdf", tagged)
     , ("multipage.pdf", multipage)
+    , ("form-export-parent.pdf", formExportParent)
     ]
   where
     write dir (name, bytes) = do

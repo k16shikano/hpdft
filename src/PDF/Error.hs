@@ -16,6 +16,18 @@ Migration plan (tracked per module):
 * Phase A1: xref\/trailer\/object loading ('PDF.DocumentStructure', 'PDF.Object')
 * Phase A2: content streams and fonts ('PDF.ContentStream', 'PDF.Cmap', 'PDF.CFF', ...)
 * Phase A3: IO layer and CLI ('PDF.PDFIO', @hpdft.hs@)
+
+@example
+import PDF.Document (openDocument)
+import PDF.Error (PdfError(..), PdfResult)
+
+handle :: IO (PdfResult Text) -> IO ()
+handle io = do
+  result <- io
+  case result of
+    Left (MissingObject n) -> putStrLn $ "object " ++ show n ++ " missing"
+    Left err               -> print err
+    Right txt              -> putStr txt
 -}
 
 module PDF.Error
@@ -47,6 +59,8 @@ data PdfError
     -- ^ Font-related failure: object number and description.
   deriving (Show, Eq)
 
+-- | Result type for hpdft parsing and extraction. @Left@ carries a 'PdfError';
+-- @Right@ carries success. Compose with do-notation or '>>='.
 type PdfResult a = Either PdfError a
 
 -- | Non-fatal diagnoses. Extraction continues; the caller may log these.

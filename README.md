@@ -1,24 +1,29 @@
 # hpdft (Haskell PDF Tools)
 
+[![CI](https://github.com/k16shikano/hpdft/actions/workflows/ci.yml/badge.svg)](https://github.com/k16shikano/hpdft/actions/workflows/ci.yml)
+
 hpdft is a PDF parsing tool and library. It extracts text, metadata, and outlines (table of contents) from PDF files.
 
 ## Quick start
 
 ```bash
 cabal install
-hpdft extract document.pdf           # default: tagged → geometry extraction
-hpdft extract -p 3 document.pdf      # page 3 only
-hpdft extract --legacy document.pdf  # pre-0.3 stream-order extractor
+hpdft document.pdf                 # same as hpdft text (default text extraction)
+hpdft text document.pdf            # tagged → geometry extraction
+hpdft text -p 3 document.pdf       # page 3 only
+hpdft text --legacy document.pdf   # pre-0.3 stream-order extractor
 ```
 
-Legacy flat-flag invocation (`hpdft document.pdf`, `hpdft -p 3 document.pdf`) still works but prints a deprecation warning; prefer the subcommands below.
+`hpdft FILE` (no subcommand) runs text extraction. Legacy flat flags (`hpdft -I FILE`, `hpdft -r REF FILE`, etc.) still work but print a deprecation warning for non-text modes.
 
 ## Command usage
 
 ```
-hpdft extract [OPTIONS] FILE              # text extraction (tagged → geom)
-hpdft extract text [OPTIONS] FILE         # explicit text extraction
-hpdft extract images -p PAGE -o DIR FILE   # image XObjects from one page
+hpdft [OPTIONS] FILE                      # text extraction (default; same as text)
+hpdft text [OPTIONS] FILE                 # text extraction (tagged → geom)
+hpdft image -p PAGE -o DIR FILE           # image XObjects from one page
+hpdft form -p PAGE FILE                   # list top-level Form names (stdout)
+hpdft form -p PAGE -n NAME -o DIR FILE    # extract one Form to standalone PDF
 hpdft diff [OPTIONS] FILE_A FILE_B        # paragraph-level diff
 hpdft info FILE                           # PDF metadata
 hpdft title FILE                          # document title
@@ -28,7 +33,7 @@ hpdft object -r REF FILE                  # show object by reference
 hpdft refs FILE                           # page object references
 hpdft grep -g REGEXP FILE                 # search extracted text
 
-Extract options:
+Text options:
   -p,--page PAGE           Page number (1-based; 0 = all pages)
   --geom                   Geometry-based layout extraction
   --tagged                 Tagged PDF structure extraction
@@ -39,8 +44,15 @@ Extract options:
   FILE                     input pdf file
   -h,--help                Show help text
 
-Extract images options:
+Image options:
   -p,--page PAGE           Page number (1-based, required)
+  -o,--output DIR          Output directory (default: current directory)
+  -P,--password PASSWORD   Password for encrypted PDF
+  FILE                     input pdf file
+
+Form options:
+  -p,--page PAGE           Page number (1-based, required)
+  -n,--name NAME           Top-level Form name (e.g. Fm42); omit to list names on stdout
   -o,--output DIR          Output directory (default: current directory)
   -P,--password PASSWORD   Password for encrypted PDF
   FILE                     input pdf file
@@ -52,7 +64,37 @@ Diff options:
   FILE_A FILE_B            PDF files to compare
 ```
 
-By default, `hpdft extract FILE` extracts text in logical order using the tagged PDF structure when the document has a usable one, and otherwise falls back to geometry-based paragraph reconstruction (equivalent to `--geom`). Use `--legacy` for the pre-0.3 stream-order extractor.
+By default, `hpdft FILE` (or `hpdft text FILE`) extracts text in logical order using the tagged PDF structure when the document has a usable one, and otherwise falls back to geometry-based paragraph reconstruction (equivalent to `--geom`). Use `--legacy` for the pre-0.3 stream-order extractor.
+
+## Library
+
+hpdft is also a Haskell library. See **[docs/library.md](docs/library.md)** for installation, error handling, text pipelines, page API, diff, images, and form extraction.
+
+| Module | Purpose |
+|--------|---------|
+| `PDF.Document` | Single-read document handle (`openDocument`) |
+| `PDF.Error` | `PdfResult`, `PdfError`, `PdfWarning` |
+| `PDF.Text` | Text extraction (tagged, geometry, legacy) |
+| `PDF.Layout` | `LayoutOptions`, line/paragraph layout |
+| `PDF.Page` | Page enumeration and structured extraction |
+| `PDF.Diff` | Paragraph-level document comparison |
+| `PDF.Image` | Image XObject extraction |
+| `PDF.FormExtract` | Form XObject extraction to standalone PDF |
+| `PDF.Interpret` | Content-stream geometry interpreter |
+| `PDF.Structure` | Tagged PDF logical structure |
+
+Example programs (from repo root):
+
+```bash
+cabal run extract-text -- data/fixtures/classic.pdf
+cabal run page-api -- data/fixtures/paragraphs.pdf
+```
+
+Build Haddock API docs locally:
+
+```bash
+cabal haddock --haddock-all
+```
 
 ## Install
 
@@ -75,25 +117,12 @@ cabal run interpret-page -- FILE PAGE   # debug glyph positions
 
 ### Documentation
 
-- [0.3 roadmap](docs/0.3-roadmap.md) — 0.3.0.0 までの architecture, completed phases
-- [0.4 roadmap](docs/0.4-roadmap.md) — 0.3.1 ruby, 0.4 API/diff/images plan
+- [Library guide](docs/library.md) — using hpdft as a Haskell library
 - [Changelog](CHANGELOG.md) — release notes
 
-### Library modules (0.4)
-
-| Module | Purpose |
-|--------|---------|
-| `PDF.Document` | Single-read document handle |
-| `PDF.Page` | Page enumeration and structured extraction |
-| `PDF.Image` | Image XObject extraction |
-| `PDF.Diff` | Paragraph-level document comparison |
-| `PDF.Text` | Text extraction drivers |
-| `PDF.Interpret` | Content-stream geometry interpreter |
-| `PDF.Layout` | Line/paragraph reconstruction |
-| `PDF.Structure` | Tagged PDF logical structure |
-| `PDF.Error` | Typed errors and warnings |
+Developer notes (roadmaps, performance write-ups): [`dev/`](dev/)
 
 ## Version
 
-Released: **0.4.3.0** on `feature/0.4-api` (2026-07-05).
-Previous release: **0.4.2.0**.
+Released: **0.4.5.0** (2026-07-05) — Form XObject extraction.
+Previous release: **0.4.4.0**.

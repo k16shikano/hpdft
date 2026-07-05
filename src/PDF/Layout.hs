@@ -1,5 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+{-|
+Module      : PDF.Layout
+Description : Line and paragraph reconstruction from interpreted page items
+License     : MIT
+
+Turns 'PDF.Interpret' glyph runs into lines and paragraphs. Most callers use
+'PDF.Text' or 'PDF.Page' instead of calling these functions directly.
+
+@example
+import PDF.Layout (LayoutOptions(..), defaultLayoutOptions)
+
+opts :: LayoutOptions
+opts = defaultLayoutOptions { optRuby = True, optFootnotes = False }
+-}
 module PDF.Layout
   ( Rect(..)
   , PageItem(..)
@@ -14,6 +28,8 @@ module PDF.Layout
   , layoutPageTextWith
   , layoutDocument
   , layoutDocumentWith
+  , layoutDocumentFromPageLines
+  , pageLinesRaw
   , stripHeadersFooters
   , linesFromGlyphs
   , sortLinesByReadingOrder
@@ -22,7 +38,10 @@ module PDF.Layout
   , joinGlyphsRun
   , pageItemLines
   , pageItemParagraphGroups
+  , forcePageLines
   ) where
+
+import Control.DeepSeq (force)
 
 import PDF.Interpret (Glyph(..), Rect(..), PageItem(..))
 
@@ -30,16 +49,21 @@ import Data.Char (isDigit, isSpace, ord)
 import Data.List (foldl', maximumBy, partition, sort, sortBy)
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Ord (Down(..), comparing)
+import qualified Data.DList as DL
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Text as T
 
 -- Footnote bodies continuing onto the following page are not merged.
+-- | Layout options shared by geometry extraction, page APIs, and diff.
 data LayoutOptions = LayoutOptions
   { optFootnotes :: Bool
+    -- ^ Inline footnote bodies as @\<footnote\>@ tags in paragraph text.
   , optRuby      :: Bool
+    -- ^ Embed ruby in Aozora bunko notation (@《…》@, @｜@ for mixed-script bases).
   } deriving (Eq, Show)
 
+-- | Default layout: no footnote tags, no ruby.
 defaultLayoutOptions :: LayoutOptions
 defaultLayoutOptions = LayoutOptions {optFootnotes = False, optRuby = False}
 
@@ -53,7 +77,12 @@ layoutDocument :: [[PageItem]] -> T.Text
 layoutDocument = layoutDocumentWith defaultLayoutOptions
 
 layoutDocumentWith :: LayoutOptions -> [[PageItem]] -> T.Text
-layoutDocumentWith opts pages = formatParagraphs (documentParagraphs opts pages)
+layoutDocumentWith opts pages =
+  layoutDocumentFromPageLines opts (map pageLinesRaw pages)
+
+layoutDocumentFromPageLines :: LayoutOptions -> [PageLines] -> T.Text
+layoutDocumentFromPageLines opts layouts =
+  formatParagraphs (documentParagraphsFromPageLines opts layouts)
 
 formatParagraphs :: [T.Text] -> T.Text
 formatParagraphs ps =
@@ -66,50 +95,45 @@ layoutParagraphs = layoutParagraphsWith defaultLayoutOptions
 
 layoutParagraphsWith :: LayoutOptions -> [PageItem] -> [T.Text]
 layoutParagraphsWith opts items =
-  case applyFootnotes opts (applyRuby opts (pageLines items)) of
+  case applyFootnotes opts (applyRuby opts (pageLinesRaw items)) of
     PageFallback ps -> ps
     PageNormal wmode graphics bounds ls ->
       map joinParaLines (groupParagraphs wmode graphics bounds ls)
 
 pageItemLines :: LayoutOptions -> [PageItem] -> [Line]
 pageItemLines opts items =
-  case applyFootnotes opts (applyRuby opts (pageLines items)) of
+  case applyFootnotes opts (applyRuby opts (pageLinesRaw items)) of
     PageFallback _ -> []
     PageNormal _ _ _ ls -> ls
 
 pageItemParagraphGroups :: LayoutOptions -> [PageItem] -> [[Line]]
 pageItemParagraphGroups opts items =
-  case applyFootnotes opts (applyRuby opts (pageLines items)) of
+  case applyFootnotes opts (applyRuby opts (pageLinesRaw items)) of
     PageFallback ps -> replicate (length ps) []
     PageNormal wmode graphics bounds ls ->
       groupParagraphs wmode graphics bounds ls
 
 documentParagraphs :: LayoutOptions -> [[PageItem]] -> [T.Text]
 documentParagraphs opts pages =
-  let pageCount = length pages
-      layouts = map pageLines pages
-      stripped = applyHeaderFooterStrip pageCount layouts
-      final = map (applyFootnotes opts . applyRuby opts) stripped
-  in finalizeDoc $ foldl' processPage ([], []) final
-  where
-    applyHeaderFooterStrip n layouts =
-      let normalPairs = [(i, ls) | (i, PageNormal _ _ _ ls) <- zip [0 ..] layouts]
-          strippedNormals = stripHeadersFooters n (map snd normalPairs)
-          strippedMap = M.fromList (zip (map fst normalPairs) strippedNormals)
-      in [ case layout of
-             PageFallback ps -> PageFallback ps
-             PageNormal w g b ls ->
-               PageNormal w g b (M.findWithDefault ls i strippedMap)
-         | (i, layout) <- zip [0 ..] layouts
-         ]
+  documentParagraphsFromPageLines opts (map pageLinesRaw pages)
 
+documentParagraphsFromPageLines :: LayoutOptions -> [PageLines] -> [T.Text]
+documentParagraphsFromPageLines opts layouts =
+  let n = length layouts
+      stripped = applyHeaderFooterStrip n layouts
+      final = map (applyFootnotes opts . applyRuby opts) stripped
+  in finalizeDoc $ foldl' processPage (DL.empty, []) final
+  where
     continuePage done pageGroups =
       case reverse pageGroups of
         [] -> (done, [])
-        lastG : restRev -> (done ++ map joinParaLines (reverse restRev), lastG)
+        lastG : restRev ->
+          ( done <> DL.fromList (map joinParaLines (reverse restRev))
+          , lastG
+          )
 
     processPage (done, pending) (PageFallback ps) =
-      ( done ++ finalize pending ++ map T.strip ps
+      ( done <> DL.fromList (finalize pending ++ map T.strip ps)
       , []
       )
 
@@ -130,25 +154,71 @@ documentParagraphs opts pages =
                     l : _ -> l
                     [] -> firstLine
               in if pageBoundaryBreak paraSoFar firstLine pageMinInline lastLine firstLine
-                 then continuePage (done ++ [paraSoFar]) (g : gs)
+                 then continuePage (done `DL.snoc` paraSoFar) (g : gs)
                  else case reverse gs of
                         [] -> (done, ps ++ g)
                         lastG : restRev ->
-                          ( done ++ joinParaLines (ps ++ g)
-                              : map joinParaLines (reverse restRev)
+                          ( done <>
+                              ( DL.fromList
+                                  ( joinParaLines (ps ++ g)
+                                  : map joinParaLines (reverse restRev)
+                                  )
+                              )
                           , lastG
                           )
             [] -> (done, ps)
 
-    finalizeDoc (done, pending) = done ++ finalize pending
+    finalizeDoc (done, pending) = DL.toList done ++ finalize pending
 
     finalize [] = []
     finalize ps = [joinParaLines ps]
+
+applyHeaderFooterStrip :: Int -> [PageLines] -> [PageLines]
+applyHeaderFooterStrip n layouts =
+  let normalPairs = [(i, ls) | (i, PageNormal _ _ _ ls) <- zip [0 ..] layouts]
+      strippedNormals = stripHeadersFooters n (map snd normalPairs)
+      strippedMap = M.fromList (zip (map fst normalPairs) strippedNormals)
+  in [ case layout of
+         PageFallback ps -> PageFallback ps
+         PageNormal w g b ls ->
+           PageNormal w g b (M.findWithDefault ls i strippedMap)
+     | (i, layout) <- zip [0 ..] layouts
+     ]
 
 data PageLines
   = PageFallback [T.Text]
   | PageNormal Int [Rect] (Double, Double) [Line]
   deriving (Show)
+
+-- | Force layout fields used after interpretation (text, coords, markers).
+-- Source 'Glyph' values may retain unevaluated 'FontInfo' functions; 'PageLines'
+-- does not reference them.
+forcePageLines :: PageLines -> ()
+forcePageLines (PageFallback ps) =
+  foldr (\t () -> force t `seq` ()) () ps
+forcePageLines (PageNormal wmode graphics bounds ls) =
+  wmode `seq`
+  foldr forceRect () graphics `seq`
+  bounds `seq`
+  foldr forceLine () ls `seq`
+  ()
+
+forceRect :: Rect -> () -> ()
+forceRect r () =
+  rectX0 r `seq` rectY0 r `seq` rectX1 r `seq` rectY1 r `seq` ()
+
+forceLine :: Line -> () -> ()
+forceLine l () =
+  lineBaseline l `seq`
+  lineInlineStart l `seq`
+  lineInlineEnd l `seq`
+  lineSize l `seq`
+  lineFirstInline l `seq`
+  lineWMode l `seq`
+  force (lineText l) `seq`
+  foldr (\(i, t) () -> i `seq` force t `seq` ()) () (lineMarkers l) `seq`
+  lineLastSuper l `seq`
+  ()
 
 applyFootnotes :: LayoutOptions -> PageLines -> PageLines
 applyFootnotes opts page =
@@ -554,8 +624,8 @@ medianOf xs =
          then sorted !! mid
          else (sorted !! (mid - 1) + sorted !! mid) / 2
 
-pageLines :: [PageItem] -> PageLines
-pageLines items =
+pageLinesRaw :: [PageItem] -> PageLines
+pageLinesRaw items =
   let glyphs = [g | ItemGlyph g <- items]
       graphics = [r | ItemGraphic r <- items]
   in if null glyphs
@@ -724,30 +794,30 @@ usableGlyph g =
 -- | Drop coordinate outliers (e.g. footnote digits emitted far off-page).
 filterPageGlyphs :: [Glyph] -> [Glyph]
 filterPageGlyphs glyphs =
-  let horiz = filter ((== 0) . glyphWMode) glyphs
-      vert = filter ((== 1) . glyphWMode) glyphs
-      horizVis = filter ((>= 0) . glyphY) horiz
-  in filter (\g -> glyphInBand g horizVis vert) glyphs
+  let horizVis = [g | g <- glyphs, glyphWMode g == 0, glyphY g >= 0]
+      vert = [g | g <- glyphs, glyphWMode g == 1]
+      horizBand = baselineBand glyphY glyphSize horizVis
+      vertBand = baselineBand (baselineOf 1) glyphSize vert
+  in filter (glyphInBand horizBand vertBand) glyphs
   where
-    glyphInBand g hs vs
-      | glyphWMode g == 1 = inBand (baselineOf 1) vs g
-      | otherwise = inBand glyphY hs g
+    glyphInBand hBand vBand g
+      | glyphWMode g == 1 = inBand (baselineOf 1) vBand g
+      | otherwise = inBand glyphY hBand g
 
-    inBand measure [] g = measure g >= 0
-    inBand measure gs g =
+    inBand measure band g =
       let v = measure g
-      in v >= 0 && case baselineBand measure gs of
+      in v >= 0 && case band of
            Nothing -> True
            Just (lo, hi) -> v >= lo && v <= hi
 
-    baselineBand measure gs =
+    baselineBand measure sizeOf gs =
       let ys = sort (map measure gs)
       in if length ys < 4
          then Nothing
          else let q1 = quantile 0.25 ys
                   q3 = quantile 0.75 ys
                   iqr = q3 - q1
-                  medSize = medianOf (map glyphSize gs)
+                  medSize = medianOf (map sizeOf gs)
                   spread = max (max 1 iqr) (1.2 * medSize)
                   pad = 3 * spread
               in Just (q1 - pad, q3 + pad)

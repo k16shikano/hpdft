@@ -7,6 +7,12 @@ License     : MIT
 
 Extracts '/Image' XObjects referenced on a page (including nested Form
 XObjects). Inline images are not supported in 0.4.3.
+
+@example
+import PDF.Image (extractPageImages)
+
+images <- extractPageImages doc 1
+-- each PageImage carries format, bytes, and placement bbox
 -}
 module PDF.Image
   ( ImageFormat(..)
@@ -58,6 +64,7 @@ data PageImage = PageImage
   , piBytes  :: BS.ByteString
   } deriving (Eq, Show)
 
+-- | Extract image XObjects from a 1-based page number.
 extractPageImages :: Document -> Int -> PdfResult [PageImage]
 extractPageImages doc pageNum = do
   pref <- pageRefAt doc pageNum
@@ -91,7 +98,9 @@ loadImageBytes doc ref = do
   d <- case findDict os of
     Just x  -> Right x
     Nothing -> Left (MissingKey "/Type" ("image object " ++ show ref))
-  stream <- rawStreamByRef (docSecurity doc) (docObjs doc) ref
+  stream <- case M.lookup ref (docStreamCache doc) of
+    Just r -> r
+    Nothing -> rawStreamByRef (docSecurity doc) (docObjs doc) ref
   classifyImageBytes (docObjs doc) d (BSL.toStrict stream)
 
 classifyImageBytes

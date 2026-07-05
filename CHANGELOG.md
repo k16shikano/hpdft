@@ -1,19 +1,40 @@
 # Changelog
 
-## 0.3.2.0 (2026-07-05)
+## 0.4.5.0 (2026-07-05)
+
+### Changed
+
+- CLI: `extract` subcommand removed; use top-level `text`, `image`, and `form` instead (`hpdft text FILE`, `hpdft image -p PAGE …`, `hpdft form -p PAGE …`)
+- `hpdft FILE` with no subcommand runs text extraction (same as `hpdft text FILE`); no deprecation warning for plain text invocation
+- Full-document geometry/tagged extraction: streaming per-page layout, Document-level font/stream caches, parallel page interpretation, RTS defaults (`-N -A64m`), and `filterPageGlyphs` band precomputation — `book.pdf` (150 pages) geom ~142s → ~13s (see `dev/performance-0.4.md`)
+- Development roadmaps moved from `docs/` to `dev/`; `docs/` is user-facing library guide only
+
+### Added
+
+- `PDF.FormExtract` — extract a named Form XObject from a page to a standalone vector PDF (`pageFormNames`, `extractFormPdf`, `extractFormToFile`)
+- Transitive object closure, renumbering, and minimal PDF-1.5 serialization (stream bytes copied as stored in the source index)
+- `hpdft form -p PAGE [-n NAME] [-o DIR] [-P PASSWORD] FILE` CLI subcommand; omit `-n` to list top-level Form names on stdout
+- English Haddock on primary public API modules (`PDF.Document`, `PDF.Page`, `PDF.Text`, `PDF.Layout`, `PDF.Error`, `PDF.Diff`, `PDF.Image`, `PDF.FormExtract`)
+- Example executables `extract-text` and `page-api` under `examples/`
+
+### Documentation
+
+- Library usage guide: `docs/library.md`
+- Performance investigation (Japanese): `dev/performance-0.4.md`
+- Benchmark scripts: `scripts/bench_book.sh`, `scripts/bench_pages.hs`
 
 ### Fixed
 
-- `parsePdfNumber` now accepts leading-dot numbers (`.913` → `0.913`, `-.5` → `-0.5`) used by LaTeX/pdflatex `cm` operators; fixes zero glyph size and char-per-line layout fallback
-- Type0/CID fonts with `/DescendantFonts` as a direct object reference (not only array-wrapped) now resolve Adobe-Japan1 encoding and descendant `/W` widths
-- `codeToUnicode` falls back to Adobe-Japan1-6 when ToUnicode is missing on 2-byte CID fonts
-- Glyph advance uses `fiDefaultWidth` when per-code width lookup returns 0
-- Coordinate outlier glyphs (e.g. footnote digits at negative y) filtered before line building; fixes spurious paragraph splits
-- CJK line-wrap continuation heuristic joins mid-word breaks (e.g. 記/法) without merging distinct paragraphs
-- Interleaved ruby/body stream order merged into `base《ruby》` (e.g. 冪等《べきとう》); orphan ruby lines suppressed when `--ruby` is off
-- Lettered list markers (`a.`, `b.`), hang-indent bullet items, and list-item boundaries split paragraphs correctly
-- Code blocks (numbered lines, small monospace font) extracted with line breaks and x-position indent inference
-- ZapfDingbats bullet glyphs (`r` etc.) mapped to `•`; `/ZapfDingbats` encoding recognized
+- Form extraction no longer double-compresses FlateDecode streams (broken content streams in output PDFs)
+- Indirect array objects (e.g. `/DescendantFonts`, OCG `/Intent`) are serialized correctly instead of empty `<< >>` dictionaries
+- Unicode strings in copied objects are written as valid PDF hex strings (UTF-16BE)
+- Fixture `test/fixtures/form-export-parent.pdf` and unit tests (optional integration test for Fm42 when user PDF is present)
+
+## 0.4.4.0 (2026-07-05)
+
+### Added
+
+- GitHub Actions CI workflow (GHC 9.14.1: build, test, fixture verification)
 
 ## 0.4.3.0 (2026-07-05)
 
@@ -71,6 +92,21 @@
 - Prefer `PDF.Page` over direct `DocumentStructure` page-walk helpers in new code
 - `PDF.DocumentStructure` remains exposed; no breaking removals in this release
 
+## 0.3.2.0 (2026-07-05)
+
+### Fixed
+
+- `parsePdfNumber` now accepts leading-dot numbers (`.913` → `0.913`, `-.5` → `-0.5`) used by LaTeX/pdflatex `cm` operators; fixes zero glyph size and char-per-line layout fallback
+- Type0/CID fonts with `/DescendantFonts` as a direct object reference (not only array-wrapped) now resolve Adobe-Japan1 encoding and descendant `/W` widths
+- `codeToUnicode` falls back to Adobe-Japan1-6 when ToUnicode is missing on 2-byte CID fonts
+- Glyph advance uses `fiDefaultWidth` when per-code width lookup returns 0
+- Coordinate outlier glyphs (e.g. footnote digits at negative y) filtered before line building; fixes spurious paragraph splits
+- CJK line-wrap continuation heuristic joins mid-word breaks (e.g. 記/法) without merging distinct paragraphs
+- Interleaved ruby/body stream order merged into `base《ruby》` (e.g. 冪等《べきとう》); orphan ruby lines suppressed when `--ruby` is off
+- Lettered list markers (`a.`, `b.`), hang-indent bullet items, and list-item boundaries split paragraphs correctly
+- Code blocks (numbered lines, small monospace font) extracted with line breaks and x-position indent inference
+- ZapfDingbats bullet glyphs (`r` etc.) mapped to `•`; `/ZapfDingbats` encoding recognized
+
 ## 0.3.1.0 (2026-07-05)
 
 ### Added
@@ -118,7 +154,7 @@ Includes backwards-incompatible changes from `master` (0.2.0.0).
 
 - RTL horizontal text unsupported
 - `--legacy` retains pre-0.3 stream-order extraction for comparison
-- See `docs/0.3-roadmap.md` for details
+- See `dev/0.3-roadmap.md` for details
 
 ## 0.2.0.0
 

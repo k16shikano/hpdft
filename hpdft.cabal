@@ -1,14 +1,14 @@
 cabal-version:       3.12
 name:                hpdft
-version:             0.3.2.0
-synopsis:            A tool for looking through PDF file using Haskell
+version:             0.4.5.0
+synopsis:            PDF parsing library and CLI for text, layout, diff, images, and forms
 description:
-    
-    A command line PDF-to-text converter. It may take a much longer than other similar tools but could yield better results.
-    
-    This package can also serve as a library for working with text data in PDF files.
-    You could write your own PDF-to-text converter for some particular PDF files, utilizing any meta data or special data structures of those.
-    
+    hpdft is a Haskell library and command-line tool for parsing PDF files.
+    The library exposes document loading, geometry- and tagged-PDF text extraction,
+    page-level paragraph regions, paragraph-level diff, image XObject export, and
+    Form XObject extraction to standalone PDFs.
+    The @hpdft@ executable provides the same features for shell workflows.
+    See @docs/library.md@ for a usage guide and @examples/@ for sample programs.
 homepage:            https://github.com/k16shikano/hpdft
 license:             MIT
 license-file:        LICENSE
@@ -19,12 +19,24 @@ category:            PDF
 build-type:          Simple
 extra-source-files:  README.md
                      , CHANGELOG.md
-                     , docs/0.3-roadmap.md
-                     , docs/0.4-roadmap.md
+                     , docs/library.md
+                     , dev/README.md
+                     , dev/performance-0.4.md
+                     , dev/0.3-roadmap.md
+                     , dev/0.4-roadmap.md
+                     , dev/0.5-text-ux.md
+                     , scripts/bench_book.sh
+                     , scripts/bench_pages.hs
+                     , examples/extract-text/Main.hs
+                     , examples/page-api/Main.hs
 
 data-dir:            data/
 
 data-files:          map/Adobe-Japan1-6.map
+
+source-repository head
+  type:     git
+  location: https://github.com/k16shikano/hpdft
 
                        
 library
@@ -46,6 +58,7 @@ library
                      , PDF.Page
                      , PDF.Diff
                      , PDF.Image
+                     , PDF.FormExtract
                      , PDF.Type1
                      , PDF.Matrix
                      , PDF.Interpret
@@ -60,10 +73,13 @@ library
                      , containers >= 0.7 && < 0.9
                      , crypton >= 0.34 && < 0.36
                      , directory >= 1.3.9 && < 1.4
+                     , dlist >= 1.0 && < 1.1
                      , file-embed >= 0.0.16 && < 0.1
                      , filepath >= 1.5.2 && < 1.6
                      , memory >= 0.18.0 && < 0.19
                      , optparse-applicative >= 0.18.1 && < 0.19
+                     , parallel >= 3.2.2 && < 3.4
+                     , deepseq >= 1.4.8 && < 1.6
                      , parsec >= 3.1.18 && < 3.2
                      , semigroups >= 0.20 && < 0.21
                      , text >= 2.1.2 && < 2.2.2
@@ -75,7 +91,7 @@ library
 
 executable hpdft
   main-is:           hpdft.hs
-  ghc-options:       -O2
+  ghc-options:       -O2 -threaded -rtsopts "-with-rtsopts=-N -A64m"
   hs-source-dirs:    .
   other-modules:     Paths_hpdft
   other-extensions:    OverloadedStrings
@@ -97,6 +113,7 @@ test-suite hpdft-golden
   type:                exitcode-stdio-1.0
   main-is:             Golden.hs
   hs-source-dirs:      test
+  ghc-options:         -threaded -rtsopts "-with-rtsopts=-N -A64m"
   build-depends:       base >= 4.20.0 && < 4.23
                      , bytestring >= 0.11.5 && < 0.13
                      , directory >= 1.3.9 && < 1.4
@@ -108,9 +125,12 @@ test-suite hpdft-unit
   type:                exitcode-stdio-1.0
   main-is:             Unit.hs
   hs-source-dirs:      test
+  ghc-options:         -threaded -rtsopts "-with-rtsopts=-N -A64m"
   build-depends:       base >= 4.20.0 && < 4.23
                      , bytestring >= 0.11.5 && < 0.13
                      , containers >= 0.7 && < 0.9
+                     , directory >= 1.3.9 && < 1.4
+                     , filepath >= 1.5.2 && < 1.6
                      , hpdft
                      , text >= 2.1.2 && < 2.2.2
   default-language:    Haskell2010
@@ -119,6 +139,28 @@ executable interpret-page
   main-is:             scripts/interpret_page.hs
   hs-source-dirs:      .
   build-depends:       base >= 4.20.0 && < 4.23
+                     , hpdft
+                     , text >= 2.1.2 && < 2.2.2
+  default-language:    Haskell2010
+  buildable:           True
+
+executable extract-text
+  main-is:             Main.hs
+  hs-source-dirs:      examples/extract-text
+  build-depends:       base >= 4.20.0 && < 4.23
+                     , bytestring >= 0.11.5 && < 0.13
+                     , directory >= 1.3.9 && < 1.4
+                     , filepath >= 1.5.2 && < 1.6
+                     , hpdft
+  default-language:    Haskell2010
+  buildable:           True
+
+executable page-api
+  main-is:             Main.hs
+  hs-source-dirs:      examples/page-api
+  build-depends:       base >= 4.20.0 && < 4.23
+                     , directory >= 1.3.9 && < 1.4
+                     , filepath >= 1.5.2 && < 1.6
                      , hpdft
                      , text >= 2.1.2 && < 2.2.2
   default-language:    Haskell2010

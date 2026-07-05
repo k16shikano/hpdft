@@ -4,6 +4,16 @@
 Module      : PDF.Diff
 Description : Paragraph-level text diff between two PDF documents
 License     : MIT
+
+Compare two opened documents page by page using the same paragraph layout as
+'PDF.Page.pageParagraphs'. Emits 'TextChange' records (and optionally a
+'PageCountMismatch' when page counts differ).
+
+@example
+import PDF.Diff (compareDocuments)
+import PDF.Layout (defaultLayoutOptions)
+
+changes <- compareDocuments defaultLayoutOptions docA docB
 -}
 module PDF.Diff
   ( TextChange(..)
@@ -34,6 +44,7 @@ data TextChange
     }
   deriving (Eq, Show)
 
+-- | Paragraph-level diff across two documents (aligned by 1-based page number).
 compareDocuments :: LayoutOptions -> Document -> Document -> PdfResult [TextChange]
 compareDocuments opts docA docB = do
   nA <- pageCount docA

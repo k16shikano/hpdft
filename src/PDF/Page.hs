@@ -6,13 +6,27 @@ Description : Public page-level API for hpdft (0.4)
 License     : MIT
 
 Stable entry points for page enumeration and structured extraction.
-Scripts and downstream tools should prefer this module over
-'PDF.DocumentStructure' internals.
+Prefer this module over 'PDF.DocumentStructure' internals in scripts and
+downstream tools.
+
+Typical workflow: 'openDocument', then 'pageCount' / 'pageRefAt', then
+'pageParagraphs' or 'pageRegions' with 'PDF.Layout.LayoutOptions'.
+
+@example
+import PDF.Document (openDocument)
+import PDF.Layout (defaultLayoutOptions)
+import PDF.Page (pageCount, pageRefAt, pageParagraphs)
+
+extractPage :: Document -> Int -> PdfResult [Text]
+extractPage doc n = do
+  ref <- pageRefAt doc n
+  pageParagraphs doc ref defaultLayoutOptions
 -}
 module PDF.Page
   ( PageRef
   , pageCount
   , pageRefAt
+  , pageRefs
   , pageItems
   , pageGlyphs
   , pageLines
@@ -82,6 +96,13 @@ data PageRegion = PageRegion
   } deriving (Eq, Show)
 
 -- | Per-page paragraph regions without document-level cross-page merge.
+-- Each 'PageRegion' carries the 1-based page number, paragraph index, bounding box,
+-- and paragraph text.
+--
+-- @example
+-- ref <- pageRefAt doc 2
+-- regions <- pageRegions doc ref defaultLayoutOptions
+-- mapM_ print regions
 pageRegions :: Document -> PageRef -> LayoutOptions -> PdfResult [PageRegion]
 pageRegions doc ref opts = do
   items <- pageItems doc ref
