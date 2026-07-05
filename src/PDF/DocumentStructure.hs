@@ -144,12 +144,12 @@ buildIndexEager bytes msec = do
   expanded <- expandObjStm msec parsed
   return (indexPDFObjs expanded)
 
-findObjFromDictWithRef :: Int -> String -> PDFObjIndex -> Maybe Obj
+findObjFromDictWithRef :: Int -> T.Text -> PDFObjIndex -> Maybe Obj
 findObjFromDictWithRef ref name objs = case findDictByRef ref objs of 
   Just d -> findObjFromDict d name
   Nothing -> Nothing
   
-findObjFromDict :: Dict -> String -> Maybe Obj
+findObjFromDict :: Dict -> T.Text -> Maybe Obj
 findObjFromDict d name = M.lookup name d
 
 findDictByRef :: Int -> PDFObjIndex -> Maybe Dict
@@ -157,7 +157,7 @@ findDictByRef ref objs = case findObjsByRef ref objs of
   Just os -> findDict os
   Nothing -> Nothing
 
-findDictOfType :: String -> [Obj] -> Maybe Dict
+findDictOfType :: T.Text -> [Obj] -> Maybe Dict
 findDictOfType typename objs = case findDict objs of
   Just d  -> if isType d then Just d else Nothing 
   Nothing -> Nothing
@@ -232,7 +232,7 @@ decodeStreamBytes d s = do
     Just (PdfName "/FlateDecode") -> Right $ BSL.toStrict $ decompress s
     Nothing -> Right $ BSL.toStrict s
     Just (PdfName f) ->
-      Left (UnsupportedFeature ("Unknown Stream Compression: " ++ f))
+      Left (UnsupportedFeature ("Unknown Stream Compression: " ++ T.unpack f))
     Just _ -> Left (UnsupportedFeature "No Stream Compression Filter.")
   applyPredictor d filtered
 
@@ -305,10 +305,10 @@ findXObject dict objs = case findResourcesDict dict objs of
     otherwise -> M.empty
   Nothing -> M.empty
 
-xobjColorSpace :: Int -> PDFObjIndex -> String
+xobjColorSpace :: Int -> PDFObjIndex -> T.Text
 xobjColorSpace x objs = case findObjFromDictWithRef x "/ColorSpace" objs of
   Just (PdfName cs) -> cs
-  otherwise -> ""
+  otherwise -> T.empty
 
 
 -- find root ref from Trailer Dictionary
@@ -571,7 +571,7 @@ rootRefFromCRStream bs = do
         [] -> Right Nothing
     _ -> Left (BrokenXref "cannot locate cross-reference stream offset")
 
-findRefs :: String -> Dict -> Maybe Int
+findRefs :: T.Text -> Dict -> Maybe Int
 findRefs key dict = case M.lookup key dict of
   Just (ObjRef x) -> Just x
   _               -> Nothing
@@ -631,7 +631,7 @@ pdfObjStm n s =
 
 findFontEncoding d sec os = findEncoding (fontObjs d os) sec os
 
-findEncoding :: Dict -> Maybe Security -> PDFObjIndex -> Map String Encoding
+findEncoding :: Dict -> Maybe Security -> PDFObjIndex -> Map T.Text Encoding
 findEncoding dict sec objs = M.fromListWith (flip const) $
   [ (n, encoding sec r objs) | (n, ObjRef r) <- M.toList dict ]
 
@@ -705,20 +705,20 @@ encodingFromDict sec objs d = case subtype of
       Just (PdfDict dict) -> getCIDSystemInfo dict
       Just (ObjRef r) -> case findDictByRef r objs of
                            Just dict -> getCIDSystemInfo dict
-                           _ -> WithCharSet ""
-      _ -> WithCharSet ""
+                           _ -> WithCharSet T.empty
+      _ -> WithCharSet T.empty
 
     getCIDSystemInfo cidDict =
       let registry = case findObjFromDict cidDict "/Registry" of
                        Just (PdfText r) -> r
-                       _ -> ""
+                       _ -> T.empty
           ordering = case findObjFromDict cidDict "/Ordering" of
                        Just (PdfText o) -> o
-                       _ -> ""
-          cmap = registry ++ "-" ++ ordering
+                       _ -> T.empty
+          cmap = registry `T.append` "-" `T.append` ordering
       in if cmap == "Adobe-Japan1"
          then CIDmap cmap
-         else WithCharSet ""
+         else WithCharSet T.empty
 
 
 charDiff :: [Obj] -> Encoding
@@ -734,7 +734,7 @@ charDiff objs = Encoding $ M.fromListWith (flip const) $ charmap objs 0
         incr x = (truncate x) + 1
 
 
-findCMap :: Dict -> Maybe Security -> PDFObjIndex -> Map String CMap
+findCMap :: Dict -> Maybe Security -> PDFObjIndex -> Map T.Text CMap
 findCMap d sec objs = M.fromListWith (flip const) $
   [ (n, toUnicode sec r objs) | (n, ObjRef r) <- M.toList (fontObjs d objs) ]
 
@@ -914,7 +914,7 @@ dw2Defaults (Just d) = case findObjFromDict d "/DW2" of
   _ -> (880, defaultVerticalW1)
 
 wmodeFromEncoding :: Maybe Obj -> Int
-wmodeFromEncoding (Just (PdfName n)) | "-V" `isSuffixOf` n = 1
+wmodeFromEncoding (Just (PdfName n)) | "-V" `T.isSuffixOf` n = 1
 wmodeFromEncoding _ = 0
 
 simpleWidthAt :: Int -> [Obj] -> Double -> Int -> Double

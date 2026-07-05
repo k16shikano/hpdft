@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Main where
 
 import PDF.Definition
@@ -6,6 +8,7 @@ import PDF.DocumentStructure (findDictOfType, findKids, findObjsByRef, findPages
 import PDF.Error (PdfError(..), PdfResult)
 import PDF.Interpret (Glyph(..), PageItem(..), Rect(..), interpretPageItems)
 
+import qualified Data.Text as T
 import Control.Monad (forM_)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
@@ -43,7 +46,7 @@ inspect doc pageNo full = do
           "G " ++ show (glyphText g)
           ++ " x=" ++ show (glyphX g) ++ " y=" ++ show (glyphY g)
           ++ " w=" ++ show (glyphWidth g) ++ " size=" ++ show (glyphSize g)
-          ++ " wm=" ++ show (glyphWMode g) ++ " font=" ++ glyphFont g
+          ++ " wm=" ++ show (glyphWMode g) ++ " font=" ++ T.unpack (glyphFont g)
         ItemGraphic r -> putStrLn $
           "R x0=" ++ show (rectX0 r) ++ " y0=" ++ show (rectY0 r)
           ++ " x1=" ++ show (rectX1 r) ++ " y1=" ++ show (rectY1 r)

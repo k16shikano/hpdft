@@ -18,6 +18,8 @@ maintainer:          k16.shikano@gmail.com
 category:            PDF
 build-type:          Simple
 extra-source-files:  README.md
+                     , CHANGELOG.md
+                     , docs/0.3-roadmap.md
 
 data-dir:            data/
 
@@ -52,7 +54,7 @@ library
                      , binary >= 0.8.9 && < 0.9
                      , bytestring >= 0.11.5 && < 0.13
                      , containers >= 0.7 && < 0.9
-                     , cryptonite >= 0.30 && < 0.35
+                     , crypton >= 0.34 && < 0.36
                      , directory >= 1.3.9 && < 1.4
                      , file-embed >= 0.0.16 && < 0.1
                      , memory >= 0.18.0 && < 0.19

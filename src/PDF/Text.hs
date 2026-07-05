@@ -45,10 +45,10 @@ initstate = PSR { linex=0
                 , top=0.0
                 , bottom=0.0
                 , fontfactor=1
-                , curfont=""
+                , curfont=T.empty
                 , fontmaps=Map.empty
                 , cmaps=Map.empty
-                , colorspace=""
+                , colorspace=T.empty
                 , xcolorspaces=[]
                 , warnings=[]
                 }
@@ -140,7 +140,7 @@ assembleTagged root refs pages =
             (stripHeadersFooters (length pages)
                (map (linesFromGlyphs . artifactGlyphs) pages))
 
-      lastPathType [] = ""
+      lastPathType [] = T.empty
       lastPathType path = last path
 
       appendMCID (acc, prevParaEnd) (path, page, mcid) =
@@ -166,7 +166,7 @@ assembleTagged root refs pages =
       withArtifacts = foldl' appendArtifacts structText refs
   in if T.null withArtifacts then "\n" else withArtifacts `T.append` "\n"
 
-paragraphEnd :: String -> Bool
+paragraphEnd :: T.Text -> Bool
 paragraphEnd stype = stype `elem`
   [ "/P", "/H1", "/H2", "/H3", "/H4", "/H5", "/H6"
   , "/LI", "/LBody", "/TD", "/TH", "/Caption", "/Title"

@@ -242,10 +242,10 @@ testFontInfo = FontInfo
 verticalFontInfo :: FontInfo
 verticalFontInfo = testFontInfo {fiWMode = 1}
 
-testResources :: M.Map String Obj
+testResources :: M.Map T.Text Obj
 testResources = M.fromList [("/Font", PdfDict M.empty)]
 
-testFonts :: M.Map String FontInfo
+testFonts :: M.Map T.Text FontInfo
 testFonts = M.fromList [("/F1", testFontInfo)]
 
 runInterp :: String -> [Glyph]

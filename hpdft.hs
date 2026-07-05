@@ -27,6 +27,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import Data.Text.Lazy as TL (unpack)
 import Data.Text.Lazy.Encoding as TL
+import qualified Data.Text as T
 import Data.List (nub, find, intercalate)
 import Data.Maybe (fromMaybe)
 
@@ -284,7 +285,7 @@ showTitle filename mpw = do
   d <- runOrDie (return (docInfoDict doc))
   let title = 
         case findObjFromDict d "/Title" of
-          Just (PdfText s) -> s
+          Just (PdfText s) -> T.unpack s
           Just x -> ppObj x
           Nothing -> "No title anyway"
   putStrLn title

@@ -181,13 +181,13 @@ pdfarraySec sec objNum =
 pdflettersSec :: Maybe Security -> Int -> Parser Obj
 pdflettersSec sec objNum = PdfText <$> parsePdfLettersSec sec objNum
 
-parsePdfLettersSec :: Maybe Security -> Int -> Parser String
+parsePdfLettersSec :: Maybe Security -> Int -> Parser T.Text
 parsePdfLettersSec sec objNum = do
   encrypted <- pdfLiteralBytes
   let body = decryptString sec objNum 0 encrypted
   case parseOnly parsePdfLetters (BS.cons '(' (BS.snoc body ')')) of
     Right s -> return s
-    Left _  -> return $ BS.unpack body
+    Left _  -> return $ T.pack $ BS.unpack body
 
 pdfLiteralBytes :: Parser BS.ByteString
 pdfLiteralBytes = BS.pack <$> (char '(' *> manyTill pdfEscapedChar (char ')'))
@@ -216,11 +216,11 @@ pdfhexSec sec objNum = hexSec sec objNum
           lets <- BS.pack <$> manyTill (oneOf "0123456789abcdefABCDEF") (try $ char '>')
           let decrypted = decryptString sec objNum 0 (decodeHexBytes lets)
           case parseOnly ((try $ string "feff" <|> string "FEFF") *> (many1 (oneOf "0123456789abcdefABCDEF"))) (BS.pack $ BS.unpack decrypted) of
-            Right s -> return $ PdfHex (pdfhexletter (BS.pack s))
+            Right s -> return $ PdfHex (T.pack $ pdfhexletter (BS.pack s))
             Left _ ->
               case parseOnly parsePdfLetters (BS.cons '(' (BS.snoc decrypted ')')) of
                 Right t -> return (PdfText t)
-                Left _  -> return (PdfHex (BS.unpack decrypted))
+                Left _  -> return (PdfHex (T.pack $ BS.unpack decrypted))
 
 decodeHexBytes :: BS.ByteString -> BS.ByteString
 decodeHexBytes bs =
@@ -229,7 +229,7 @@ decodeHexBytes bs =
       hexByte s = hexCharSafe s
   in BS.pack $ map hexByte pairs
 
-lookupDictInt :: Dict -> String -> Maybe Int
+lookupDictInt :: Dict -> T.Text -> Maybe Int
 lookupDictInt d key = case M.lookup key d of
   Just (PdfNumber x) | x >= 0 -> Just (truncate x)
   _ -> Nothing
@@ -325,17 +325,17 @@ pdfarray :: Parser Obj
 pdfarray = PdfArray <$> (string "[" >> spaces *> manyTill pdfobj (try $ spaces >> string "]"))
 
 pdfname :: Parser Obj
-pdfname = PdfName . BS.unpack <$> (BS.append <$> string "/" <*> (BS.pack <$> manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/"))) <* spaces
+pdfname = PdfName . T.pack . BS.unpack <$> (BS.append <$> string "/" <*> (BS.pack <$> manyTill anyChar (try $ lookAhead $ oneOf "><][)( \n\r/"))) <* spaces
 
 pdfletters :: Parser Obj
 pdfletters = PdfText <$> parsePdfLetters
 
-parsePdfLetters :: Parser String
-parsePdfLetters = concat <$> (char '(' *>
+parsePdfLetters :: Parser T.Text
+parsePdfLetters = T.pack <$> (concat <$> (char '(' *>
                                manyTill (choice [ try pdfutf
                                                 , try pdfoctutf
                                                 , pdfletter])
-                               (try $ char ')'))
+                               (try $ char ')')))
   where pdfletter =
           choice [ "(" <$ try (string "\\(")
                  , ")" <$ try (string "\\)")
@@ -364,7 +364,7 @@ parsePdfLetters = concat <$> (char '(' *>
           str <- string "\\376\\377" *> manyTill pdfletter (lookAhead $ string ")")
           return $ utf16be $ concat str
         
-utf16be = T.unpack . decodeUtf16BEWith strictDecode . BS.pack
+utf16be = T.unpack . decodeUtf16BEWith strictDecode . BS.pack  -- used only for String concat in pdfutf
 
 pdfstream :: Parser Obj
 pdfstream = PdfStream <$> stream
@@ -385,8 +385,8 @@ pdfhex = PdfHex <$> hex
           char '<'
           lets <- BS.pack <$> manyTill (oneOf "0123456789abcdefABCDEF") (try $ char '>')
           case parseOnly ((try $ string "feff" <|> string "FEFF") *> (many1 (oneOf "0123456789abcdefABCDEF"))) lets of
-            Right s -> return $ pdfhexletter $ BS.pack s
-            Left e -> return . BS.unpack $ lets
+            Right s -> return $ T.pack $ pdfhexletter $ BS.pack s
+            Left _ -> return $ T.pack $ BS.unpack lets
 
 pdfhexletter s = case parseOnly (concat <$> many1 pdfhexutf16be) s of
   Right t -> utf16be t
@@ -424,7 +424,7 @@ rrefs = do
     _         -> fail ("invalid object reference: " ++ objnum)
 
 objother :: Parser Obj
-objother = ObjOther . show <$> (W.takeTill (\w-> w == 10 || w == 13) <* (W.word8 10 <|> W.word8 13))
+objother = ObjOther . T.pack . show <$> (W.takeTill (\w-> w == 10 || w == 13) <* (W.word8 10 <|> W.word8 13))
 
 parseRefsArray :: [Obj] -> [Int]
 parseRefsArray (ObjRef x:y) = (x:parseRefsArray y)

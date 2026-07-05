@@ -18,11 +18,12 @@ import PDF.DocumentStructure
   )
 import PDF.Error (PdfError(..), PdfResult)
 
+import qualified Data.Text as T
 import Data.List (foldl')
 import qualified Data.Set as S
 
 data StructElem = StructElem
-  { seType :: String
+  { seType :: T.Text
   , seKids :: [StructKid]
   } deriving (Eq, Show)
 
@@ -62,19 +63,19 @@ parseStructDict d pg objs visited depth = do
   let pg' = pageRefFromDict d pg objs
       stype = structTypeName d
   kids <- parseKids (findObjFromDict d "/K") pg' objs visited (depth + 1)
-  if null stype && null kids
+  if T.null stype && null kids
      then return Nothing
      else return (Just (StructElem stype kids))
 
-structTypeName :: Dict -> String
+structTypeName :: Dict -> T.Text
 structTypeName d =
   case findObjFromDict d "/S" of
     Just (PdfName n) -> n
     _ -> case findObjFromDict d "/Type" of
       Just (PdfName n) -> n
-      _ -> ""
+      _ -> T.empty
 
-logicalOrder :: StructElem -> [([String], Int, Int)]
+logicalOrder :: StructElem -> [([T.Text], Int, Int)]
 logicalOrder root = walk [] root
   where
     walk ancestors (StructElem stype kids) =

@@ -19,6 +19,7 @@ import Data.Attoparsec.Combinator
 import Control.Applicative
 
 import qualified Data.Map as Map
+import qualified Data.Text as T
 
 import PDF.Definition
 
@@ -68,7 +69,7 @@ subtable c (EncRecord pid eid offset) =
        Right b -> b
        Left _  -> []
 
-parserByFormat :: Integer -> Parser [(Int, String)]
+parserByFormat :: Integer -> Parser [(Int, T.Text)]
 parserByFormat 14 = do
   format <- getUint16
   length <- getUint32
@@ -85,13 +86,13 @@ parserByFormat 12 = do
   return $ concat seqMapGroups
 
   where
-    seqMapGroup :: Parser [(Int, String)]
+    seqMapGroup :: Parser [(Int, T.Text)]
     seqMapGroup = do
       startCharCode <- fromInteger <$> getUint32
       endCharCode <- fromInteger <$> getUint32
       startGlyphID  <- fromInteger <$> getUint32
       return $ toCmap startGlyphID [startCharCode .. endCharCode]
-    toCmap gid range = zip [gid ..] $ map ((:[]).chr) range
+    toCmap gid range = zip [gid ..] $ map (T.singleton . chr) range
 
 parserByFormat 4 = do
   format <- getUint16
@@ -117,15 +118,15 @@ parserByFormat 4 = do
       in (getGlyphID s e d rest):(getGlyphIDs ss ee dd rest')
 
     getGlyphID :: Int -> Int -> Int -> ByteString
-                -> [(Int, String)]
+                -> [(Int, T.Text)]
     getGlyphID start end delta rest =
       let offset = fromInteger $ fromBytes $ BS.take 2 rest
       in 
         if offset == 0
         then zip (map (+delta) [start .. end])
-                 (map ((:[]).chr) [start .. end])
+                 (map (T.singleton . chr) [start .. end])
         else zip (map (getRangeOffsetGlyphID start offset rest) [start .. end])
-                 (map ((:[]).chr) [start .. end])
+                 (map (T.singleton . chr) [start .. end])
              
     getRangeOffsetGlyphID s o bytestring c =
       fromInteger $ fromBytes $ BS.take 2 $ BS.drop (o + 2 * (c - s)) bytestring

@@ -10,6 +10,7 @@ module PDF.Encrypt
 
 import PDF.Definition
 
+import qualified Data.Text as T
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import Data.Bits (shiftL, shiftR, xor, (.&.))
@@ -111,17 +112,17 @@ encryptMetadata d = case dictLookup d "/EncryptMetadata" of
   Just (PdfBool False) -> False
   _ -> True
 
-dictLookup :: Dict -> String -> Maybe Obj
+dictLookup :: Dict -> T.Text -> Maybe Obj
 dictLookup d name = M.lookup name d
 
-dictInt :: Dict -> String -> Maybe Int
+dictInt :: Dict -> T.Text -> Maybe Int
 dictInt d name = case dictLookup d name of
   Just (PdfNumber n) -> Just (truncate n)
   _ -> Nothing
 
-dictBytes :: Dict -> String -> Maybe BS.ByteString
+dictBytes :: Dict -> T.Text -> Maybe BS.ByteString
 dictBytes d name = case dictLookup d name of
-  Just (PdfText s) -> Just (BSC.pack s)
+  Just (PdfText s) -> Just (BSC.pack (T.unpack s))
   Just (PdfHex h)   -> hexToBytes h
   _ -> Nothing
 
@@ -132,12 +133,13 @@ dictFirstId d = case dictLookup d "/ID" of
 
 idEntryBytes :: Obj -> Maybe BS.ByteString
 idEntryBytes (PdfHex h)   = hexToBytes h
-idEntryBytes (PdfText s)  = hexToBytes s <|> Just (BSC.pack s)
+idEntryBytes (PdfText s)  = hexToBytes s <|> Just (BSC.pack (T.unpack s))
 idEntryBytes _            = Nothing
 
-hexToBytes :: String -> Maybe BS.ByteString
-hexToBytes [] = Just BS.empty
-hexToBytes h  = Just $ BS.pack $ map (fromIntegral . fst . head . readHex) (pairs h)
+hexToBytes :: T.Text -> Maybe BS.ByteString
+hexToBytes h
+  | T.null h = Just BS.empty
+  | otherwise = Just $ BS.pack $ map (fromIntegral . fst . head . readHex) (pairs (T.unpack h))
   where
     pairs [] = []
     pairs s  = take 2 s : pairs (drop 2 s)

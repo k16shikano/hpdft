@@ -126,7 +126,7 @@ colorSpace = do
                , try $ "DeviceGray" <$ (digitParam <* spaces) <* oneOf "gG" <* spaces
                , try $ "DeviceCMYK" <$ (many1 (digitParam <* spaces) <* oneOf "kK" <* spaces)
                ] 
-  updateState (\s -> s {colorspace = gs})
+  updateState (\s -> s {colorspace = T.pack gs})
   return $ T.pack gs
 
 dashPattern :: PSParser T.Text
@@ -150,7 +150,7 @@ xObject = do
   st <- getState
   let xobjcs = xcolorspaces st
 --  updateState (\s -> s {colorspace = xobjcs})
-  return $ map T.pack xobjcs
+  return xobjcs
 
 pdfopBT :: PSParser T.Text
 pdfopBT = do
@@ -360,14 +360,14 @@ adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
 
 lookupUcs :: CMap -> Int -> PSParser T.Text
 lookupUcs m h = case Map.lookup h m of
-  Just ucs -> return $ T.pack ucs
+  Just ucs -> return ucs
   Nothing
     | Map.null m -> case Map.lookup h adobeJapanOneSixMap of
         Just cs -> return $ T.pack $ BSLU.toString cs
         Nothing -> do
           updateState (\s -> s {warnings = UnmappedCid h : warnings s})
           return $ adobeOneSix h
-    | otherwise -> return $ T.pack [chr h]
+    | otherwise -> return $ T.singleton (chr h)
 
 cidletters = choice [try hexletter, try octletter]
 
@@ -391,7 +391,7 @@ octletter = do
   o <- octnum
   lookupUcs cmap o
 
-psletter :: Map.Map Char String -> PSParser T.Text
+psletter :: Map.Map Char T.Text -> PSParser T.Text
 psletter fontmap = do
   c <- try (char '\\' >> oneOf "\\()")
        <|>
@@ -402,21 +402,21 @@ psletter fontmap = do
     where replaceWithDiff m c' = case Map.lookup c' m of
             Just s -> replaceWithCharDict s
             Nothing -> T.pack [c']
-          replaceWithCharDict s = case Map.lookup s pdfcharmap of
+          replaceWithCharDict s = case Map.lookup (T.unpack s) pdfcharmap of
             Just cs -> cs
-            Nothing -> if "/uni" `isPrefixOf` s
+            Nothing -> if "/uni" `T.isPrefixOf` s
                        then readUni s
-                       else T.pack s
-          readUni s = case readHex (drop 4 s) of
+                       else s
+          readUni s = case readHex (T.unpack $ T.drop 4 s) of
             [(i,"")] -> T.singleton $ chr i
             [(i,x)] -> T.pack (chr i : " ")
-            _ -> T.pack s
+            _ -> s
           octToChar [(o,"")] = case Map.lookup o extendedAscii of
             Just c -> c
             Nothing -> chr o
           octToChar _ = '?'
 
-cidletter :: String -> PSParser T.Text
+cidletter :: T.Text -> PSParser T.Text
 cidletter _ = do
   o1 <- octnum
   o2 <- octnum
@@ -457,7 +457,7 @@ pdfopTf = do
   spaces
   st <- getState
   let ff = fontfactor st
-  updateState (\s -> s{ curfont = font
+  updateState (\s -> s{ curfont = T.pack font
                       , fontfactor = t
                       , linex = t
                       , liney = t})

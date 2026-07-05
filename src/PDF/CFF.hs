@@ -21,6 +21,7 @@ import Data.Attoparsec.Combinator
 import Control.Applicative
 
 import qualified Data.Map as Map
+import qualified Data.Text as T
 
 import PDF.Definition
 
@@ -51,7 +52,7 @@ encoding c =
           let idx = fromInteger (char - 390 - 1)
           in (enc, stringToText $ safeAt strings idx)
           | s > 95 -> (enc, sidToText s)
-          | otherwise -> (enc, [enc])
+          | otherwise -> (enc, T.singleton enc)
 
     safeAt xs i = if i >= 0 && i < length xs then xs !! i else ""
 
@@ -59,13 +60,13 @@ encoding c =
     stringToText "a113" = "‡"
     stringToText "a114" = "・"
     stringToText "trianglesolid" = "▲"
-    stringToText x = "[CFF:String " <> x <> "]"
+    stringToText x = "[CFF:String " <> T.pack x <> "]"
 
     -- pre-defined in Appendix C of CFF specs
     sidToText n =
       let i = fromInteger n
           chars = complementSID 0 predefinedChars
-      in if i >= 0 && i < length chars then [chars !! i] else "?"
+      in if i >= 0 && i < length chars then T.singleton (chars !! i) else "?"
 
 parseTopDictInd :: ByteString -> [ByteString]
 parseTopDictInd c = case parseOnly (header >> index *> index) c of

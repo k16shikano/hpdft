@@ -53,7 +53,7 @@ skipHeader = do
   spaces
   return ()
 
-bfchar :: Parser [(Int, String)]
+bfchar :: Parser [(Int, T.Text)]
 bfchar = do
   many1 digit
   spaces 
@@ -69,10 +69,10 @@ bfchar = do
       maybeToList (Just x) = [x]
       toCmap cid ucs =
         case (readHexSafe cid, readHexSafe (take 4 ucs)) of
-          (Just c, Just u) -> Just (c, [chr u])
+          (Just c, Just u) -> Just (c, T.singleton (chr u))
           _                -> Nothing
 
-bfrange :: Parser [[(Int, String)]]
+bfrange :: Parser [[(Int, T.Text)]]
 bfrange = do
   d <- many1 digit
   spaces 
@@ -101,7 +101,7 @@ bfrange = do
                                           Nothing -> []
                                [] -> []
                         else mapMaybe gethex src
-      toCmap range ucs = zip range (map ((:[]).chr) ucs)
+      toCmap range ucs = zip range (map (T.singleton . chr) ucs)
 
 
 hexletters :: Parser String
@@ -123,4 +123,3 @@ hexletterArray = do
   lets <- manyTill hexletters (try $ spaces >> char ']')
   spaces
   return $ intercalate "\n" lets
-

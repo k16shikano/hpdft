@@ -27,6 +27,8 @@ import PDF.DocumentStructure
 import PDF.Error (PdfError(..), PdfResult, note)
 import PDF.Object (parseRefsArray, parsePdfLetters)
 
+import qualified Data.Text as T
+
 data PDFOutlines = PDFOutlinesTree [PDFOutlines]
                  | PDFOutlinesEntry { dest :: Int
                                     , text :: String
@@ -144,11 +146,11 @@ outlineFromRoot rootref objs =
 findTitle :: Dict -> PDFObjIndex -> PdfResult String
 findTitle dict objs =
   case findObjFromDict dict "/Title" of
-    Just (PdfText s) -> case parseOnly parsePdfLetters (BS.pack s) of
-      Right t -> Right t
-      Left _  -> Right s
+    Just (PdfText s) -> case parseOnly parsePdfLetters (BS.pack (T.unpack s)) of
+      Right t -> Right (T.unpack t)
+      Left _  -> Right (T.unpack s)
     Just (ObjRef r) -> case findObjsByRef r objs of
-      Just [PdfText s] -> Right s
+      Just [PdfText s] -> Right (T.unpack s)
       Just s -> Left (ParseError ("Unknown title object: " ++ show s) BS.empty)
       Nothing -> Left (MissingObject r)
     Just x -> Right (show x)

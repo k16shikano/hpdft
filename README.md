@@ -1,13 +1,23 @@
 # hpdft (Haskell PDF Tools)
 
-hpdft is a PDF parsing tool. It can also be used as a command to grab text, metadata outline (i.e. table of contents) from PDF. 
+hpdft is a PDF parsing tool and library. It extracts text, metadata, and outlines (table of contents) from PDF files.
 
-Command usage: 
+## Quick start
+
+```bash
+cabal install
+hpdft document.pdf              # default: tagged → geometry extraction
+hpdft -p 3 document.pdf         # page 3 only
+hpdft --legacy document.pdf     # pre-0.3 stream-order extractor
+```
+
+## Command usage
 
 ```
 hpdft [-p|--page PAGE] [-r|--ref REF] [-g|--grep RegExp] [-R|--refs]
-             [--geom] [--tagged] [--legacy] [-T|--title] [-I|--info]
-             [-O|--toc] [--trailer] [-P|--password PASSWORD] FILE
+             [--geom] [--tagged] [--legacy] [--footnotes]
+             [-T|--title] [-I|--info] [-O|--toc] [--trailer]
+             [-P|--password PASSWORD] FILE
 
 Available options:
   -p,--page PAGE           Page number (nomble)
@@ -32,10 +42,42 @@ PDF structure when the document has a usable one, and otherwise falls
 back to geometry-based paragraph reconstruction (equivalent to `--geom`).
 Use `--legacy` for the pre-0.3 stream-order extractor.
 
-## install
+## Install
 
-Clone this repository and do cabal-install.
+Clone this repository and run cabal-install.
 
+```bash
+cabal install
 ```
-$ cabal install
+
+## Development
+
+Requires GHC 9.14+ (see `hpdft.cabal`).
+
+```bash
+cabal build
+cabal test                              # golden (22) + unit (267)
+bash scripts/verify_text.sh             # compare all fixture outputs
+cabal run interpret-page -- FILE PAGE   # debug glyph positions
 ```
+
+### Documentation
+
+- [0.3 roadmap & remaining tasks](docs/0.3-roadmap.md) — architecture, completed phases, TODO
+- [Changelog](CHANGELOG.md) — release notes
+
+### Library modules (0.3)
+
+| Module | Purpose |
+|--------|---------|
+| `PDF.Document` | Single-read document handle |
+| `PDF.Text` | Text extraction drivers |
+| `PDF.Interpret` | Content-stream geometry interpreter |
+| `PDF.Layout` | Line/paragraph reconstruction |
+| `PDF.Structure` | Tagged PDF logical structure |
+| `PDF.Error` | Typed errors and warnings |
+
+## Version
+
+Current development: **0.3.0.0** on branch `feature/0.3-error-model`.
+Released on `master`: **0.2.0.0**.

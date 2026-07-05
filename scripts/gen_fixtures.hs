@@ -1,6 +1,6 @@
 #!/usr/bin/env cabal
 {- cabal:
-build-depends: base, bytestring, directory, filepath, zlib, cryptonite, memory
+build-depends: base, bytestring, directory, filepath, zlib, crypton, memory
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}

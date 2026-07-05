@@ -51,13 +51,13 @@ data Glyph = Glyph
   , glyphY        :: Double
   , glyphWidth    :: Double
   , glyphSize     :: Double
-  , glyphFont     :: String
+  , glyphFont     :: T.Text
   , glyphWMode    :: Int
   , glyphMCID     :: Maybe Int
   } deriving (Eq, Show)
 
 data MCEntry = MCEntry
-  { mcTag  :: String
+  { mcTag  :: T.Text
   , mcMCID :: Maybe Int
   } deriving (Eq, Show)
 
@@ -72,7 +72,7 @@ data PageItem = ItemGlyph Glyph | ItemGraphic Rect deriving (Eq, Show)
 
 data GState = GState
   { ctm        :: Matrix
-  , gsFontRes  :: Maybe String
+  , gsFontRes  :: Maybe T.Text
   , gsFont     :: Maybe FontInfo
   , gsFontSize :: Double
   , gsCharSp   :: Double
@@ -98,7 +98,7 @@ data IState = IState
   , isSec         :: Maybe Security
   , isObjs        :: PDFObjIndex
   , isRes         :: Dict
-  , fontOverrides :: M.Map String FontInfo
+  , fontOverrides :: M.Map T.Text FontInfo
   , operandStack  :: [Obj]
   , mcStack       :: [MCEntry]
   }
@@ -144,11 +144,11 @@ interpretContentItems :: Maybe Security -> PDFObjIndex -> Dict -> BSL.ByteString
 interpretContentItems sec objs res bytes =
   interpretContentWithFontsItems sec objs res M.empty bytes
 
-interpretContentWithFonts :: Maybe Security -> PDFObjIndex -> Dict -> M.Map String FontInfo -> BSL.ByteString -> [Glyph]
+interpretContentWithFonts :: Maybe Security -> PDFObjIndex -> Dict -> M.Map T.Text FontInfo -> BSL.ByteString -> [Glyph]
 interpretContentWithFonts sec objs res fonts bytes =
   [g | ItemGlyph g <- interpretContentWithFontsItems sec objs res fonts bytes]
 
-interpretContentWithFontsItems :: Maybe Security -> PDFObjIndex -> Dict -> M.Map String FontInfo -> BSL.ByteString -> [PageItem]
+interpretContentWithFontsItems :: Maybe Security -> PDFObjIndex -> Dict -> M.Map T.Text FontInfo -> BSL.ByteString -> [PageItem]
 interpretContentWithFontsItems sec objs res fonts bytes =
   let st0 = initialIState sec objs res
       st1 = st0 {fontOverrides = fonts}
@@ -357,7 +357,7 @@ execOp "EMC" st =
     []       -> st
 execOp _ st = st
 
-pushMCEntry :: String -> Maybe Int -> IState -> IState
+pushMCEntry :: T.Text -> Maybe Int -> IState -> IState
 pushMCEntry tag mcid st =
   st {mcStack = MCEntry tag mcid : mcStack st}
 
@@ -462,7 +462,7 @@ popGStateSt st =
 modifyGStateSt :: (GState -> GState) -> IState -> IState
 modifyGStateSt f st = st {gsCur = f (gsCur st)}
 
-resolveFontSt :: String -> Double -> IState -> IState
+resolveFontSt :: T.Text -> Double -> IState -> IState
 resolveFontSt fontName size st =
   let fi = lookupFont (isSec st) (isObjs st) (isRes st) fontName st
   in modifyGStateSt
@@ -474,7 +474,7 @@ lookupFont sec objs res fontName st =
     Just fi -> Just fi
     Nothing -> lookupFontResource sec objs res fontName
 
-lookupFontResource :: Maybe Security -> PDFObjIndex -> Dict -> String -> Maybe FontInfo
+lookupFontResource :: Maybe Security -> PDFObjIndex -> Dict -> T.Text -> Maybe FontInfo
 lookupFontResource sec objs res fontName =
   case findObjFromDict res "/Font" of
     Just (PdfDict fd) -> fontFromDict sec objs fd fontName
@@ -484,7 +484,7 @@ lookupFontResource sec objs res fontName =
         Nothing -> Nothing
     _ -> Nothing
 
-fontFromDict :: Maybe Security -> PDFObjIndex -> Dict -> String -> Maybe FontInfo
+fontFromDict :: Maybe Security -> PDFObjIndex -> Dict -> T.Text -> Maybe FontInfo
 fontFromDict sec objs fd name =
   case M.lookup name fd of
     Just (ObjRef r) -> Just (fontInfo sec r objs)
@@ -581,18 +581,18 @@ bytesToCodes fi bytes =
 codeToUnicode :: FontInfo -> Int -> T.Text
 codeToUnicode fi code =
   case M.lookup code (fiToUnicode fi) of
-    Just s -> T.pack s
+    Just s -> s
     Nothing -> encodingUnicode (fiEncoding fi) code
 
 encodingUnicode :: Encoding -> Int -> T.Text
 encodingUnicode (Encoding enc) code =
   case M.lookup (chr code) enc of
     Just glyph ->
-      case M.lookup glyph pdfcharmap of
+      case M.lookup (T.unpack glyph) pdfcharmap of
         Just u -> u
-        Nothing -> if "/uni" `isPrefixOf` glyph
+        Nothing -> if "/uni" `T.isPrefixOf` glyph
                    then readUniGlyph glyph
-                   else T.pack glyph
+                   else glyph
     Nothing -> T.singleton (safeChr code)
 encodingUnicode (CIDmap "Adobe-Japan1") code =
   case M.lookup code adobeJapanOneSixMap of
@@ -602,11 +602,11 @@ encodingUnicode (CIDmap _) code = T.singleton (safeChr code)
 encodingUnicode WithCharSet{} code = T.singleton (safeChr code)
 encodingUnicode NullMap code = T.singleton (safeChr code)
 
-readUniGlyph :: String -> T.Text
+readUniGlyph :: T.Text -> T.Text
 readUniGlyph s =
-  case Num.readHex (drop 4 s) of
+  case Num.readHex (T.unpack $ T.drop 4 s) of
     [(i, "")] -> T.singleton (chr i)
-    _         -> T.pack s
+    _         -> s
 
 safeChr :: Int -> Char
 safeChr n
@@ -642,7 +642,7 @@ dist :: Double -> Double -> Double -> Double -> Double
 dist x1 y1 x2 y2 =
   sqrt ((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
 
-invokeXObjectSt :: String -> IState -> IState
+invokeXObjectSt :: T.Text -> IState -> IState
 invokeXObjectSt name st =
   case findObjFromDict (isRes st) "/XObject" of
     Just (PdfDict xd) -> case M.lookup name xd of
@@ -688,8 +688,8 @@ formMatrix d = case M.lookup "/Matrix" d of
   _ -> identity
 
 objBytes :: Obj -> Maybe [Int]
-objBytes (PdfText s) = Just (map ord s)
-objBytes (PdfHex h) = Just (hexPairs h)
+objBytes (PdfText s) = Just (map ord (T.unpack s))
+objBytes (PdfHex h) = Just (hexPairs (T.unpack h))
 objBytes _ = Nothing
 
 tjElems :: Obj -> Maybe [TJElem]
@@ -825,14 +825,14 @@ readName bs =
   let body = BSL.dropWhile (not . nameEnd8) (BSL.tail bs)
       len = BSL.length bs - BSL.length body
   in if len > 1
-     then Just (TokOperand (PdfName (map w2c (BSL.unpack (BSL.take len bs)))), body)
+     then Just (TokOperand (PdfName (T.pack (map w2c (BSL.unpack (BSL.take len bs))))), body)
      else Nothing
 
 readLiteral :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
 readLiteral bs =
   case parseLiteral (map w2c (BSL.unpack (BSL.tail bs))) 1 [] of
     Nothing -> Nothing
-    Just (bytes, rest) -> Just (TokOperand (PdfText (map chr bytes)), BSLC.pack rest)
+    Just (bytes, rest) -> Just (TokOperand (PdfText (T.pack (map chr bytes))), BSLC.pack rest)
 
 parseLiteral :: String -> Int -> [Int] -> Maybe ([Int], String)
 parseLiteral [] _ _ = Nothing
@@ -862,7 +862,7 @@ readHexString bs =
   let hex = BSL.takeWhile hexDigit8 (BSL.tail bs)
       rest = BSL.drop (1 + BSL.length hex) bs
   in case BSL.uncons rest of
-       Just (62, r) -> Just (TokOperand (PdfHex (map w2c (BSL.unpack hex))), r)
+       Just (62, r) -> Just (TokOperand (PdfHex (T.pack (map w2c (BSL.unpack hex)))), r)
        _ -> Nothing
 
 readArray :: BSL.ByteString -> Maybe (Token, BSL.ByteString)

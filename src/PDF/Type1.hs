@@ -20,6 +20,7 @@ import Data.Attoparsec.Combinator
 import Control.Applicative
 
 import qualified Data.Map as Map
+import qualified Data.Text as T
 
 import PDF.Definition
 
@@ -36,7 +37,7 @@ encoding c = case parseOnly encodingArray c of
   Right ss -> Encoding $ Map.fromListWith (flip const) ss
   Left _   -> NullMap
 
-encodingArray :: Parser [(Char,String)]
+encodingArray :: Parser [(Char,T.Text)]
 encodingArray = do
   manyTill anyChar (try $ lookAhead $ string "/Encoding")
   string "/Encoding"
@@ -50,12 +51,12 @@ encodingArray = do
     where
       skipFor = manyTill anyChar (try $ string "for")
 
-specialEncodings :: Parser (Char, String)
+specialEncodings :: Parser (Char, T.Text)
 specialEncodings = do
   spaces 
   (,) <$> (spaces >> string "dup" >> spaces *> index)
     <*> (spaces >> charName <* spaces)
   where
     index = (chr . read) <$> many1 digit
-    charName = manyTill anyChar (try $ (spaces >> string "put"))
+    charName = T.pack <$> manyTill anyChar (try $ (spaces >> string "put"))
 
