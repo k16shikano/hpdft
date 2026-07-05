@@ -266,7 +266,11 @@ interpretGeometryResults =
       , assertBool "interpret vertical produces one segment" (length vert == 1)
       , assertGlyphOrigin "interpret vertical origin" 100 200 (head vert)
       , assertGlyphWidth "interpret vertical width" 5 (head vert)
+      , assertBool "interpret hex Tj without space" (length hexTj == 1)
+      , assertTextEq "interpret hex Tj text" (T.pack "AB") (glyphText (head hexTj))
       ]
+  where
+    hexTj = runInterp "BT /F1 10 Tf 0 0 Td <4142>Tj ET"
 
 parseCIDWidthsResults :: [Result]
 parseCIDWidthsResults =

@@ -17,6 +17,7 @@ import PDF.DocumentStructure
   , findObjsByRef
   , findResourcesDict
   , fontInfo
+  , fontInfoFromDict
   , rawStreamByRef
   )
 import PDF.Matrix
@@ -302,6 +303,7 @@ fontFromDict :: Maybe Security -> PDFObjIndex -> Dict -> String -> Maybe FontInf
 fontFromDict sec objs fd name =
   case M.lookup name fd of
     Just (ObjRef r) -> Just (fontInfo sec r objs)
+    Just (PdfDict d) -> Just (fontInfoFromDict sec objs d)
     _ -> Nothing
 
 textTdSt :: Double -> Double -> IState -> IState
@@ -655,7 +657,7 @@ readHexString bs =
   let hex = BSL.takeWhile hexDigit8 (BSL.tail bs)
       rest = BSL.drop (1 + BSL.length hex) bs
   in case BSL.uncons rest of
-       Just (62, r) -> Just (TokOperand (PdfHex (map w2c (BSL.unpack hex))), BSL.tail r)
+       Just (62, r) -> Just (TokOperand (PdfHex (map w2c (BSL.unpack hex))), r)
        _ -> Nothing
 
 readArray :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
