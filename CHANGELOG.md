@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0.0 (2026-07-05)
+
+### Added
+
+- `PDF.Page` — stable public API for page enumeration and structured extraction
+- `pageCount`, `pageRefAt`, `pageItems`, `pageGlyphs`, `pageLines`, `pageParagraphs`, `pageRegions`
+- `PageRegion` for per-page paragraph regions (page number, index, bbox, text)
+- Unit tests for page API on fixture documents
+
+### Changed
+
+- Page catalog walk centralized in `PDF.Page` (replaces duplicated logic in scripts and `PDF.Text`)
+- `interpret-page` script uses `PDF.Page` instead of `DocumentStructure` internals
+
+### Migration
+
+- Prefer `PDF.Page` over direct `DocumentStructure` page-walk helpers in new code
+- `PDF.DocumentStructure` remains exposed; no breaking removals in this release
+
 ## 0.3.1.0 (2026-07-05)
 
 ### Added

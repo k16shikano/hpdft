@@ -1,6 +1,6 @@
 cabal-version:       3.12
 name:                hpdft
-version:             0.3.1.0
+version:             0.4.0.0
 synopsis:            A tool for looking through PDF file using Haskell
 description:
     
@@ -43,6 +43,7 @@ library
                      , PDF.CFF
                      , PDF.Encrypt
                      , PDF.Text
+                     , PDF.Page
                      , PDF.Type1
                      , PDF.Matrix
                      , PDF.Interpret

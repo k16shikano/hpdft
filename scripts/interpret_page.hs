@@ -2,11 +2,10 @@
 
 module Main where
 
-import PDF.Definition
-import PDF.Document (Document(..), docRootRef, openDocument)
-import PDF.DocumentStructure (findDictOfType, findKids, findObjsByRef, findPages)
-import PDF.Error (PdfError(..), PdfResult)
-import PDF.Interpret (Glyph(..), PageItem(..), Rect(..), interpretPageItems)
+import PDF.Document (Document, openDocument)
+import PDF.Error (PdfResult)
+import PDF.Interpret (Glyph(..), PageItem(..), Rect(..))
+import PDF.Page (pageCount, pageRefAt, pageItems)
 
 import qualified Data.Text as T
 import Control.Monad (forM_)
@@ -28,13 +27,12 @@ main = do
 
 inspect :: Document -> Int -> Bool -> IO ()
 inspect doc pageNo full = do
-  root <- runOrDie (docRootRef doc)
-  let refs = pageRefs root (docObjs doc)
-  if pageNo < 1 || pageNo > length refs
+  n <- runOrDie (pageCount doc)
+  if pageNo < 1 || pageNo > n
     then putStrLn "page out of range" >> exitFailure
     else do
-      let pageRef = refs !! (pageNo - 1)
-      items <- runOrDie (interpretPageItems doc pageRef)
+      pageRef <- runOrDie (pageRefAt doc pageNo)
+      items <- runOrDie (pageItems doc pageRef)
       let glyphs = [g | ItemGlyph g <- items]
           graphics = length [() | ItemGraphic _ <- items]
       putStrLn $ "page ref " ++ show pageRef ++ ": "
@@ -50,22 +48,6 @@ inspect doc pageNo full = do
         ItemGraphic r -> putStrLn $
           "R x0=" ++ show (rectX0 r) ++ " y0=" ++ show (rectY0 r)
           ++ " x1=" ++ show (rectX1 r) ++ " y1=" ++ show (rectY1 r)
-
-pageRefs :: Int -> PDFObjIndex -> [Int]
-pageRefs parent objs =
-  case findObjsByRef parent objs of
-    Just os -> case findDictOfType "/Catalog" os of
-      Just dict -> case findPages dict of
-        Just pr -> pageRefs pr objs
-        Nothing -> []
-      Nothing -> case findDictOfType "/Pages" os of
-        Just dict -> case findKids dict of
-          Just kids -> concatMap (\k -> pageRefs k objs) kids
-          Nothing -> []
-        Nothing -> case findDictOfType "/Page" os of
-          Just _ -> [parent]
-          Nothing -> []
-    Nothing -> []
 
 runOrDie :: PdfResult a -> IO a
 runOrDie (Right x) = return x

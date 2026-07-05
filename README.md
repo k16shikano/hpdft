@@ -57,7 +57,7 @@ Requires GHC 9.14+ (see `hpdft.cabal`).
 
 ```bash
 cabal build
-cabal test                              # golden (22) + unit (276)
+cabal test                              # golden (22) + unit (279)
 bash scripts/verify_text.sh             # compare all fixture outputs
 cabal run interpret-page -- FILE PAGE   # debug glyph positions
 ```
@@ -68,11 +68,12 @@ cabal run interpret-page -- FILE PAGE   # debug glyph positions
 - [0.4 roadmap](docs/0.4-roadmap.md) — 0.3.1 ruby, 0.4 API/diff/images plan
 - [Changelog](CHANGELOG.md) — release notes
 
-### Library modules (0.3)
+### Library modules (0.4)
 
 | Module | Purpose |
 |--------|---------|
 | `PDF.Document` | Single-read document handle |
+| `PDF.Page` | Page enumeration and structured extraction |
 | `PDF.Text` | Text extraction drivers |
 | `PDF.Interpret` | Content-stream geometry interpreter |
 | `PDF.Layout` | Line/paragraph reconstruction |
@@ -81,5 +82,5 @@ cabal run interpret-page -- FILE PAGE   # debug glyph positions
 
 ## Version
 
-Released: **0.3.1.0** on `feature/0.3.1-ruby` (2026-07-05).
-Previous release: **0.3.0.0**.
+Released: **0.4.0.0** on `feature/0.4-api` (2026-07-05).
+Previous release: **0.3.1.0**.

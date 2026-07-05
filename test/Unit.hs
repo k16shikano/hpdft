@@ -11,7 +11,8 @@ import PDF.Interpret
   )
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, needsAozoraBar, aozoraRuby, layoutParagraphs, layoutParagraphsWith, layoutPageText, layoutDocument, sortLinesByReadingOrder, linesFromGlyphs, Line(..))
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
-import PDF.Document (Document(..))
+import PDF.Document (Document(..), openDocument)
+import PDF.Page (pageCount, pageRefAt, pageParagraphs)
 import PDF.Text (pdfToTextTaggedBS)
 import PDF.Error (PdfResult)
 
@@ -140,6 +141,7 @@ main = do
           ++ interpretGraphicResults
           ++ interpretMCIDResults
           ++ structureTreeResults
+          ++ pageApiResults
           ++ taggedEndToEndResults
   let failures = [msg | Fail msg <- results]
       passed = length results - length failures
@@ -762,6 +764,72 @@ taggedEndToEndResults :: [Result]
 taggedEndToEndResults =
   [ runTaggedFixture
   ]
+
+pageApiResults :: [Result]
+pageApiResults =
+  [ runMultipagePageCount
+  , runMultipagePageRefAt
+  , runParagraphsPageParagraphs
+  ]
+
+runMultipagePageCount :: Result
+runMultipagePageCount =
+  let path = "data/fixtures/multipage.pdf"
+  in unsafePerformIO $ do
+    result <- openDocument path Nothing
+    return $ case result of
+      Right doc ->
+        case pageCount doc of
+          Right n -> assertEqInt "multipage.pdf pageCount" 3 n
+          Left err -> testFail "multipage.pdf pageCount" (show err)
+      Left err -> testFail "multipage.pdf pageCount open" (show err)
+
+runMultipagePageRefAt :: Result
+runMultipagePageRefAt =
+  let path = "data/fixtures/multipage.pdf"
+  in unsafePerformIO $ do
+    result <- openDocument path Nothing
+    return $ case result of
+      Right doc ->
+        case pageRefAt doc 1 of
+          Right r1 ->
+            case pageRefAt doc 3 of
+              Right r3 ->
+                assertBool "multipage.pdf pageRefAt refs distinct"
+                  (r1 /= r3 && r1 == 3 && r3 == 5)
+              Left err -> testFail "multipage.pdf pageRefAt page 3" (show err)
+          Left err -> testFail "multipage.pdf pageRefAt page 1" (show err)
+      Left err -> testFail "multipage.pdf pageRefAt open" (show err)
+
+runParagraphsPageParagraphs :: Result
+runParagraphsPageParagraphs =
+  let path = "data/fixtures/paragraphs.pdf"
+  in unsafePerformIO $ do
+    result <- openDocument path Nothing
+    return $ case result of
+      Right doc ->
+        case pageRefAt doc 1 of
+          Right ref ->
+            case pageParagraphs doc ref defaultLayoutOptions of
+              Right ps ->
+                assertBool "paragraphs.pdf pageParagraphs count"
+                  (length ps == 3
+                   && T.isInfixOf "Line one of A." (head ps)
+                   && T.isInfixOf "Indent line B1." (ps !! 1)
+                   && T.strip (last ps) == "Line C only.")
+              Left err -> testFail "paragraphs.pdf pageParagraphs" (show err)
+          Left err -> testFail "paragraphs.pdf pageRefAt" (show err)
+      Left err -> testFail "paragraphs.pdf pageParagraphs open" (show err)
+
+assertEqInt :: String -> Int -> Int -> Result
+assertEqInt label expected actual =
+  if expected == actual
+    then pass label
+    else testFail label ("expected " ++ show expected ++ ", got " ++ show actual)
+
+{-# NOINLINE runMultipagePageCount #-}
+{-# NOINLINE runMultipagePageRefAt #-}
+{-# NOINLINE runParagraphsPageParagraphs #-}
 
 runTaggedFixture :: Result
 runTaggedFixture =

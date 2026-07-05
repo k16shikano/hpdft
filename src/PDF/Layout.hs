@@ -20,6 +20,8 @@ module PDF.Layout
   , joinParaLines
   , intraLineSpace
   , joinGlyphsRun
+  , pageItemLines
+  , pageItemParagraphGroups
   ) where
 
 import PDF.Interpret (Glyph(..), Rect(..), PageItem(..))
@@ -68,6 +70,19 @@ layoutParagraphsWith opts items =
     PageFallback ps -> ps
     PageNormal wmode graphics bounds ls ->
       map joinParaLines (groupParagraphs wmode graphics bounds ls)
+
+pageItemLines :: LayoutOptions -> [PageItem] -> [Line]
+pageItemLines opts items =
+  case applyFootnotes opts (applyRuby opts (pageLines items)) of
+    PageFallback _ -> []
+    PageNormal _ _ _ ls -> ls
+
+pageItemParagraphGroups :: LayoutOptions -> [PageItem] -> [[Line]]
+pageItemParagraphGroups opts items =
+  case applyFootnotes opts (applyRuby opts (pageLines items)) of
+    PageFallback ps -> replicate (length ps) []
+    PageNormal wmode graphics bounds ls ->
+      groupParagraphs wmode graphics bounds ls
 
 documentParagraphs :: LayoutOptions -> [[PageItem]] -> [T.Text]
 documentParagraphs opts pages =

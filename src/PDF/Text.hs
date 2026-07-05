@@ -25,6 +25,7 @@ import PDF.DocumentStructure
 import PDF.Encrypt (Security)
 import PDF.Interpret (Glyph(..), PageItem(..), interpretPageItems)
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, aozoraRuby, joinGlyphsRun, layoutDocumentWith, layoutPageTextWith, linesFromGlyphs, stripHeadersFooters, joinParaLines)
+import PDF.Page (pageCount, pageRefAt)
 import PDF.Structure (StructElem(..), RubySpan(..), structTree, logicalOrder, collectRubySpans)
 
 import Data.List (foldl')
@@ -86,8 +87,8 @@ pdfToTextGeomDoc = pdfToTextGeomDocWith defaultLayoutOptions
 
 pdfToTextGeomDocWith :: LayoutOptions -> Document -> PdfResult BSL.ByteString
 pdfToTextGeomDocWith opts doc = do
-  rootref <- docRootRef doc
-  let refs = pageRefsOrder rootref (docObjs doc)
+  n <- pageCount doc
+  refs <- mapM (pageRefAt doc) [1 .. n]
   pages <- mapM (interpretPageItems doc) refs
   return $ BSLU.fromString (T.unpack (layoutDocumentWith opts pages))
 
@@ -116,8 +117,8 @@ pdfToTextTaggedDocWith opts doc = do
   case mroot of
     Nothing -> pdfToTextGeomDocWith opts doc
     Just root -> do
-      rootref <- docRootRef doc
-      let refs = pageRefsOrder rootref (docObjs doc)
+      n <- pageCount doc
+      refs <- mapM (pageRefAt doc) [1 .. n]
       pages <- mapM (interpretPageItems doc) refs
       if taggedUsable pages
          then Right (BSLU.fromString (T.unpack (assembleTagged opts root refs pages)))
@@ -219,22 +220,6 @@ mcidGlyphMap items =
 
 artifactGlyphs :: [PageItem] -> [Glyph]
 artifactGlyphs items = [g | ItemGlyph g <- items, glyphMCID g == Nothing]
-
-pageRefsOrder :: Int -> PDFObjIndex -> [Int]
-pageRefsOrder parent objs =
-  case findObjsByRef parent objs of
-    Just os -> case findDictOfType "/Catalog" os of
-      Just dict -> case findPages dict of
-        Just pr -> pageRefsOrder pr objs
-        Nothing -> []
-      Nothing -> case findDictOfType "/Pages" os of
-        Just dict -> case findKids dict of
-          Just kidsrefs -> concatMap (\k -> pageRefsOrder k objs) kidsrefs
-          Nothing -> []
-        Nothing -> case findDictOfType "/Page" os of
-          Just _ -> [parent]
-          Nothing -> []
-    Nothing -> []
 
 walkdown :: PSR -> Int -> Maybe Security -> PDFObjIndex -> (BSL.ByteString, [PdfWarning])
 walkdown st parent sec objs =
