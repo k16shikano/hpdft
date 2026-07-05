@@ -2,7 +2,7 @@
 
 ## 0.3.0.0 (2026-07-05)
 
-`master`（0.2.0.0）からの非互換変更を含む。
+Includes backwards-incompatible changes from `master` (0.2.0.0).
 
 ### Added
 
