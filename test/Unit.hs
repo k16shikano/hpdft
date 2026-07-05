@@ -328,6 +328,22 @@ layoutParagraphResults =
         [ ItemGlyph (mkGlyph 72 700 6 12 0 "A")
         , ItemGlyph (mkGlyph 85 700 6 12 0 "B")
         ]
+      latinLowGap = layoutPageText
+        [ ItemGlyph (mkGlyph 72 700 36 9 0 "Word")
+        , ItemGlyph (mkGlyph 110.25 700 30 9 0 "Next")
+        ]
+      latinZeroGap = layoutPageText
+        [ ItemGlyph (mkGlyph 72 700 15 9 0 "Wor")
+        , ItemGlyph (mkGlyph 87 700 10 9 0 "d")
+        ]
+      cjkHalfGap = layoutPageText
+        [ ItemGlyph (mkGlyph 72 700 12 12 0 "\x3068")
+        , ItemGlyph (mkGlyph 90 700 12 12 0 "\x3046")
+        ]
+      hyphenJoin = head (layoutParagraphs
+        [ ItemGlyph (mkGlyph 72 511.83 60 10 0 "authenti-")
+        , ItemGlyph (mkGlyph 72 496.527 40 10 0 "cated")
+        ])
       cjkNoSpace = layoutPageText
         [ ItemGlyph (mkGlyph 72 700 12 12 0 "\x3068")
         , ItemGlyph (mkGlyph 84 700 12 12 0 "\x3046")
@@ -349,6 +365,12 @@ layoutParagraphResults =
       , assertBool "layout indent starts new paragraph" (length indentSplit == 2)
       , assertBool "layout graphic rule splits paragraphs" (length ruleSplit == 2)
       , assertTextEq "layout Latin gap inserts space" (T.pack "A B\n") latinSpace
+      , assertTextEq "layout Latin low gap inserts space" (T.pack "Word Next\n") latinLowGap
+      , assertTextEq "layout Latin zero gap no space" (T.pack "Word\n") latinZeroGap
+      , assertTextEq "layout CJK half-size gap no space" (T.pack "\x3068\x3046\n") cjkHalfGap
+      , assertTextEq "layout hyphen line join" (T.pack "authenti-cated") hyphenJoin
+      , assertBool "layout hyphen line join no spurious space"
+          (not (T.isInfixOf "authenti- cated" hyphenJoin))
       , assertTextEq "layout CJK gap no space" (T.pack "\x3068\x3046\n") cjkNoSpace
       , assertBool "layout fallback zero sizes" (length fallbackZero == 1)
       , assertTextEq "layout fallback joins with newline"

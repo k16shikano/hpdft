@@ -197,8 +197,11 @@ footnoteBlocks regionLines = go (zip [0 ..] regionLines)
     cjkJoin a b
       | T.null a = b
       | T.null b = a
-      | isCJK (T.last a) && isCJK (T.head b) = a `T.append` b
-      | otherwise = a `T.append` " " `T.append` b
+      | otherwise =
+          let sep = paraJoinSep (T.stripEnd a) (T.stripStart b)
+          in if T.null sep
+             then a `T.append` b
+             else a `T.append` sep `T.append` b
 
 blockStart :: Line -> Maybe (T.Text, T.Text)
 blockStart l =
@@ -595,9 +598,29 @@ joinGlyphsRun (g : gs) =
 
 intraLineSpace :: Double -> Double -> Maybe Char -> Maybe Char -> T.Text
 intraLineSpace gap size mc nc
+  | mc == Just '-' || nc == Just '-' = ""
+  | latinAdjacent mc nc, gap >= 0.25 * size = " "
   | gap > 2.0 * size = " "
   | gap > 0.3 * size, not (cjkAdjacent mc nc) = " "
   | otherwise = ""
+
+isLatinLetter :: Char -> Bool
+isLatinLetter c = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+
+latinAdjacent :: Maybe Char -> Maybe Char -> Bool
+latinAdjacent (Just a) (Just b) =
+  not (isCJK a || isCJK b) && (isLatinLetter a || isLatinLetter b)
+latinAdjacent _ _ = False
+
+hyphenContinues :: Char -> Bool
+hyphenContinues c = c == '-' || c == '\x00AD'
+
+paraJoinSep :: T.Text -> T.Text -> T.Text
+paraJoinSep a' b'
+  | not (T.null a') && not (T.null b')
+    && isCJK (T.last a') && isCJK (T.head b') = T.empty
+  | not (T.null a') && hyphenContinues (T.last a') = T.empty
+  | otherwise = " "
 
 lastChar :: T.Text -> Maybe Char
 lastChar t = if T.null t then Nothing else Just (T.last t)
@@ -731,12 +754,7 @@ joinParaLines ls =
     mergeText a b =
       let a' = T.stripEnd a
           b' = T.stripStart b
-          sep =
-            if not (T.null a') && not (T.null b')
-               && isCJK (T.last a') && isCJK (T.head b')
-            then T.empty
-            else " "
-      in a' `T.append` sep `T.append` b'
+      in a' `T.append` paraJoinSep a' b' `T.append` b'
 
 terminalChars :: String
 terminalChars = "。．！？!?…"
