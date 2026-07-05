@@ -89,6 +89,7 @@ data CmdOpt = CmdOpt {
   refs :: Bool,
   geom :: Bool,
   tagged :: Bool,
+  legacy :: Bool,
   pdftitle :: Bool,
   pdfinfo :: Bool,
   pdfoutline :: Bool,
@@ -128,6 +129,9 @@ options = CmdOpt
           ( long "tagged"
             <> help "Extract text using tagged PDF structure" )
           <*> switch
+          ( long "legacy"
+            <> help "Extract text using the pre-0.3 stream-order extractor" )
+          <*> switch
           ( long "title"
             <> short 'T'
             <> help "Show title (from metadata)" )
@@ -154,18 +158,19 @@ options = CmdOpt
             <> action "file" )
 
 hpdft :: CmdOpt -> IO ()
-hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, geom=gm, tagged=tg, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
+hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, geom=gm, tagged=tg, legacy=lg, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
   withFile fn $
   let mpw = Just pw
+      noMode = not gm && not tg && not lg
   in case () of
-    _ | pg==0 && rf==0 && null gr && not rs && tg && not gm && not tt && not ii && not oo && not tr -> pdfToTextTagged fn mpw
-      | pg==0 && rf==0 && null gr && not rs && gm && not tg && not tt && not ii && not oo && not tr -> pdfToTextGeom fn mpw
-      | pg==0 && rf==0 && null gr && not rs && not gm && not tg && not tt && not ii && not oo && not tr -> pdfToText fn mpw
-      | pg==0 && rf==0 && null gr && not rs && not gm && not tg && tt      -> showTitle fn mpw
-      | pg==0 && rf==0 && null gr && not rs && not gm && not tg && ii      -> showInfo fn mpw
-      | pg==0 && rf==0 && null gr && not rs && not gm && not tg && oo      -> showOutlines fn mpw
-      | pg==0 && rf==0 && null gr && not rs && not gm && not tg && tr      -> showTrailer fn
-      | pg==0 && rf==0 && null gr && rs && not gm && not tg                -> showRefs fn mpw
+    _ | pg==0 && rf==0 && null gr && not rs && lg && not gm && not tg && not tt && not ii && not oo && not tr -> pdfToText fn mpw
+      | pg==0 && rf==0 && null gr && not rs && gm && not tg && not lg && not tt && not ii && not oo && not tr -> pdfToTextGeom fn mpw
+      | pg==0 && rf==0 && null gr && not rs && (tg || noMode) && not gm && not lg && not tt && not ii && not oo && not tr -> pdfToTextTagged fn mpw
+      | pg==0 && rf==0 && null gr && not rs && noMode && tt      -> showTitle fn mpw
+      | pg==0 && rf==0 && null gr && not rs && noMode && ii      -> showInfo fn mpw
+      | pg==0 && rf==0 && null gr && not rs && noMode && oo      -> showOutlines fn mpw
+      | pg==0 && rf==0 && null gr && not rs && noMode && tr      -> showTrailer fn
+      | pg==0 && rf==0 && null gr && rs && noMode                -> showRefs fn mpw
       | rf==0 && null gr && pg/=0                      -> showPage fn mpw pg
       | pg==0 && null gr && rf/=0                      -> showContent fn mpw rf
       | pg==0 && rf==0 && not (null gr)                -> grepPDF fn mpw gr

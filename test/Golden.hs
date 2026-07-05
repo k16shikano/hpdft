@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import PDF.Text (pdfToTextBS)
+import PDF.Text (pdfToTextBS, pdfToTextTaggedBS)
 
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as BSLC
@@ -10,16 +10,19 @@ import System.Exit (exitFailure)
 import System.FilePath ((</>), takeBaseName)
 import Control.Monad (when)
 
-fixturesDir, expectedDir, knownFailingDir :: FilePath
+fixturesDir, expectedDir, expectedLegacyDir, knownFailingDir :: FilePath
 fixturesDir = "data/fixtures"
 expectedDir = fixturesDir </> "expected"
+expectedLegacyDir = fixturesDir </> "expected-legacy"
 knownFailingDir = fixturesDir </> "known-failing"
 
 main :: IO ()
 main = do
   entries <- filter (".pdf" `isSuffixOf`) <$> listDirectory fixturesDir
   let pdfs = map (fixturesDir </>) (sort entries)
-  fails <- concat <$> mapM checkFixture pdfs
+  failsDefault <- concat <$> mapM (checkFixture "default" expectedDir pdfToTextTaggedBS) pdfs
+  failsLegacy <- concat <$> mapM (checkFixture "legacy" expectedLegacyDir pdfToTextBS) pdfs
+  let fails = failsDefault ++ failsLegacy
   known <- listKnownFailing
   mapM_ (putStrLn . ("SKIP (known-failing): " ++)) known
   when (not (null fails)) $ do
@@ -35,27 +38,28 @@ listKnownFailing = do
       entries <- listDirectory knownFailingDir
       return $ sort $ filter (".pdf" `isSuffixOf`) entries
 
-checkFixture :: FilePath -> IO [String]
-checkFixture pdf = do
+checkFixture :: String -> FilePath -> (FilePath -> Maybe String -> IO (Either e BSL.ByteString)) -> FilePath -> IO [String]
+checkFixture mode expDir extract pdf = do
   let name = takeBaseName pdf
-      expectedPath = expectedDir </> (name ++ ".txt")
+      label = name ++ " (" ++ mode ++ ")"
+      expectedPath = expDir </> (name ++ ".txt")
   exists <- doesFileExist expectedPath
   if not exists
-    then return [name ++ ": FAIL (missing expected " ++ expectedPath ++ ")"]
+    then return [label ++ ": FAIL (missing expected " ++ expectedPath ++ ")"]
     else do
-      result <- pdfToTextBS pdf (Just "")
+      result <- extract pdf (Just "")
       case result of
-        Left err -> return [name ++ ": FAIL (" ++ show err ++ ")"]
+        Left _ -> return [label ++ ": FAIL (extraction error)"]
         Right actual -> do
           expected <- BSL.readFile expectedPath
           let actualOut = BSLC.append actual "\n"
           if actualOut == expected
             then do
-              putStrLn $ name ++ ": OK"
+              putStrLn $ label ++ ": OK"
               return []
             else do
-              putStrLn $ name ++ ": FAIL"
-              return [diffMessage name actualOut expected]
+              putStrLn $ label ++ ": FAIL"
+              return [diffMessage label actualOut expected]
 
 diffMessage :: String -> BSL.ByteString -> BSL.ByteString -> String
 diffMessage name actual expected =
