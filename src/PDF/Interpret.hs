@@ -1,6 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts #-}
 
+-- | Content-stream interpreter for glyph geometry.
+-- Form XObjects inherit the enclosing marked-content stack (MCID space is per stream in the spec).
 module PDF.Interpret
   ( Glyph(..)
   , Rect(..)
@@ -51,6 +53,12 @@ data Glyph = Glyph
   , glyphSize     :: Double
   , glyphFont     :: String
   , glyphWMode    :: Int
+  , glyphMCID     :: Maybe Int
+  } deriving (Eq, Show)
+
+data MCEntry = MCEntry
+  { mcTag  :: String
+  , mcMCID :: Maybe Int
   } deriving (Eq, Show)
 
 data Rect = Rect
@@ -92,6 +100,7 @@ data IState = IState
   , isRes         :: Dict
   , fontOverrides :: M.Map String FontInfo
   , operandStack  :: [Obj]
+  , mcStack       :: [MCEntry]
   }
 
 initialGState :: GState
@@ -121,6 +130,7 @@ initialIState sec objs res = IState
   , isRes = res
   , fontOverrides = M.empty
   , operandStack = []
+  , mcStack = []
   }
 
 maxFormDepth :: Int
@@ -331,7 +341,70 @@ execOp "b" st = paintPathSt st
 execOp "b*" st = paintPathSt st
 execOp "W" st = st
 execOp "W*" st = st
+execOp "BDC" st =
+  case operandStack st of
+    props : PdfName tag : _ ->
+      let mcid = mcidFromProps props (isRes st) (isObjs st)
+      in pushMCEntry tag mcid st
+    _ -> st
+execOp "BMC" st =
+  case operandStack st of
+    PdfName tag : _ -> pushMCEntry tag Nothing st
+    _ -> st
+execOp "EMC" st =
+  case mcStack st of
+    _ : rest -> st {mcStack = rest}
+    []       -> st
 execOp _ st = st
+
+pushMCEntry :: String -> Maybe Int -> IState -> IState
+pushMCEntry tag mcid st =
+  st {mcStack = MCEntry tag mcid : mcStack st}
+
+currentMCID :: IState -> Maybe Int
+currentMCID st = enclosingMCID (mcStack st)
+
+enclosingMCID :: [MCEntry] -> Maybe Int
+enclosingMCID [] = Nothing
+enclosingMCID (e : es) =
+  case mcMCID e of
+    Just n  -> Just n
+    Nothing -> enclosingMCID es
+
+mcidFromProps :: Obj -> Dict -> PDFObjIndex -> Maybe Int
+mcidFromProps props res objs =
+  case resolvePropsDict props res objs of
+    Just d -> mcidFromDict d
+    Nothing -> Nothing
+
+resolvePropsDict :: Obj -> Dict -> PDFObjIndex -> Maybe Dict
+resolvePropsDict (PdfDict d) _ _ = Just d
+resolvePropsDict (PdfName n) res objs =
+  case findObjFromDict res "/Properties" of
+    Just (PdfDict pd) -> case M.lookup n pd of
+      Just (PdfDict d) -> Just d
+      Just (ObjRef r) ->
+        case findDictByRef r objs of
+          Just d -> Just d
+          Nothing -> Nothing
+      _ -> Nothing
+    Just (ObjRef r) ->
+      case findDictByRef r objs of
+        Just pd -> case M.lookup n pd of
+          Just (PdfDict d) -> Just d
+          Just (ObjRef r') ->
+            case findDictByRef r' objs of
+              Just d -> Just d
+              Nothing -> Nothing
+          _ -> Nothing
+        Nothing -> Nothing
+    _ -> Nothing
+resolvePropsDict _ _ _ = Nothing
+
+mcidFromDict :: Dict -> Maybe Int
+mcidFromDict d = case M.lookup "/MCID" d of
+  Just (PdfNumber n) -> Just (truncate n)
+  _                  -> Nothing
 
 devicePoint :: IState -> Double -> Double -> (Double, Double)
 devicePoint st x y = apply (ctm (gsCur st)) (x, y)
@@ -483,6 +556,7 @@ showBytesSt bytes st =
             , glyphSize = segSize
             , glyphFont = fname
             , glyphWMode = fiWMode fi
+            , glyphMCID = currentMCID st
             }
       in st {itemsRev = ItemGlyph glyph : itemsRev st, tsCur = Just ts {tmMat = endTm}}
     _ -> st
