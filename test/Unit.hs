@@ -9,7 +9,7 @@ import PDF.Interpret
   , interpretContentWithFonts
   , interpretContentWithFontsItems
   )
-import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, layoutParagraphs, layoutParagraphsWith, layoutPageText, layoutDocument, sortLinesByReadingOrder, linesFromGlyphs, Line(..))
+import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, needsAozoraBar, aozoraRuby, layoutParagraphs, layoutParagraphsWith, layoutPageText, layoutDocument, sortLinesByReadingOrder, linesFromGlyphs, Line(..))
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
 import PDF.Document (Document(..))
 import PDF.Text (pdfToTextTaggedBS)
@@ -136,6 +136,7 @@ main = do
           ++ sortLinesByReadingOrderResults
           ++ layoutDocumentResults
           ++ superscriptResults
+          ++ rubyResults
           ++ interpretGraphicResults
           ++ interpretMCIDResults
           ++ structureTreeResults
@@ -591,6 +592,50 @@ superscriptResults =
           (T.isInfixOf "anchor\8224\&9" unmatchedAnchor)
       , assertBool "orphan footnote block stays"
           (T.isInfixOf "orphan note" orphanBlock)
+      ]
+
+rubyResults :: [Result]
+rubyResults =
+  let kanji = "\x6f22"  -- 漢
+      kanRuby = "\x304b\x3093"  -- かん
+      mixedBase = "\x9727\x306e\x30ed\x30f3\x30c9\x30f3\x8b66\x8996\x5e81"
+      mixedRuby = "\x30b9\x30b3\x30c3\x30c8\x30e9\x30f3\x30c9\x30e4\x30fc\x30c9"
+      horizPage =
+        [ ItemGlyph (mkGlyph 72 700 12 12 0 kanji)
+        , ItemGlyph (mkGlyph 72 710 6 7 0 "\x304b")
+        , ItemGlyph (mkGlyph 78 710 6 7 0 "\x3093")
+        ]
+      vertPage =
+        [ ItemGlyph (mkGlyph 500 700 12 12 1 kanji)
+        , ItemGlyph (mkGlyph 488 700 14 7 1 kanRuby)
+        ]
+      mixedPage =
+        [ ItemGlyph (mkGlyph 72 700 120 12 0 mixedBase)
+        , ItemGlyph (mkGlyph 72 710 80 7 0 mixedRuby)
+        ]
+      rubyOn = layoutParagraphsWith (defaultLayoutOptions {optRuby = True})
+      rubyOff = layoutParagraphsWith defaultLayoutOptions
+      horizOn = T.concat (rubyOn horizPage)
+      horizOff = T.concat (rubyOff horizPage)
+      vertOn = T.concat (rubyOn vertPage)
+      mixedOn = T.concat (rubyOn mixedPage)
+   in [ assertBool "needsAozoraBar single hiragana" (not (needsAozoraBar "\x3042\x304a\x305e\x3089"))
+      , assertBool "needsAozoraBar single kanji" (not (needsAozoraBar "\x9752\x7a7a\x6587\x5eab"))
+      , assertBool "needsAozoraBar mixed scripts" (needsAozoraBar mixedBase)
+      , assertTextEq "aozoraRuby single script"
+          (kanji `T.append` "\x300a" `T.append` kanRuby `T.append` "\x300b")
+          (aozoraRuby kanji kanRuby)
+      , assertTextEq "aozoraRuby mixed base bar"
+          (mixedBase `T.append` "\xff5c\x300a" `T.append` mixedRuby `T.append` "\x300b")
+          (aozoraRuby mixedBase mixedRuby)
+      , assertBool "ruby horizontal geometry"
+          (T.isInfixOf (kanji `T.append` "\x300a" `T.append` kanRuby `T.append` "\x300b") horizOn)
+      , assertBool "ruby vertical geometry"
+          (T.isInfixOf (kanji `T.append` "\x300a" `T.append` kanRuby `T.append` "\x300b") vertOn)
+      , assertBool "ruby mixed base bar in layout"
+          (T.isInfixOf ("\xff5c\x300a" `T.append` mixedRuby `T.append` "\x300b") mixedOn)
+      , assertBool "ruby off leaves plain text"
+          (not (T.isInfixOf "\x300a" horizOff) && T.isInfixOf kanji horizOff)
       ]
 
 interpretGraphicResults :: [Result]

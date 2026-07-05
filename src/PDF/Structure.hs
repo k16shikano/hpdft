@@ -3,8 +3,10 @@
 module PDF.Structure
   ( StructElem(..)
   , StructKid(..)
+  , RubySpan(..)
   , structTree
   , logicalOrder
+  , collectRubySpans
   ) where
 
 import PDF.Definition
@@ -20,6 +22,7 @@ import PDF.Error (PdfError(..), PdfResult)
 
 import qualified Data.Text as T
 import Data.List (foldl')
+import Data.Maybe (listToMaybe, maybeToList)
 import qualified Data.Set as S
 
 data StructElem = StructElem
@@ -28,6 +31,13 @@ data StructElem = StructElem
   } deriving (Eq, Show)
 
 data StructKid = KidElem StructElem | KidMCID Int Int deriving (Eq, Show)
+
+-- Parallel base/ruby MCID lists from a /Ruby element's /RB and /RT kids.
+data RubySpan = RubySpan
+  { rsPage   :: Int
+  , rsBases  :: [Int]
+  , rsRubies :: [Int]
+  } deriving (Eq, Show)
 
 maxStructDepth :: Int
 maxStructDepth = 512
@@ -84,6 +94,45 @@ logicalOrder root = walk [] root
 
     kidWalk path (KidMCID page mcid) = [(path, page, mcid)]
     kidWalk path (KidElem elem) = walk path elem
+
+collectRubySpans :: StructElem -> [RubySpan]
+collectRubySpans root = walk root
+  where
+    walk (StructElem stype kids) =
+      let childSpans = concatMap kidWalk kids
+          here = if stype == "/Ruby" then maybeToList (rubySpan kids) else []
+      in here ++ childSpans
+
+    kidWalk (KidElem e) = walk e
+    kidWalk _ = []
+
+rubySpan :: [StructKid] -> Maybe RubySpan
+rubySpan kids =
+  case (findKidElem "/RB" kids, findKidElem "/RT" kids) of
+    (Just rb, Just rt) ->
+      let bases = mcidsFromElem rb
+          rubies = mcidsFromElem rt
+      in case bases of
+        (page, _) : _ ->
+          if null bases || null rubies
+             then Nothing
+             else Just (RubySpan page (map snd bases) (map snd rubies))
+        [] -> Nothing
+    _ -> Nothing
+
+findKidElem :: T.Text -> [StructKid] -> Maybe StructElem
+findKidElem want = foldr go Nothing
+  where
+    go (KidElem e@(StructElem t _)) Nothing
+      | t == want = Just e
+    go _ acc = acc
+
+mcidsFromElem :: StructElem -> [(Int, Int)]
+mcidsFromElem (StructElem _ kids) = concatMap kidMcids kids
+  where
+    kidMcids (KidMCID page mcid) = [(page, mcid)]
+    kidMcids (KidElem e) = mcidsFromElem e
+    kidMcids _ = []
 
 pageRefFromDict :: Dict -> Maybe Int -> PDFObjIndex -> Maybe Int
 pageRefFromDict d pg _ =

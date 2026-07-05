@@ -24,10 +24,11 @@ import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
 import PDF.Encrypt (Security)
 import PDF.Interpret (Glyph(..), PageItem(..), interpretPageItems)
-import PDF.Layout (LayoutOptions, defaultLayoutOptions, joinGlyphsRun, layoutDocumentWith, layoutPageTextWith, linesFromGlyphs, stripHeadersFooters, joinParaLines)
-import PDF.Structure (StructElem(..), structTree, logicalOrder)
+import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, aozoraRuby, joinGlyphsRun, layoutDocumentWith, layoutPageTextWith, linesFromGlyphs, stripHeadersFooters, joinParaLines)
+import PDF.Structure (StructElem(..), RubySpan(..), structTree, logicalOrder, collectRubySpans)
 
 import Data.List (foldl')
+import qualified Data.Set as S
 import qualified Data.Map as Map
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Lazy.UTF8 as BSLU
@@ -119,7 +120,7 @@ pdfToTextTaggedDocWith opts doc = do
       let refs = pageRefsOrder rootref (docObjs doc)
       pages <- mapM (interpretPageItems doc) refs
       if taggedUsable pages
-         then Right (BSLU.fromString (T.unpack (assembleTagged root refs pages)))
+         then Right (BSLU.fromString (T.unpack (assembleTagged opts root refs pages)))
          else pdfToTextGeomDocWith opts doc
 
 taggedUsable :: [[PageItem]] -> Bool
@@ -129,42 +130,81 @@ taggedUsable pages =
       tagged = length [g | g <- glyphs, glyphMCID g /= Nothing]
   in total > 0 && fromIntegral tagged / fromIntegral total >= 0.5
 
-assembleTagged :: StructElem -> [Int] -> [[PageItem]] -> T.Text
-assembleTagged root refs pages =
+assembleTagged :: LayoutOptions -> StructElem -> [Int] -> [[PageItem]] -> T.Text
+assembleTagged opts root refs pages =
   let mcidMaps = zip refs (map mcidGlyphMap pages)
       mcidLookup = Map.fromList
         [((page, mcid), gs) | (page, m) <- mcidMaps, (mcid, gs) <- Map.toList m]
+      rubyMap = structureRubyMap opts root refs pages
+      structRubyPages = S.fromList [rsPage s | s <- collectRubySpans root]
+      geomRubyPerPage =
+        Map.fromList
+          [ (page, layoutPageTextWith opts items)
+          | (page, items) <- zip refs pages
+          , optRuby opts
+          , not (page `S.member` structRubyPages)
+          ]
       artifactLinesPerPage =
         Map.fromList $
           zip refs
             (stripHeadersFooters (length pages)
                (map (linesFromGlyphs . artifactGlyphs) pages))
+      geomRubyEmitted = Map.empty :: Map.Map Int Bool
 
       lastPathType [] = T.empty
       lastPathType path = last path
 
-      appendMCID (acc, prevParaEnd) (path, page, mcid) =
-        case Map.lookup (page, mcid) mcidLookup of
-          Nothing -> (acc, prevParaEnd)
+      appendMCID (acc, prevParaEnd, emitted) (path, page, mcid) =
+        if Map.member page geomRubyPerPage && not (Map.findWithDefault False page emitted)
+        then let run = Map.findWithDefault T.empty page geomRubyPerPage
+                 sep = if prevParaEnd && not (T.null acc) then "\n\n" else ""
+             in (acc `T.append` sep `T.append` run, False, Map.insert page True emitted)
+        else case Map.lookup (page, mcid) mcidLookup of
+          Nothing -> (acc, prevParaEnd, emitted)
           Just gs ->
             let run = joinGlyphsRun gs
                 sep = if prevParaEnd && not (T.null acc) then "\n\n" else ""
                 paraEnd = paragraphEnd (lastPathType path)
-            in (acc `T.append` sep `T.append` run, paraEnd)
+                formatted = case Map.lookup (page, mcid) rubyMap of
+                              Just rt -> aozoraRuby run rt
+                              _       -> run
+            in (acc `T.append` sep `T.append` formatted, paraEnd, emitted)
 
-      appendArtifacts acc page =
-        case Map.lookup page artifactLinesPerPage of
-          Just ls | not (null ls) ->
-            let run = joinParaLines ls
-            in if T.null acc
-               then run
-               else acc `T.append` "\n\n" `T.append` run
-          _ -> acc
+      appendArtifacts (acc, emitted) page =
+        if Map.member page geomRubyPerPage
+        then (acc, emitted)
+        else case Map.lookup page artifactLinesPerPage of
+               Just ls | not (null ls) ->
+                 let run = joinParaLines ls
+                 in if T.null run
+                    then (acc, emitted)
+                    else if T.null acc
+                         then (run, emitted)
+                         else (acc `T.append` "\n\n" `T.append` run, emitted)
+               _ -> (acc, emitted)
 
       order = logicalOrder root
-      (structText, _) = foldl' appendMCID (T.empty, False) order
-      withArtifacts = foldl' appendArtifacts structText refs
-  in if T.null withArtifacts then "\n" else withArtifacts `T.append` "\n"
+      (structText, _, _) = foldl' appendMCID (T.empty, False, geomRubyEmitted) order
+      (out, _) = foldl' appendArtifacts (structText, geomRubyEmitted) refs
+  in if T.null out then "\n" else out `T.append` "\n"
+
+structureRubyMap ::
+  LayoutOptions -> StructElem -> [Int] -> [[PageItem]] -> Map.Map (Int, Int) T.Text
+structureRubyMap opts root refs pages
+  | not (optRuby opts) = Map.empty
+  | otherwise =
+      let mcidMaps = Map.fromList (zip refs (map mcidGlyphMap pages))
+          glyphTextFor page mcid =
+            case Map.lookup page mcidMaps >>= Map.lookup mcid of
+              Just gs -> joinGlyphsRun gs
+              _       -> T.empty
+      in Map.fromList
+           [ ((rsPage span, baseMcid), rubyTxt)
+           | span <- collectRubySpans root
+           , (baseMcid, rubyMcid) <- zip (rsBases span) (rsRubies span)
+           , let rubyTxt = glyphTextFor (rsPage span) rubyMcid
+           , not (T.null rubyTxt)
+           ]
 
 paragraphEnd :: T.Text -> Bool
 paragraphEnd stype = stype `elem`

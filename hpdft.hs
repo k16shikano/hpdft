@@ -93,6 +93,7 @@ data CmdOpt = CmdOpt {
   tagged :: Bool,
   legacy :: Bool,
   footnotes :: Bool,
+  ruby :: Bool,
   pdftitle :: Bool,
   pdfinfo :: Bool,
   pdfoutline :: Bool,
@@ -138,6 +139,9 @@ options = CmdOpt
           ( long "footnotes"
             <> help "Inline footnote bodies at their anchors as <footnote> tags (geometry pipeline)" )
           <*> switch
+          ( long "ruby"
+            <> help "Embed ruby in Aozora bunko notation (geometry/tagged pipeline)" )
+          <*> switch
           ( long "title"
             <> short 'T'
             <> help "Show title (from metadata)" )
@@ -164,11 +168,11 @@ options = CmdOpt
             <> action "file" )
 
 hpdft :: CmdOpt -> IO ()
-hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, geom=gm, tagged=tg, legacy=lg, footnotes=fnn, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
+hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, geom=gm, tagged=tg, legacy=lg, footnotes=fnn, ruby=rb, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
   withFile fn $
   let mpw = Just pw
       noMode = not gm && not tg && not lg
-      lopts = defaultLayoutOptions {optFootnotes = fnn}
+      lopts = defaultLayoutOptions {optFootnotes = fnn, optRuby = rb}
   in case () of
     _ | pg==0 && rf==0 && null gr && not rs && lg && not gm && not tg && not tt && not ii && not oo && not tr -> pdfToText fn mpw
       | pg==0 && rf==0 && null gr && not rs && gm && not tg && not lg && not tt && not ii && not oo && not tr -> pdfToTextGeom lopts fn mpw

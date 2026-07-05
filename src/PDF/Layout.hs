@@ -6,6 +6,8 @@ module PDF.Layout
   , Line(..)
   , LayoutOptions(..)
   , defaultLayoutOptions
+  , needsAozoraBar
+  , aozoraRuby
   , layoutParagraphs
   , layoutParagraphsWith
   , layoutPageText
@@ -24,6 +26,7 @@ import PDF.Interpret (Glyph(..), Rect(..), PageItem(..))
 
 import Data.Char (isSpace, ord)
 import Data.List (foldl', maximumBy, partition, sort, sortBy)
+import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Ord (Down(..), comparing)
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -32,10 +35,11 @@ import qualified Data.Text as T
 -- Footnote bodies continuing onto the following page are not merged.
 data LayoutOptions = LayoutOptions
   { optFootnotes :: Bool
+  , optRuby      :: Bool
   } deriving (Eq, Show)
 
 defaultLayoutOptions :: LayoutOptions
-defaultLayoutOptions = LayoutOptions {optFootnotes = False}
+defaultLayoutOptions = LayoutOptions {optFootnotes = False, optRuby = False}
 
 layoutPageText :: [PageItem] -> T.Text
 layoutPageText = layoutPageTextWith defaultLayoutOptions
@@ -60,7 +64,7 @@ layoutParagraphs = layoutParagraphsWith defaultLayoutOptions
 
 layoutParagraphsWith :: LayoutOptions -> [PageItem] -> [T.Text]
 layoutParagraphsWith opts items =
-  case applyFootnotes opts (pageLines items) of
+  case applyFootnotes opts (applyRuby opts (pageLines items)) of
     PageFallback ps -> ps
     PageNormal wmode graphics bounds ls ->
       map joinParaLines (groupParagraphs wmode graphics bounds ls)
@@ -70,7 +74,7 @@ documentParagraphs opts pages =
   let pageCount = length pages
       layouts = map pageLines pages
       stripped = applyHeaderFooterStrip pageCount layouts
-      final = map (applyFootnotes opts) stripped
+      final = map (applyFootnotes opts . applyRuby opts) stripped
   in finalizeDoc $ foldl' processPage ([], []) final
   where
     applyHeaderFooterStrip n layouts =
@@ -138,6 +142,103 @@ applyFootnotes opts page =
       | optFootnotes opts ->
           PageNormal 0 graphics bounds (inlineFootnotes graphics ls)
     _ -> page
+
+applyRuby :: LayoutOptions -> PageLines -> PageLines
+applyRuby opts page =
+  case page of
+    PageNormal wmode _ bounds ls
+      | optRuby opts ->
+          PageNormal wmode [] bounds (pairRubyLines wmode bounds ls)
+    _ -> page
+
+-- Aozora bunko ruby: fullwidth 《》 and optional ｜ before mixed-script bases.
+aozoraRuby :: T.Text -> T.Text -> T.Text
+aozoraRuby base ruby =
+  let prefix = if needsAozoraBar base then "\65372" else T.empty  -- ｜
+  in base `T.append` prefix `T.append` "\12298" `T.append` ruby `T.append` "\12299"  -- 《》
+
+needsAozoraBar :: T.Text -> Bool
+needsAozoraBar t =
+  let cats = S.fromList (mapMaybe scriptCategory (T.unpack t))
+  in S.size cats >= 2
+
+data ScriptCat = CatHiragana | CatKatakana | CatCJK | CatLatin | CatOther
+  deriving (Eq, Ord, Show)
+
+scriptCategory :: Char -> Maybe ScriptCat
+scriptCategory c =
+  let cp = ord c
+  in if cp >= 0x3041 && cp <= 0x309F
+     then Just CatHiragana
+     else if cp >= 0x30A1 && cp <= 0x30FF
+          then Just CatKatakana
+          else if (cp >= 0x4E00 && cp <= 0x9FFF)
+               || (cp >= 0x3400 && cp <= 0x4DBF)
+               || (cp >= 0xF900 && cp <= 0xFAFF)
+               then Just CatCJK
+               else if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                    then Just CatLatin
+                    else if isSpace c
+                         then Nothing
+                         else Just CatOther
+
+pairRubyLines :: Int -> (Double, Double) -> [Line] -> [Line]
+pairRubyLines wmode _ ls =
+  let sorted = sortLinesByReadingOrder ls
+      bodySize = medianOf (map lineSize sorted)
+      isRubyLine l =
+        lineSize l <= 0.85 * bodySize
+        && not (T.null (T.strip (lineText l)))
+      (rubyLs, bodyLs) = partition isRubyLine sorted
+      attach acc ruby =
+        case findRubyParent wmode ruby acc of
+          Nothing -> acc
+          Just (idx, _) ->
+            let updated = insertRuby (acc !! idx) ruby
+            in take idx acc ++ [updated] ++ drop (idx + 1) acc
+  in foldl' attach bodyLs rubyLs
+
+findRubyParent :: Int -> Line -> [Line] -> Maybe (Int, Line)
+findRubyParent wmode ruby bodyLs =
+  listToMaybe
+    [ (i, b)
+    | (i, b) <- zip [0 ..] bodyLs
+    , rubyAlignsWithParent wmode ruby b
+    ]
+
+rubyAlignsWithParent :: Int -> Line -> Line -> Bool
+rubyAlignsWithParent wmode ruby parent =
+  let bodySize = lineSize parent
+      offset = rubyOffset wmode parent ruby
+      overlap = inlineOverlapFrac wmode ruby parent
+  in lineSize ruby <= 0.85 * bodySize
+     && offset > 0.15 * bodySize && offset <= 1.2 * bodySize
+     && overlap >= 0.2
+
+rubyOffset :: Int -> Line -> Line -> Double
+rubyOffset wmode parent ruby =
+  if wmode == 1
+  then lineBaseline parent - lineBaseline ruby
+  else lineBaseline ruby - lineBaseline parent
+
+inlineOverlapFrac :: Int -> Line -> Line -> Double
+inlineOverlapFrac _ a b =
+  let aLo = min (lineInlineStart a) (lineInlineEnd a)
+      aHi = max (lineInlineStart a) (lineInlineEnd a)
+      bLo = min (lineInlineStart b) (lineInlineEnd b)
+      bHi = max (lineInlineStart b) (lineInlineEnd b)
+      lo = max aLo bLo
+      hi = min aHi bHi
+      overlap = max 0 (hi - lo)
+      span = max (bHi - bLo) 1
+  in overlap / span
+
+insertRuby :: Line -> Line -> Line
+insertRuby parent ruby =
+  parent
+    { lineText =
+        aozoraRuby (T.strip (lineText parent)) (T.strip (lineText ruby))
+    }
 
 -- Footnote heuristic (horizontal pages only): small-size lines in the
 -- bottom band (or under a bottom horizontal rule) that start with a
@@ -511,21 +612,13 @@ buildLines = reverse . foldl' go []
       where
         d = baselineOf (lineWMode l) g - lineBaseline l
         gap = inlineStartOf (lineWMode l) g - lineInlineEnd l
-        -- The glyph continues roughly where the line left off; a glyph
-        -- jumping back to the margin is a new line, not a super/subscript.
         inlineCont refSize = gap >= -0.5 * refSize && gap <= 2.0 * refSize
-        -- Superscript/subscript run (footnote markers etc.): a clearly
-        -- smaller glyph with a real baseline shift riding above (or
-        -- hanging slightly below) the current line stays on that line.
         superAttach =
           glyphSize g <= 0.92 * lineSize l
           && glyphSize g >= 0.5 * lineSize l
           && inlineCont (lineSize l)
           && ((d > 0.25 * lineSize l && d <= 0.75 * lineSize l)
               || ((-d) > 0.25 * lineSize l && (-d) <= 0.4 * lineSize l))
-        -- A line that so far consists only of marker-sized glyphs gets
-        -- rebased onto the larger body glyph that follows it (footnote
-        -- bodies start with their superscript marker).
         rebaseAttach =
           lineSize l <= 0.92 * glyphSize g
           && lineSize l >= 0.5 * glyphSize g

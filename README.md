@@ -15,7 +15,7 @@ hpdft --legacy document.pdf     # pre-0.3 stream-order extractor
 
 ```
 hpdft [-p|--page PAGE] [-r|--ref REF] [-g|--grep RegExp] [-R|--refs]
-             [--geom] [--tagged] [--legacy] [--footnotes]
+             [--geom] [--tagged] [--legacy] [--footnotes] [--ruby]
              [-T|--title] [-I|--info] [-O|--toc] [--trailer]
              [-P|--password PASSWORD] FILE
 
@@ -28,6 +28,7 @@ Available options:
   --tagged                 Extract text using tagged PDF structure
   --legacy                 Extract text using the pre-0.3 stream-order extractor
   --footnotes              Inline footnote bodies at their anchors as <footnote> tags (geometry pipeline)
+  --ruby                   Embed ruby in Aozora bunko notation (geometry/tagged pipeline)
   -T,--title               Show title (from metadata)
   -I,--info                Show PDF metainfo
   -O,--toc                 Show table of contents (from metadata)
@@ -56,7 +57,7 @@ Requires GHC 9.14+ (see `hpdft.cabal`).
 
 ```bash
 cabal build
-cabal test                              # golden (22) + unit (267)
+cabal test                              # golden (22) + unit (276)
 bash scripts/verify_text.sh             # compare all fixture outputs
 cabal run interpret-page -- FILE PAGE   # debug glyph positions
 ```
@@ -80,5 +81,5 @@ cabal run interpret-page -- FILE PAGE   # debug glyph positions
 
 ## Version
 
-Released: **0.3.0.0** on `master` (2026-07-05).
-Previous release: **0.2.0.0**.
+Released: **0.3.1.0** on `feature/0.3.1-ruby` (2026-07-05).
+Previous release: **0.3.0.0**.

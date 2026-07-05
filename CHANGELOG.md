@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.1.0 (2026-07-05)
+
+### Added
+
+- Ruby extraction in Aozora bunko notation (`《…》`, `｜` for mixed-script bases)
+- `--ruby` CLI flag (default off); wired through geometry and tagged extraction paths
+- `needsAozoraBar`, `aozoraRuby` in `PDF.Layout`
+- Tagged PDF `/Ruby` structure parsing (`PDF.Structure.collectRubySpans`)
+- Geometry ruby heuristic (horizontal: small line above; vertical: small line to the right)
+- Unit tests for ruby detection and Aozora formatting
+
 ## 0.3.0.0 (2026-07-05)
 
 Includes backwards-incompatible changes from `master` (0.2.0.0).
