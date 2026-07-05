@@ -9,7 +9,7 @@ import PDF.Interpret
   , interpretContentWithFonts
   , interpretContentWithFontsItems
   )
-import PDF.Layout (layoutParagraphs, layoutPageText, layoutDocument)
+import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, layoutParagraphs, layoutParagraphsWith, layoutPageText, layoutDocument)
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
 import PDF.Document (Document(..))
 import PDF.Text (pdfToTextTaggedBS)
@@ -134,6 +134,7 @@ main = do
           ++ interpretGeometryResults
           ++ layoutParagraphResults
           ++ layoutDocumentResults
+          ++ superscriptResults
           ++ interpretGraphicResults
           ++ interpretMCIDResults
           ++ structureTreeResults
@@ -456,6 +457,65 @@ layoutDocumentResults =
       , assertBool "layout doc alternating roman headers removed"
           (not (T.isInfixOf "vi 序文" alternatingHdr)
            && not (T.isInfixOf "序文 vii" alternatingHdr))
+      ]
+
+-- A body line at y=700 size 10, with a superscript marker (size 7,
+-- +3.5 above) and footnote apparatus at page bottom.
+superscriptResults :: [Result]
+superscriptResults =
+  let body t = ItemGlyph (mkGlyph 72 700 60 10 0 t)
+      supAt x t = ItemGlyph (mkGlyph x 703.5 4 7 0 t)
+      bodyAfter x t = ItemGlyph (mkGlyph x 700 10 10 0 t)
+      merged = layoutParagraphs
+        [ body "text", supAt 132 "\8224", supAt 136 "1", bodyAfter 140 "." ]
+      farSup = layoutParagraphs
+        [ body "text", ItemGlyph (mkGlyph 132 708.5 4 7 0 "\8224") ]
+      rebase = layoutParagraphs
+        [ ItemGlyph (mkGlyph 72 87.6 4 7 0 "\8224")
+        , ItemGlyph (mkGlyph 76 87.6 4 7 0 "1")
+        , ItemGlyph (mkGlyph 82 84.3 100 9 0 "note body")
+        ]
+      fnPage =
+        [ body "anchor", supAt 132 "\8224", supAt 136 "1"
+        , ItemGlyph (mkGlyph 72 500 60 10 0 "more body text here")
+        , ItemGraphic (Rect 72 95 200 95.5)
+        , ItemGlyph (mkGlyph 72 87.6 3 7 0 "\8224")
+        , ItemGlyph (mkGlyph 75 87.6 3 7 0 "1")
+        , ItemGlyph (mkGlyph 80 84.3 60 8 0 "the note")
+        ]
+      fnOn = T.concat (layoutParagraphsWith (defaultLayoutOptions {optFootnotes = True}) fnPage)
+      fnOff = T.concat (layoutParagraphs fnPage)
+      unmatchedAnchor = T.concat
+        (layoutParagraphsWith (defaultLayoutOptions {optFootnotes = True})
+          [ body "anchor", supAt 132 "\8224", supAt 136 "9"
+          , ItemGlyph (mkGlyph 72 500 60 10 0 "more body text here")
+          ])
+      orphanBlock = T.concat
+        (layoutParagraphsWith (defaultLayoutOptions {optFootnotes = True})
+          [ body "just body content"
+          , ItemGlyph (mkGlyph 72 500 60 10 0 "more body text here")
+          , ItemGlyph (mkGlyph 72 87.6 3 7 0 "\8224")
+          , ItemGlyph (mkGlyph 75 87.6 3 7 0 "2")
+          , ItemGlyph (mkGlyph 80 84.3 60 8 0 "orphan note")
+          ])
+   in [ assertBool "superscript merges inline" (length merged == 1)
+      , assertTextEq "superscript inline text order"
+          (T.pack "text\8224\&1.") (head merged)
+      , assertBool "superscript beyond window splits" (length farSup == 2)
+      , assertBool "marker line rebases onto body" (length rebase == 1)
+      , assertTextEq "rebased line text" (T.pack "\8224\&1note body") (head rebase)
+      , assertBool "footnotes on: body inlined"
+          (T.isInfixOf "anchor<footnote>the note</footnote>" fnOn)
+      , assertBool "footnotes on: block removed"
+          (not (T.isInfixOf "\8224\&1 the note" fnOn))
+      , assertBool "footnotes off: marker kept"
+          (T.isInfixOf "anchor\8224\&1" fnOff)
+      , assertBool "footnotes off: block kept"
+          (T.isInfixOf "the note" fnOff)
+      , assertBool "unmatched anchor kept as-is"
+          (T.isInfixOf "anchor\8224\&9" unmatchedAnchor)
+      , assertBool "orphan footnote block stays"
+          (T.isInfixOf "orphan note" orphanBlock)
       ]
 
 interpretGraphicResults :: [Result]

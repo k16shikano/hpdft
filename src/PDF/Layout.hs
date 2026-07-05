@@ -4,9 +4,14 @@ module PDF.Layout
   ( Rect(..)
   , PageItem(..)
   , Line(..)
+  , LayoutOptions(..)
+  , defaultLayoutOptions
   , layoutParagraphs
+  , layoutParagraphsWith
   , layoutPageText
+  , layoutPageTextWith
   , layoutDocument
+  , layoutDocumentWith
   , stripHeadersFooters
   , linesFromGlyphs
   , joinParaLines
@@ -23,11 +28,25 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Text as T
 
+-- Footnote bodies continuing onto the following page are not merged.
+data LayoutOptions = LayoutOptions
+  { optFootnotes :: Bool
+  } deriving (Eq, Show)
+
+defaultLayoutOptions :: LayoutOptions
+defaultLayoutOptions = LayoutOptions {optFootnotes = False}
+
 layoutPageText :: [PageItem] -> T.Text
-layoutPageText items = formatParagraphs (layoutParagraphs items)
+layoutPageText = layoutPageTextWith defaultLayoutOptions
+
+layoutPageTextWith :: LayoutOptions -> [PageItem] -> T.Text
+layoutPageTextWith opts items = formatParagraphs (layoutParagraphsWith opts items)
 
 layoutDocument :: [[PageItem]] -> T.Text
-layoutDocument pages = formatParagraphs (documentParagraphs pages)
+layoutDocument = layoutDocumentWith defaultLayoutOptions
+
+layoutDocumentWith :: LayoutOptions -> [[PageItem]] -> T.Text
+layoutDocumentWith opts pages = formatParagraphs (documentParagraphs opts pages)
 
 formatParagraphs :: [T.Text] -> T.Text
 formatParagraphs ps =
@@ -36,18 +55,22 @@ formatParagraphs ps =
   else T.intercalate "\n\n" ps `T.append` "\n"
 
 layoutParagraphs :: [PageItem] -> [T.Text]
-layoutParagraphs items =
-  case pageLines items of
+layoutParagraphs = layoutParagraphsWith defaultLayoutOptions
+
+layoutParagraphsWith :: LayoutOptions -> [PageItem] -> [T.Text]
+layoutParagraphsWith opts items =
+  case applyFootnotes opts (pageLines items) of
     PageFallback ps -> ps
     PageNormal wmode graphics bounds ls ->
       map joinParaLines (groupParagraphs wmode graphics bounds ls)
 
-documentParagraphs :: [[PageItem]] -> [T.Text]
-documentParagraphs pages =
+documentParagraphs :: LayoutOptions -> [[PageItem]] -> [T.Text]
+documentParagraphs opts pages =
   let pageCount = length pages
       layouts = map pageLines pages
       stripped = applyHeaderFooterStrip pageCount layouts
-  in finalizeDoc $ foldl' processPage ([], []) stripped
+      final = map (applyFootnotes opts) stripped
+  in finalizeDoc $ foldl' processPage ([], []) final
   where
     applyHeaderFooterStrip n layouts =
       let normalPairs = [(i, ls) | (i, PageNormal _ _ _ ls) <- zip [0 ..] layouts]
@@ -106,6 +129,167 @@ data PageLines
   = PageFallback [T.Text]
   | PageNormal Int [Rect] (Double, Double) [Line]
   deriving (Show)
+
+applyFootnotes :: LayoutOptions -> PageLines -> PageLines
+applyFootnotes opts page =
+  case page of
+    PageNormal 0 graphics bounds ls
+      | optFootnotes opts ->
+          PageNormal 0 graphics bounds (inlineFootnotes graphics ls)
+    _ -> page
+
+-- Footnote heuristic (horizontal pages only): small-size lines in the
+-- bottom band (or under a bottom horizontal rule) that start with a
+-- marker such as †2 form footnote blocks; matching superscript markers
+-- in the body are replaced with <footnote>...</footnote>.
+inlineFootnotes :: [Rect] -> [Line] -> [Line]
+inlineFootnotes graphics ls
+  | null ls = ls
+  | otherwise =
+      let bodySize = medianOf (map lineSize ls)
+          (lo, hi) = pageBaselineExtent ls
+          bandTop = lo + 0.35 * (hi - lo)
+          ruleYs =
+            [ max (rectY0 r) (rectY1 r)
+            | r <- graphics
+            , rectHeight r < 1
+            , rectWidth r >= 40
+            , min (rectY0 r) (rectY1 r) <= bandTop
+            ]
+          isSmall l = lineSize l <= 0.85 * bodySize
+          inRegion l =
+            isSmall l
+            && (lineBaseline l <= bandTop || any (> lineBaseline l) ruleYs)
+          tagged = [(inRegion l, l) | l <- ls]
+          regionLines = [l | (True, l) <- tagged]
+          blocks = footnoteBlocks regionLines
+          (consumedIdx, replaceBody) = matchAnchors blocks [l | (False, l) <- tagged]
+          consumedLines = S.fromList
+            [ i
+            | (bi, (_, _, lineIdxs)) <- zip [0 :: Int ..] blocks
+            , bi `S.member` consumedIdx
+            , i <- lineIdxs
+            ]
+          keep (i, (inR, l))
+            | inR = not (regionIndexOf i `S.member` consumedLines)
+            | otherwise = True
+          regionIndexOf i =
+            length [() | (j, (True, _)) <- zip [0 ..] tagged, j < i]
+      in [ if inR then l else replaceBody l
+         | (i, (inR, l)) <- zip [0 :: Int ..] tagged
+         , keep (i, (inR, l))
+         ]
+
+-- Blocks: (marker key, body text, indexes into the region line list).
+footnoteBlocks :: [Line] -> [(T.Text, T.Text, [Int])]
+footnoteBlocks regionLines = go (zip [0 ..] regionLines)
+  where
+    go [] = []
+    go ((i, l) : rest) =
+      case blockStart l of
+        Nothing -> go rest
+        Just (key, firstText) ->
+          let (cont, rest') = break (\(_, l') -> blockStart l' /= Nothing) rest
+              bodyLines = firstText : map (T.strip . lineText . snd) cont
+              body = T.strip (foldl' cjkJoin T.empty bodyLines)
+          in (key, body, i : map fst cont) : go rest'
+
+    cjkJoin a b
+      | T.null a = b
+      | T.null b = a
+      | isCJK (T.last a) && isCJK (T.head b) = a `T.append` b
+      | otherwise = a `T.append` " " `T.append` b
+
+blockStart :: Line -> Maybe (T.Text, T.Text)
+blockStart l =
+  case [mt | (0, mt) <- lineMarkers l] of
+    mt : _ | Just key <- markerKey mt ->
+      Just (key, T.strip (T.drop (T.length mt) (lineText l)))
+    _ ->
+      let t = T.stripStart (lineText l)
+      in case T.uncons t of
+           Just (c, rest)
+             | c `elem` ("\8224\8225*\8251" :: String) ->
+                 let (ds, rest') = T.span isAsciiDigit rest
+                 in if not (T.null ds) && T.length ds <= 3
+                    then Just (T.cons c ds, T.strip rest')
+                    else Nothing
+           _ -> Nothing
+
+-- Anchor pass: returns consumed block indexes and a body-line rewriter.
+matchAnchors :: [(T.Text, T.Text, [Int])] -> [Line] -> (S.Set Int, Line -> Line)
+matchAnchors blocks bodyLines =
+  let anchors =
+        [ key
+        | l <- bodyLines
+        , (_, mt) <- lineMarkers l
+        , Just key <- [markerKey mt]
+        ]
+      assign consumed [] = consumed
+      assign consumed (key : rest) =
+        case [ bi
+             | (bi, (bkey, _, _)) <- zip [0 ..] blocks
+             , bkey == key
+             , not (bi `S.member` S.map fst consumed)
+             ] of
+          bi : _ -> assign (S.insert (bi, key) consumed) rest
+          [] -> assign consumed rest
+      consumedPairs = assign S.empty anchors
+      consumedIdx = S.map fst consumedPairs
+      bodyOf key =
+        case [ (bi, b)
+             | (bi, (bkey, b, _)) <- zip [0 ..] blocks
+             , bkey == key
+             , bi `S.member` consumedIdx
+             ] of
+          (_, b) : _ -> Just b
+          [] -> Nothing
+      rewrite l =
+        let (txt', finalPos, _) =
+              foldl' step (T.empty, 0, S.empty) (lineMarkers l)
+            step (acc, pos, used) (off, mt) =
+              let pre = T.take (off - pos) (T.drop pos (lineText l))
+                  after = off + T.length mt
+              in case markerKey mt of
+                   Just key
+                     | not (key `S.member` used)
+                     , Just b <- bodyOf key ->
+                         ( T.concat [acc, pre, "<footnote>", b, "</footnote>"]
+                         , after
+                         , S.insert key used
+                         )
+                   _ -> (acc `T.append` pre `T.append` mt, after, used)
+            rest = T.drop finalPos (lineText l)
+        in if null (lineMarkers l)
+           then l
+           else l {lineText = txt' `T.append` rest, lineMarkers = []}
+  in (consumedIdx, rewrite)
+
+markerKey :: T.Text -> Maybe T.Text
+markerKey mt =
+  let s = T.filter (not . isSpace) mt
+  in case T.uncons s of
+       Just (c, rest)
+         | c `elem` ("\8224\8225*\8251" :: String)
+         , digits rest -> Just s
+       _ | digits s -> Just s
+       _ -> Nothing
+  where
+    digits d = not (T.null d) && T.length d <= 3 && T.all isAsciiDigit d
+
+isAsciiDigit :: Char -> Bool
+isAsciiDigit c = c >= '0' && c <= '9'
+
+medianOf :: [Double] -> Double
+medianOf xs =
+  case sort xs of
+    [] -> 0
+    sorted ->
+      let n = length sorted
+          mid = n `div` 2
+      in if odd n
+         then sorted !! mid
+         else (sorted !! (mid - 1) + sorted !! mid) / 2
 
 pageLines :: [PageItem] -> PageLines
 pageLines items =
@@ -293,6 +477,8 @@ data Line = Line
   , lineFirstInline :: !Double
   , lineWMode       :: !Int
   , lineText        :: !T.Text
+  , lineMarkers     :: [(Int, T.Text)]
+  , lineLastSuper   :: !Bool
   } deriving (Show)
 
 buildLines :: [Glyph] -> [Line]
@@ -301,10 +487,34 @@ buildLines = reverse . foldl' go []
     go [] g = [newLine g]
     go (l:ls) g
       | glyphWMode g /= lineWMode l = newLine g : l : ls
-      | abs (baselineOf (lineWMode l) g - lineBaseline l)
-          <= 0.4 * max (glyphSize g) (lineSize l) =
-          mergeGlyph l g : ls
+      | superAttach = mergeSuper l g : ls
+      | rebaseAttach = mergeRebase l g : ls
+      | abs d <= 0.4 * max (glyphSize g) (lineSize l) = mergeGlyph l g : ls
       | otherwise = newLine g : l : ls
+      where
+        d = baselineOf (lineWMode l) g - lineBaseline l
+        gap = inlineStartOf (lineWMode l) g - lineInlineEnd l
+        -- The glyph continues roughly where the line left off; a glyph
+        -- jumping back to the margin is a new line, not a super/subscript.
+        inlineCont refSize = gap >= -0.5 * refSize && gap <= 2.0 * refSize
+        -- Superscript/subscript run (footnote markers etc.): a clearly
+        -- smaller glyph with a real baseline shift riding above (or
+        -- hanging slightly below) the current line stays on that line.
+        superAttach =
+          glyphSize g <= 0.92 * lineSize l
+          && glyphSize g >= 0.5 * lineSize l
+          && inlineCont (lineSize l)
+          && ((d > 0.25 * lineSize l && d <= 0.75 * lineSize l)
+              || ((-d) > 0.25 * lineSize l && (-d) <= 0.4 * lineSize l))
+        -- A line that so far consists only of marker-sized glyphs gets
+        -- rebased onto the larger body glyph that follows it (footnote
+        -- bodies start with their superscript marker).
+        rebaseAttach =
+          lineSize l <= 0.92 * glyphSize g
+          && lineSize l >= 0.5 * glyphSize g
+          && inlineCont (glyphSize g)
+          && (((-d) > 0.25 * glyphSize g && (-d) <= 0.75 * glyphSize g)
+              || (d > 0.25 * glyphSize g && d <= 0.4 * glyphSize g))
 
 newLine :: Glyph -> Line
 newLine g =
@@ -316,6 +526,8 @@ newLine g =
     , lineFirstInline = inlineStartOf (glyphWMode g) g
     , lineWMode = glyphWMode g
     , lineText = glyphText g
+    , lineMarkers = []
+    , lineLastSuper = False
     }
 
 mergeGlyph :: Line -> Glyph -> Line
@@ -329,6 +541,43 @@ mergeGlyph line g =
        , lineInlineStart = min (lineInlineStart line) (inlineStartOf w g)
        , lineSize = size
        , lineText = lineText line `T.append` space `T.append` glyphText g
+       , lineLastSuper = False
+       }
+
+mergeSuper :: Line -> Glyph -> Line
+mergeSuper line g =
+  let w = lineWMode line
+      gap = inlineStartOf w g - lineInlineEnd line
+      space = intraLineSpace gap (lineSize line) (lastChar (lineText line)) (firstChar (glyphText g))
+      offset = T.length (lineText line) + T.length space
+      markers =
+        if lineLastSuper line
+        then case reverse (lineMarkers line) of
+          (off, mt) : restRev ->
+            reverse ((off, mt `T.append` space `T.append` glyphText g) : restRev)
+          [] -> [(offset, glyphText g)]
+        else lineMarkers line ++ [(offset, glyphText g)]
+  in line
+       { lineInlineEnd = inlineEndOf w g
+       , lineInlineStart = min (lineInlineStart line) (inlineStartOf w g)
+       , lineText = lineText line `T.append` space `T.append` glyphText g
+       , lineMarkers = markers
+       , lineLastSuper = True
+       }
+
+mergeRebase :: Line -> Glyph -> Line
+mergeRebase line g =
+  let w = lineWMode line
+      gap = inlineStartOf w g - lineInlineEnd line
+      space = intraLineSpace gap (glyphSize g) (lastChar (lineText line)) (firstChar (glyphText g))
+  in line
+       { lineBaseline = baselineOf w g
+       , lineSize = glyphSize g
+       , lineInlineEnd = inlineEndOf w g
+       , lineInlineStart = min (lineInlineStart line) (inlineStartOf w g)
+       , lineText = lineText line `T.append` space `T.append` glyphText g
+       , lineMarkers = [(0, lineText line)]
+       , lineLastSuper = False
        }
 
 joinGlyphsRun :: [Glyph] -> T.Text
