@@ -8,6 +8,8 @@ module PDF.Text
   , pdfToTextDoc
   , pdfToTextGeomBS
   , pdfToTextGeomDoc
+  , pdfToTextTaggedBS
+  , pdfToTextTaggedDoc
   ) where
 
 import PDF.Definition
@@ -15,9 +17,11 @@ import PDF.Error (PdfResult, PdfWarning(..))
 import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
 import PDF.Encrypt (Security)
-import PDF.Interpret (interpretPageItems)
-import PDF.Layout (layoutPageText)
+import PDF.Interpret (Glyph(..), PageItem(..), interpretPageItems)
+import PDF.Layout (joinGlyphsRun, layoutPageText)
+import PDF.Structure (StructElem(..), structTree, logicalOrder)
 
+import Data.List (foldl')
 import qualified Data.Map as Map
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Lazy.UTF8 as BSLU
@@ -73,6 +77,79 @@ pdfToTextGeomDoc doc = do
   let refs = pageRefsOrder rootref (docObjs doc)
   pages <- mapM (interpretPageItems doc) refs
   return $ BSLU.fromString (T.unpack (T.concat (map layoutPageText pages)))
+
+pdfToTextTaggedBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
+pdfToTextTaggedBS filename mpw = do
+  docResult <- openDocument filename mpw
+  return (docResult >>= pdfToTextTaggedDoc)
+
+pdfToTextTaggedDoc :: Document -> PdfResult BSL.ByteString
+pdfToTextTaggedDoc doc = do
+  mroot <- structTree doc
+  case mroot of
+    Nothing -> pdfToTextGeomDoc doc
+    Just root -> do
+      rootref <- docRootRef doc
+      let refs = pageRefsOrder rootref (docObjs doc)
+      pages <- mapM (interpretPageItems doc) refs
+      if taggedUsable pages
+         then Right (BSLU.fromString (T.unpack (assembleTagged root refs pages)))
+         else pdfToTextGeomDoc doc
+
+taggedUsable :: [[PageItem]] -> Bool
+taggedUsable pages =
+  let glyphs = [g | pg <- pages, ItemGlyph g <- pg]
+      total = length glyphs
+      tagged = length [g | g <- glyphs, glyphMCID g /= Nothing]
+  in total > 0 && fromIntegral tagged / fromIntegral total >= 0.5
+
+assembleTagged :: StructElem -> [Int] -> [[PageItem]] -> T.Text
+assembleTagged root refs pages =
+  let mcidMaps = zip refs (map mcidGlyphMap pages)
+      mcidLookup = Map.fromList
+        [((page, mcid), gs) | (page, m) <- mcidMaps, (mcid, gs) <- Map.toList m]
+      artifactMaps = Map.fromList
+        [(page, artifactGlyphs pg) | (page, pg) <- zip refs pages]
+      order = logicalOrder root
+
+      lastPathType [] = ""
+      lastPathType path = last path
+
+      appendMCID (acc, prevParaEnd) (path, page, mcid) =
+        case Map.lookup (page, mcid) mcidLookup of
+          Nothing -> (acc, prevParaEnd)
+          Just gs ->
+            let run = joinGlyphsRun gs
+                sep = if prevParaEnd && not (T.null acc) then "\n\n" else ""
+                paraEnd = paragraphEnd (lastPathType path)
+            in (acc `T.append` sep `T.append` run, paraEnd)
+
+      appendArtifacts acc page =
+        case Map.lookup page artifactMaps of
+          Just gs | not (null gs) ->
+            let run = joinGlyphsRun gs
+            in if T.null acc
+               then run
+               else acc `T.append` "\n\n" `T.append` run
+          _ -> acc
+
+      (structText, _) = foldl' appendMCID (T.empty, False) order
+      withArtifacts = foldl' appendArtifacts structText refs
+  in if T.null withArtifacts then "\n" else withArtifacts `T.append` "\n"
+
+paragraphEnd :: String -> Bool
+paragraphEnd stype = stype `elem`
+  [ "/P", "/H1", "/H2", "/H3", "/H4", "/H5", "/H6"
+  , "/LI", "/LBody", "/TD", "/TH", "/Caption", "/Title"
+  ]
+
+mcidGlyphMap :: [PageItem] -> Map.Map Int [Glyph]
+mcidGlyphMap items =
+  Map.map reverse $
+    Map.fromListWith (++) [(mcid, [g]) | ItemGlyph g <- items, Just mcid <- [glyphMCID g]]
+
+artifactGlyphs :: [PageItem] -> [Glyph]
+artifactGlyphs items = [g | ItemGlyph g <- items, glyphMCID g == Nothing]
 
 pageRefsOrder :: Int -> PDFObjIndex -> [Int]
 pageRefsOrder parent objs =

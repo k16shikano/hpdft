@@ -10,12 +10,17 @@ import PDF.Interpret
   , interpretContentWithFontsItems
   )
 import PDF.Layout (layoutParagraphs, layoutPageText)
+import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
+import PDF.Document (Document(..))
+import PDF.Text (pdfToTextTaggedBS)
+import PDF.Error (PdfResult)
 
 import qualified Data.Map as M
 import qualified Data.ByteString.Lazy.Char8 as BSLC
 import qualified Data.Text as T
 
 import System.Exit (exitFailure)
+import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad (when)
 
 epsilon :: Double
@@ -129,6 +134,9 @@ main = do
           ++ interpretGeometryResults
           ++ layoutParagraphResults
           ++ interpretGraphicResults
+          ++ interpretMCIDResults
+          ++ structureTreeResults
+          ++ taggedEndToEndResults
   let failures = [msg | Fail msg <- results]
       passed = length results - length failures
   mapM_ reportResult results
@@ -292,6 +300,7 @@ mkGlyph x y w sz wmode txt =
     , glyphSize = sz
     , glyphFont = "/F1"
     , glyphWMode = wmode
+    , glyphMCID = Nothing
     }
 
 layoutParagraphResults :: [Result]
@@ -392,3 +401,98 @@ simpleWidthAtResults =
       , assertDoubleEq "simpleWidthAt above range" 0 (simpleWidthAt 32 widths 0 40)
       , assertDoubleEq "simpleWidthAt missing width fallback" 99 (simpleWidthAt 0 [PdfText "x"] 99 0)
       ]
+
+interpretMCIDResults :: [Result]
+interpretMCIDResults =
+  let bdc = runInterp "/P <</MCID 0>> BDC BT /F1 10 Tf 0 0 Td (A) Tj ET EMC"
+      nested = runInterp "/Span BMC /P <</MCID 1>> BDC BT /F1 10 Tf 10 0 Td (B) Tj ET EMC EMC"
+      inherit = runInterp "/Span BMC BT /F1 10 Tf 0 0 Td (C) Tj ET EMC"
+      afterPop = runInterp "/P <</MCID 0>> BDC BT /F1 10 Tf 0 0 Td (D) Tj ET EMC BT /F1 10 Tf 20 0 Td (E) Tj ET"
+      underflow = runInterp "BT /F1 10 Tf 0 0 Td (F) Tj ET EMC"
+   in [ assertBool "interpret BDC MCID one glyph" (length bdc == 1)
+      , assertBool "interpret BDC MCID value" (glyphMCID (head bdc) == Just 0)
+      , assertBool "interpret nested BMC inherits MCID" (length nested == 1)
+      , assertBool "interpret nested MCID value" (glyphMCID (head nested) == Just 1)
+      , assertBool "interpret BMC no MCID on glyph" (all (== Nothing) (map glyphMCID inherit))
+      , assertBool "interpret EMC clears MCID" (glyphMCID (afterPop !! 1) == Nothing)
+      , assertBool "interpret EMC underflow tolerated" (length underflow == 1)
+      ]
+
+mkTestDoc :: M.Map Int [Obj] -> Document
+mkTestDoc objs =
+  Document (M.fromList [("/Root", ObjRef 1)]) objs Nothing
+
+structureTreeResults :: [Result]
+structureTreeResults =
+  let objs = M.fromList
+        [ (1, [PdfDict (M.fromList
+            [ ("/Type", PdfName "/Catalog")
+            , ("/StructTreeRoot", ObjRef 6)
+            ])])
+        , (6, [PdfDict (M.fromList
+            [ ("/Type", PdfName "/StructTreeRoot")
+            , ("/K", ObjRef 8)
+            ])])
+        , (8, [PdfDict (M.fromList
+            [ ("/Type", PdfName "/StructElem")
+            , ("/S", PdfName "/Document")
+            , ("/K", PdfArray [ObjRef 9, PdfNumber 2, ObjRef 10, ObjRef 11])
+            ])])
+        , (9, [PdfDict (M.fromList
+            [ ("/Type", PdfName "/StructElem")
+            , ("/S", PdfName "/Sect")
+            , ("/Pg", ObjRef 3)
+            , ("/K", PdfNumber 0)
+            ])])
+        , (10, [PdfDict (M.fromList
+            [ ("/Type", PdfName "/MCR")
+            , ("/Pg", ObjRef 3)
+            , ("/MCID", PdfNumber 1)
+            ])])
+        , (11, [PdfDict (M.fromList
+            [ ("/Type", PdfName "/OBJR")
+            , ("/Obj", ObjRef 99)
+            ])])
+        ]
+      doc = mkTestDoc objs
+      parsed = structTree doc :: PdfResult (Maybe StructElem)
+      order = case parsed of
+        Right (Just root) -> logicalOrder root
+        _ -> []
+   in [ assertBool "structTree parses hand-built tree" (isRight parsed)
+      , assertBool "structTree root type" (rootType parsed == "/StructTreeRoot")
+      , assertBool "structTree nested sect kid" (hasSect parsed)
+      , assertBool "structTree K int becomes MCID" (elem (3, 0) (mcidPairs order))
+      , assertBool "structTree MCR dict becomes MCID" (elem (3, 1) (mcidPairs order))
+      , assertBool "structTree OBJR skipped" (length order == 2)
+      ]
+  where
+    isRight (Right _) = True
+    isRight _ = False
+    rootType (Right (Just (StructElem t _))) = t
+    rootType _ = ""
+    hasSect (Right (Just root)) = "/Sect" `elem` elemTypes root
+    hasSect _ = False
+    elemTypes (StructElem t kids) = t : concatMap kidTypes kids
+    kidTypes (KidElem e) = elemTypes e
+    kidTypes _ = []
+    mcidPairs = map (\(_, page, mcid) -> (page, mcid))
+
+taggedEndToEndResults :: [Result]
+taggedEndToEndResults =
+  [ runTaggedFixture
+  ]
+
+runTaggedFixture :: Result
+runTaggedFixture =
+  let path = "data/fixtures/tagged.pdf"
+  in unsafePerformIO $ do
+    result <- pdfToTextTaggedBS path (Just "")
+    return $ case result of
+      Right bs ->
+        let actual = BSLC.unpack bs
+            expected = "First paragraph.\n\nSecond paragraph.\n"
+        in assertTextEq "tagged.pdf end-to-end" (T.pack expected) (T.pack actual)
+      Left err -> testFail "tagged.pdf end-to-end" (show err)
+
+{-# NOINLINE runTaggedFixture #-}

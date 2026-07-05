@@ -488,6 +488,43 @@ paragraphs =
       xrefPos = BS.length body
   in body <> xrefTable offsets 6 <> trailerPart Nothing xrefPos
 
+taggedStream :: BS.ByteString
+taggedStream = BS.concat
+  [ "/P <</MCID 0>> BDC\n"
+  , "BT /F1 24 Tf 72 720 Td (First paragraph.) Tj ET\n"
+  , "EMC\n"
+  , "/P <</MCID 1>> BDC\n"
+  , "BT /F1 24 Tf 72 680 Td (Second paragraph.) Tj ET\n"
+  , "EMC\n"
+  ]
+
+taggedContentStream :: BS.ByteString
+taggedContentStream =
+  BS.concat
+    [ "<< /Length ", BS.pack (show (BS.length taggedStream)), " >>\nstream\n"
+    , taggedStream
+    , "\nendstream"
+    ]
+
+tagged :: BS.ByteString
+tagged =
+  let objects =
+        [ (1, "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 6 0 R /MarkInfo 7 0 R >>")
+        , (2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+        , (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+              \/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>")
+        , (4, taggedContentStream)
+        , (5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+        , (6, "<< /Type /StructTreeRoot /K 8 0 R >>")
+        , (7, "<< /Marked true >>")
+        , (8, "<< /Type /StructElem /S /Document /K [9 0 R 10 0 R] >>")
+        , (9, "<< /Type /StructElem /S /P /Pg 3 0 R /K 0 >>")
+        , (10, "<< /Type /StructElem /S /P /Pg 3 0 R /K 1 >>")
+        ]
+      (body, offsets) = buildBody objects
+      xrefPos = BS.length body
+  in body <> xrefTable offsets 11 <> trailerPartSize 11 Nothing xrefPos
+
 main :: IO ()
 main = do
   args <- getArgs
@@ -505,6 +542,7 @@ main = do
     , ("binary-endstream.pdf", binaryEndstream)
     , ("geometry.pdf", geometry)
     , ("paragraphs.pdf", paragraphs)
+    , ("tagged.pdf", tagged)
     ]
   where
     write dir (name, bytes) = do

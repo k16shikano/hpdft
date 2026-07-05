@@ -5,6 +5,8 @@ module PDF.Layout
   , PageItem(..)
   , layoutParagraphs
   , layoutPageText
+  , intraLineSpace
+  , joinGlyphsRun
   ) where
 
 import PDF.Interpret (Glyph(..), Rect(..), PageItem(..))
@@ -120,6 +122,19 @@ mergeGlyph line g =
        , lineSize = size
        , lineText = lineText line `T.append` space `T.append` glyphText g
        }
+
+joinGlyphsRun :: [Glyph] -> T.Text
+joinGlyphsRun [] = T.empty
+joinGlyphsRun (g : gs) =
+  let (txt, _) = foldl' go (glyphText g, g) gs
+  in txt
+  where
+    go (acc, prev) g' =
+      let wmode = glyphWMode g'
+          gap = inlineStartOf wmode g' - inlineEndOf wmode prev
+          size = max (glyphSize g') (glyphSize prev)
+          space = intraLineSpace gap size (lastChar acc) (firstChar (glyphText g'))
+      in (acc `T.append` space `T.append` glyphText g', g')
 
 intraLineSpace :: Double -> Double -> Maybe Char -> Maybe Char -> T.Text
 intraLineSpace gap size mc nc

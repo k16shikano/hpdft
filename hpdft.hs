@@ -12,7 +12,7 @@ import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Outlines
 import PDF.Encrypt (Security)
-import PDF.Text (initstate, pdfToTextWithWarnings, pdfToTextGeomBS)
+import PDF.Text (initstate, pdfToTextWithWarnings, pdfToTextGeomBS, pdfToTextTaggedBS)
 import PDF.Error (PdfError(..), PdfResult, PdfWarning(..), renderPdfWarning)
 
 import System.Environment (getArgs)
@@ -88,6 +88,7 @@ data CmdOpt = CmdOpt {
   grep :: String,
   refs :: Bool,
   geom :: Bool,
+  tagged :: Bool,
   pdftitle :: Bool,
   pdfinfo :: Bool,
   pdfoutline :: Bool,
@@ -124,6 +125,9 @@ options = CmdOpt
           ( long "geom"
             <> help "Extract text using geometry-based layout" )
           <*> switch
+          ( long "tagged"
+            <> help "Extract text using tagged PDF structure" )
+          <*> switch
           ( long "title"
             <> short 'T'
             <> help "Show title (from metadata)" )
@@ -150,17 +154,18 @@ options = CmdOpt
             <> action "file" )
 
 hpdft :: CmdOpt -> IO ()
-hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, geom=gm, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
+hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, geom=gm, tagged=tg, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
   withFile fn $
   let mpw = Just pw
   in case () of
-    _ | pg==0 && rf==0 && null gr && not rs && gm && not tt && not ii && not oo && not tr -> pdfToTextGeom fn mpw
-      | pg==0 && rf==0 && null gr && not rs && not gm && not tt && not ii && not oo && not tr -> pdfToText fn mpw
-      | pg==0 && rf==0 && null gr && not rs && not gm && tt      -> showTitle fn mpw
-      | pg==0 && rf==0 && null gr && not rs && not gm && ii      -> showInfo fn mpw
-      | pg==0 && rf==0 && null gr && not rs && not gm && oo      -> showOutlines fn mpw
-      | pg==0 && rf==0 && null gr && not rs && not gm && tr      -> showTrailer fn
-      | pg==0 && rf==0 && null gr && rs && not gm                -> showRefs fn mpw
+    _ | pg==0 && rf==0 && null gr && not rs && tg && not gm && not tt && not ii && not oo && not tr -> pdfToTextTagged fn mpw
+      | pg==0 && rf==0 && null gr && not rs && gm && not tg && not tt && not ii && not oo && not tr -> pdfToTextGeom fn mpw
+      | pg==0 && rf==0 && null gr && not rs && not gm && not tg && not tt && not ii && not oo && not tr -> pdfToText fn mpw
+      | pg==0 && rf==0 && null gr && not rs && not gm && not tg && tt      -> showTitle fn mpw
+      | pg==0 && rf==0 && null gr && not rs && not gm && not tg && ii      -> showInfo fn mpw
+      | pg==0 && rf==0 && null gr && not rs && not gm && not tg && oo      -> showOutlines fn mpw
+      | pg==0 && rf==0 && null gr && not rs && not gm && not tg && tr      -> showTrailer fn
+      | pg==0 && rf==0 && null gr && rs && not gm && not tg                -> showRefs fn mpw
       | rf==0 && null gr && pg/=0                      -> showPage fn mpw pg
       | pg==0 && null gr && rf/=0                      -> showContent fn mpw rf
       | pg==0 && rf==0 && not (null gr)                -> grepPDF fn mpw gr
@@ -175,6 +180,11 @@ pdfToText filename mpw = do
 pdfToTextGeom :: FilePath -> Maybe String -> IO ()
 pdfToTextGeom filename mpw = do
   txt <- runOrDie (pdfToTextGeomBS filename mpw)
+  BSL.putStrLn txt
+
+pdfToTextTagged :: FilePath -> Maybe String -> IO ()
+pdfToTextTagged filename mpw = do
+  txt <- runOrDie (pdfToTextTaggedBS filename mpw)
   BSL.putStrLn txt
 
 data  PageTree = Nop | Page Int | Pages [PageTree]
