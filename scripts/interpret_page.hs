@@ -9,7 +9,7 @@ import PDF.Definition
 import PDF.Document (Document(..), docRootRef, openDocument)
 import PDF.DocumentStructure (findDictOfType, findKids, findObjsByRef, findPages)
 import PDF.Error (PdfError(..), PdfResult)
-import PDF.Interpret (Glyph(..), interpretPage)
+import PDF.Interpret (Glyph(..), PageItem(..), interpretPageItems)
 
 import Control.Monad (forM_)
 import System.Environment (getArgs)
@@ -32,8 +32,10 @@ inspect :: Document -> IO ()
 inspect doc = do
   root <- runOrDie (docRootRef doc)
   pageRef <- runOrDie (firstPageRef root (docObjs doc))
-  glyphs <- runOrDie (interpretPage doc pageRef)
-  putStrLn $ "page " ++ show pageRef ++ ": " ++ show (length glyphs) ++ " glyph segments"
+  items <- runOrDie (interpretPageItems doc pageRef)
+  let glyphs = [g | ItemGlyph g <- items]
+      graphics = length [() | ItemGraphic _ <- items]
+  putStrLn $ "page " ++ show pageRef ++ ": " ++ show (length glyphs) ++ " glyph segments, " ++ show graphics ++ " graphics"
   forM_ (take 10 glyphs) $ \g ->
     putStrLn $ show (glyphText g) ++ " @ (" ++ show (glyphX g) ++ ", " ++ show (glyphY g) ++ ") size=" ++ show (glyphSize g)
 

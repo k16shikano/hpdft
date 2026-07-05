@@ -3,9 +3,14 @@
 
 module PDF.Interpret
   ( Glyph(..)
+  , Rect(..)
+  , PageItem(..)
   , interpretPage
+  , interpretPageItems
   , interpretContent
+  , interpretContentItems
   , interpretContentWithFonts
+  , interpretContentWithFontsItems
   ) where
 
 import PDF.Definition
@@ -48,6 +53,15 @@ data Glyph = Glyph
   , glyphWMode    :: Int
   } deriving (Eq, Show)
 
+data Rect = Rect
+  { rectX0 :: Double
+  , rectY0 :: Double
+  , rectX1 :: Double
+  , rectY1 :: Double
+  } deriving (Eq, Show)
+
+data PageItem = ItemGlyph Glyph | ItemGraphic Rect deriving (Eq, Show)
+
 data GState = GState
   { ctm        :: Matrix
   , gsFontRes  :: Maybe String
@@ -70,7 +84,8 @@ data IState = IState
   { gsCur         :: GState
   , gsStack       :: [GState]
   , tsCur         :: Maybe TState
-  , glyphsAcc     :: [Glyph] -> [Glyph]
+  , itemsRev       :: [PageItem]
+  , pathAcc       :: [(Double, Double)]
   , depth         :: Int
   , isSec         :: Maybe Security
   , isObjs        :: PDFObjIndex
@@ -98,7 +113,8 @@ initialIState sec objs res = IState
   { gsCur = initialGState
   , gsStack = []
   , tsCur = Nothing
-  , glyphsAcc = id
+  , itemsRev = []
+  , pathAcc = []
   , depth = 0
   , isSec = sec
   , isObjs = objs
@@ -114,14 +130,27 @@ interpretContent :: Maybe Security -> PDFObjIndex -> Dict -> BSL.ByteString -> [
 interpretContent sec objs res bytes =
   interpretContentWithFonts sec objs res M.empty bytes
 
+interpretContentItems :: Maybe Security -> PDFObjIndex -> Dict -> BSL.ByteString -> [PageItem]
+interpretContentItems sec objs res bytes =
+  interpretContentWithFontsItems sec objs res M.empty bytes
+
 interpretContentWithFonts :: Maybe Security -> PDFObjIndex -> Dict -> M.Map String FontInfo -> BSL.ByteString -> [Glyph]
 interpretContentWithFonts sec objs res fonts bytes =
+  [g | ItemGlyph g <- interpretContentWithFontsItems sec objs res fonts bytes]
+
+interpretContentWithFontsItems :: Maybe Security -> PDFObjIndex -> Dict -> M.Map String FontInfo -> BSL.ByteString -> [PageItem]
+interpretContentWithFontsItems sec objs res fonts bytes =
   let st0 = initialIState sec objs res
       st1 = st0 {fontOverrides = fonts}
-  in reverse (glyphsAcc (runStream st1 bytes) [])
+  in reverse (itemsRev (runStream st1 bytes))
 
 interpretPage :: Document -> Int -> PdfResult [Glyph]
 interpretPage doc pageRef = do
+  items <- interpretPageItems doc pageRef
+  return [g | ItemGlyph g <- items]
+
+interpretPageItems :: Document -> Int -> PdfResult [PageItem]
+interpretPageItems doc pageRef = do
   pageDict <- case findObjsByRef pageRef (docObjs doc) of
     Just os -> case findDictOfType "/Page" os of
       Just d -> Right d
@@ -131,7 +160,7 @@ interpretPage doc pageRef = do
     Just r -> Right r
     Nothing -> Right M.empty
   content <- pageContentsBytes (docSecurity doc) (docObjs doc) pageDict
-  return $ interpretContent (docSecurity doc) (docObjs doc) res content
+  return $ interpretContentItems (docSecurity doc) (docObjs doc) res content
 
 pageResourcesInherited :: Dict -> PDFObjIndex -> Maybe Dict
 pageResourcesInherited dict objs =
@@ -170,7 +199,7 @@ runStream st bs = loop st (skipWs bs)
           Just (TokOperand o, rest) ->
             loop (s {operandStack = o : operandStack s}) (skipWs rest)
           Just (TokOperator "BI", rest) ->
-            loop (s {operandStack = []}) (skipInlineImage (skipWs rest))
+            loop (emitInlineImageSt s) (skipInlineImage (skipWs rest))
           Just (TokOperator op, rest) ->
             loop (dispatchOp op s) (skipWs rest)
           Nothing ->
@@ -250,7 +279,90 @@ execOp "Do" st =
   case operandStack st of
     PdfName name : _ -> invokeXObjectSt name st
     _ -> st
+execOp "m" st =
+  case popNums 2 st of
+    Just ([y, x], st') -> st' {pathAcc = [devicePoint st' x y]}
+    _ -> st
+execOp "l" st =
+  case popNums 2 st of
+    Just ([y, x], st') -> appendPathPoint st' x y
+    _ -> st
+execOp "c" st =
+  case popNums 6 st of
+    Just ([y3, x3, y2, x2, y1, x1], st') ->
+      prependPathPoints st'
+        [ devicePoint st' x1 y1
+        , devicePoint st' x2 y2
+        , devicePoint st' x3 y3
+        ]
+    _ -> st
+execOp "v" st =
+  case popNums 4 st of
+    Just ([y3, x3, y2, x2], st') ->
+      prependPathPoints st'
+        [devicePoint st' x2 y2, devicePoint st' x3 y3]
+    _ -> st
+execOp "y" st =
+  case popNums 4 st of
+    Just ([y3, x3, y1, x1], st') ->
+      prependPathPoints st'
+        [devicePoint st' x1 y1, devicePoint st' x3 y3]
+    _ -> st
+execOp "re" st =
+  case popNums 4 st of
+    Just ([h, w, y, x], st') ->
+      prependPathPoints st'
+        [ devicePoint st' x y
+        , devicePoint st' (x + w) y
+        , devicePoint st' x (y + h)
+        , devicePoint st' (x + w) (y + h)
+        ]
+    _ -> st
+execOp "h" st = st
+execOp "n" st = st {pathAcc = []}
+execOp "S" st = paintPathSt st
+execOp "s" st = paintPathSt st
+execOp "f" st = paintPathSt st
+execOp "F" st = paintPathSt st
+execOp "f*" st = paintPathSt st
+execOp "B" st = paintPathSt st
+execOp "B*" st = paintPathSt st
+execOp "b" st = paintPathSt st
+execOp "b*" st = paintPathSt st
+execOp "W" st = st
+execOp "W*" st = st
 execOp _ st = st
+
+devicePoint :: IState -> Double -> Double -> (Double, Double)
+devicePoint st x y = apply (ctm (gsCur st)) (x, y)
+
+appendPathPoint :: IState -> Double -> Double -> IState
+appendPathPoint st x y = st {pathAcc = devicePoint st x y : pathAcc st}
+
+prependPathPoints :: IState -> [(Double, Double)] -> IState
+prependPathPoints st pts = st {pathAcc = foldl (flip (:)) (pathAcc st) pts}
+
+pointsBbox :: [(Double, Double)] -> Rect
+pointsBbox pts =
+  let xs = map fst pts
+      ys = map snd pts
+  in Rect (minimum xs) (minimum ys) (maximum xs) (maximum ys)
+
+paintPathSt :: IState -> IState
+paintPathSt st =
+  case pathAcc st of
+    [] -> st
+    pts -> st {itemsRev = ItemGraphic (pointsBbox (reverse pts)) : itemsRev st, pathAcc = []}
+
+emitGraphicSt :: Rect -> IState -> IState
+emitGraphicSt r st = st {itemsRev = ItemGraphic r : itemsRev st}
+
+ctmUnitSquare :: Matrix -> Rect
+ctmUnitSquare m = pointsBbox [apply m (0,0), apply m (1,0), apply m (0,1), apply m (1,1)]
+
+emitInlineImageSt :: IState -> IState
+emitInlineImageSt st =
+  emitGraphicSt (ctmUnitSquare (ctm (gsCur st))) st {operandStack = []}
 
 setGSDoubleSt :: (Double -> GState -> GState) -> IState -> IState
 setGSDoubleSt f st =
@@ -372,7 +484,7 @@ showBytesSt bytes st =
             , glyphFont = fname
             , glyphWMode = fiWMode fi
             }
-      in st {glyphsAcc = (glyph :) . glyphsAcc st, tsCur = Just ts {tmMat = endTm}}
+      in st {itemsRev = ItemGlyph glyph : itemsRev st, tsCur = Just ts {tmMat = endTm}}
     _ -> st
 
 glyphStep :: GState -> FontInfo -> (T.Text, Matrix) -> Int -> (T.Text, Matrix)
@@ -487,8 +599,10 @@ runXObjectSt ref st0
                       stRun = stMat {isRes = formRes, depth = depth st0 + 1, operandStack = []}
                       stDone = runStream stRun stream
                       stPop = popGStateSt st0
-                  in stPop {glyphsAcc = glyphsAcc stDone, depth = depth st0, isRes = isRes st0}
+                  in stPop {itemsRev = itemsRev stDone, depth = depth st0, isRes = isRes st0}
                 Left _ -> st0
+            Just (PdfName "/Image") ->
+              emitGraphicSt (ctmUnitSquare (ctm (gsCur st0))) st0
             _ -> st0
           Nothing -> st0
         Nothing -> st0
@@ -584,24 +698,41 @@ readKeyword bs kw mk val =
 
 readNumber :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
 readNumber bs =
-  case spanNum (map w2c (BSL.unpack bs)) of
-    ([], _) -> Nothing
-    (num, rest) -> Just (TokOperand (PdfNumber (parsePdfNumber num)), BSLC.pack rest)
+  let (numBs, rest) = spanNum8 bs
+  in if BSL.null numBs
+     then Nothing
+     else Just (TokOperand (PdfNumber (parsePdfNumber (map w2c (BSL.unpack numBs)))), rest)
 
-spanNum :: String -> (String, String)
-spanNum s =
-  let (sign, s') = case s of
-        ('-' : t) -> ("-", t)
-        ('+' : t) -> ("", t)
-        _         -> ("", s)
-      (intp, s'') = span isDigit s'
-      (frac, s''') = case s'' of
-        '.' : t ->
-          let (ds, r) = span isDigit t
-          in if null ds && null intp then ("", s'') else ('.' : ds, r)
-        _ -> ("", s'')
-      num = sign ++ intp ++ frac
-  in if null intp && null (drop 1 frac) then ("", s) else (num, s''')
+spanNum8 :: BSL.ByteString -> (BSL.ByteString, BSL.ByteString)
+spanNum8 bs =
+  let (signed, rest) = case BSL.uncons bs of
+        Just (45, r) -> (BSL.cons 45 BSL.empty, r)
+        Just (43, r) -> (BSL.empty, r)
+        _            -> (BSL.empty, bs)
+      (intp, rest') = BSL.span isDigit8 (if BSL.null signed then bs else rest)
+      start = if BSL.null signed then BSL.empty else signed
+      (frac, rest'') = case BSL.uncons rest' of
+        Just (46, r) ->
+          let (ds, r') = BSL.span isDigit8 r
+          in if BSL.null ds && BSL.null intp
+             then (BSL.empty, bs)
+             else (BSL.cons 46 ds, r')
+        _ -> (BSL.empty, rest')
+      num = start <> intp <> frac
+  in if BSL.null num && not (BSL.take 1 frac == BSLC.pack ".")
+     then (BSL.empty, bs)
+     else (num, if BSL.null frac then rest' else rest'')
+
+isDigit8 :: Word8 -> Bool
+isDigit8 w = w >= 48 && w <= 57
+
+isOpChar8 :: Word8 -> Bool
+isOpChar8 w =
+  let c = w2c w
+  in (c >= 'A' && c <= 'Z')
+  || (c >= 'a' && c <= 'z')
+  || (c >= '0' && c <= '9')
+  || c == '*'
 
 parsePdfNumber :: String -> Double
 parsePdfNumber s
@@ -690,18 +821,10 @@ parseDictPairs bs acc =
 
 readOperator :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
 readOperator bs =
-  let (op, rest) = spanOp (map w2c (BSL.unpack bs))
-  in if null op
+  let (opBs, rest) = BSL.span isOpChar8 bs
+  in if BSL.null opBs
      then Nothing
-     else Just (TokOperator op, BSLC.pack rest)
-
-spanOp :: String -> (String, String)
-spanOp s =
-  let (op, rest) = span isOpChar s
-  in (op, rest)
-
-isOpChar :: Char -> Bool
-isOpChar c = c `elem` (('A' : ['B' .. 'Z'] ++ ['a' .. 'z'] ++ ['0' .. '9'] ++ "*") :: String)
+     else Just (TokOperator (map w2c (BSL.unpack opBs)), rest)
 
 skipInlineImage :: BSL.ByteString -> BSL.ByteString
 skipInlineImage bs =
