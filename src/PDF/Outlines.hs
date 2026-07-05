@@ -14,8 +14,8 @@ module PDF.Outlines
        ( getOutlines
        ) where
 
-import Data.List (find)
 import qualified Data.Map as M
+import Control.Monad (msum)
 import Data.Attoparsec.ByteString hiding (inClass, notInClass, satisfy)
 import Data.Attoparsec.ByteString.Char8
 import Data.Attoparsec.Combinator
@@ -24,7 +24,7 @@ import qualified Data.ByteString.Char8 as BS
 import PDF.Definition hiding (toString)
 import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
-import PDF.Error (PdfError(..), PdfResult, note)
+import PDF.Error (PdfError(..), PdfResult)
 import PDF.Object (parseRefsArray, parsePdfLetters)
 
 import qualified Data.Text as T
@@ -53,32 +53,32 @@ getOutlines filename password = do
       edict <- outlineFromDoc doc
       case edict of
         Left err -> return (Left err)
-        Right dict -> do
+        Right (dict, destsRoot) -> do
           let objs = docObjs doc
           case findFirst dict of
             Nothing -> return $ Left (MissingKey "/First" "outlines")
             Just firstref -> case findObjsByRef firstref objs of
-              Just [PdfDict d] -> return $ gatherOutlines d objs
+              Just [PdfDict d] -> return $ gatherOutlines d objs destsRoot
               Just s -> return $ Left (ParseError ("Unknown outline object: " ++ show s) BS.empty)
               Nothing -> return $ Left (MissingObject firstref)
 
-gatherChildren :: Dict -> PDFObjIndex -> PdfResult PDFOutlines
-gatherChildren dict objs = case findFirst dict of
+gatherChildren :: Dict -> PDFObjIndex -> Maybe Int -> PdfResult PDFOutlines
+gatherChildren dict objs destsRoot = case findFirst dict of
   Just r -> case findObjsByRef r objs of
-    Just [PdfDict d] -> gatherOutlines d objs
+    Just [PdfDict d] -> gatherOutlines d objs destsRoot
     Just s -> Left (ParseError ("Unknown outline child: " ++ show s) BS.empty)
     Nothing -> Left (MissingObject r)
   Nothing -> Right PDFOutlinesNE
 
-gatherOutlines :: Dict -> PDFObjIndex -> PdfResult PDFOutlines
-gatherOutlines dict objs = do
-  c <- gatherChildren dict objs
-  dest <- destPage dict objs
+gatherOutlines :: Dict -> PDFObjIndex -> Maybe Int -> PdfResult PDFOutlines
+gatherOutlines dict objs destsRoot = do
+  c <- gatherChildren dict objs destsRoot
+  let dest = destPage dict objs destsRoot
   title <- findTitle dict objs
   case findNext dict of
     Just r -> case findObjsByRef r objs of
       Just [PdfDict d] -> do
-        next <- gatherOutlines d objs
+        next <- gatherOutlines d objs destsRoot
         return $ PDFOutlinesTree (PDFOutlinesEntry { dest = dest
                                                    , text = title ++ "\n"
                                                    , subs = c}
@@ -89,34 +89,105 @@ gatherOutlines dict objs = do
                                          , text = title ++ "\n"
                                          , subs = c}
 
-destPage :: Dict -> PDFObjIndex -> PdfResult Int
-destPage dict objs =
-  note (MissingKey "/Dest" "outline") $ listToMaybe $ findDest dict objs
+destPage :: Dict -> PDFObjIndex -> Maybe Int -> Int
+destPage dict objs destsRoot =
+  maybe 0 id $ listToMaybe $ findDest dict objs destsRoot
 
-findDest :: Dict -> PDFObjIndex -> [Int]
-findDest dict objs =
+findDest :: Dict -> PDFObjIndex -> Maybe Int -> [Int]
+findDest dict objs destsRoot =
   case findObjFromDict dict "/Dest" of
-    Just o -> destFromObj o
+    Just o -> destFromObj o objs
     Nothing -> case findObjFromDict dict "/A" of
-      Just (ObjRef r) -> actionDest r objs
-      Just (PdfDict d) -> destFromAction d
+      Just (ObjRef r) -> actionDest r objs destsRoot
+      Just (PdfDict d) -> destFromAction d objs destsRoot
       _ -> []
 
-destFromObj :: Obj -> [Int]
-destFromObj (PdfArray a) = parseRefsArray a
-destFromObj (ObjRef r)   = [r]
-destFromObj (PdfNumber n)| truncate n >= 0 = [truncate n]
-destFromObj _            = []
+destFromObj :: Obj -> PDFObjIndex -> [Int]
+destFromObj (PdfArray a) _ = parseRefsArray a
+destFromObj (ObjRef r) objs =
+  case findObjsByRef r objs of
+    Just (o:_) -> destFromObj o objs
+    _ -> []
+destFromObj (PdfNumber n) _ | truncate n >= 0 = [truncate n]
+destFromObj _ _ = []
 
-actionDest :: Int -> PDFObjIndex -> [Int]
-actionDest r objs = case findObjsByRef r objs of
-  Just (PdfDict d : _) -> destFromAction d
+actionDest :: Int -> PDFObjIndex -> Maybe Int -> [Int]
+actionDest r objs destsRoot = case findObjsByRef r objs of
+  Just (PdfDict d : _) -> destFromAction d objs destsRoot
   _ -> []
 
-destFromAction :: Dict -> [Int]
-destFromAction d = case findObjFromDict d "/D" of
-  Just o -> destFromObj o
-  Nothing -> []
+destFromAction :: Dict -> PDFObjIndex -> Maybe Int -> [Int]
+destFromAction d objs destsRoot =
+  case findObjFromDict d "/D" of
+    Just o -> destFromGoTo o objs destsRoot
+    Nothing -> []
+
+destFromGoTo :: Obj -> PDFObjIndex -> Maybe Int -> [Int]
+destFromGoTo o objs destsRoot =
+  case objAsName o of
+    Just name -> lookupNamedDest destsRoot name objs
+    Nothing -> destFromObj o objs
+
+lookupNamedDest :: Maybe Int -> T.Text -> PDFObjIndex -> [Int]
+lookupNamedDest Nothing _ _ = []
+lookupNamedDest (Just root) name objs =
+  case lookupNameNode root name objs of
+    Just o -> destFromNamedDest o objs
+    Nothing -> []
+
+lookupNameNode :: Int -> T.Text -> PDFObjIndex -> Maybe Obj
+lookupNameNode ref name objs =
+  resolveDict ref objs >>= \d ->
+    case findObjFromDict d "/Names" of
+      Just (PdfArray arr) -> lookupNamePair arr name
+      _ -> case findObjFromDict d "/Kids" of
+        Just (PdfArray kids) ->
+          msum [ lookupNameNode r name objs
+               | ObjRef r <- kids
+               , nameInLimits name r objs
+               ]
+        _ -> Nothing
+
+lookupNamePair :: [Obj] -> T.Text -> Maybe Obj
+lookupNamePair (n : v : rest) name =
+  case objAsName n of
+    Just t | t == name -> Just v
+    _ -> lookupNamePair rest name
+lookupNamePair _ _ = Nothing
+
+nameInLimits :: T.Text -> Int -> PDFObjIndex -> Bool
+nameInLimits name ref objs =
+  case resolveDict ref objs of
+    Nothing -> True
+    Just d -> case findObjFromDict d "/Limits" of
+      Just (PdfArray [lo, hi]) ->
+        case (objAsName lo, objAsName hi) of
+          (Just a, Just b) -> a <= name && name <= b
+          _ -> True
+      _ -> True
+
+destFromNamedDest :: Obj -> PDFObjIndex -> [Int]
+destFromNamedDest o objs =
+  case o of
+    ObjRef r -> case findObjsByRef r objs of
+      Just (destObj:_) ->
+        case destObj of
+          PdfDict d -> maybe (destFromObj destObj objs) (\dd -> destFromObj dd objs)
+                         $ findObjFromDict d "/D"
+          _ -> destFromObj destObj objs
+      _ -> []
+    PdfDict d -> maybe [] (`destFromObj` objs) $ findObjFromDict d "/D"
+    _ -> destFromObj o objs
+
+resolveDict :: Int -> PDFObjIndex -> Maybe Dict
+resolveDict r objs = case findObjsByRef r objs of
+  Just (PdfDict d : _) -> Just d
+  _ -> Nothing
+
+objAsName :: Obj -> Maybe T.Text
+objAsName (PdfName n) = Just n
+objAsName (PdfText t) = Just t
+objAsName _ = Nothing
 
 outlinesRef :: Dict -> PdfResult Int
 outlinesRef dict = case M.lookup "/Outlines" dict of
@@ -124,13 +195,13 @@ outlinesRef dict = case M.lookup "/Outlines" dict of
   Just s -> Left (ParseError ("Unknown /Outlines: " ++ show s) BS.empty)
   Nothing -> Left (MissingKey "/Outlines" "root")
 
-outlineFromDoc :: Document -> IO (PdfResult Dict)
+outlineFromDoc :: Document -> IO (PdfResult (Dict, Maybe Int))
 outlineFromDoc doc =
   case docRootRef doc of
     Left err -> return (Left err)
     Right rootref -> outlineFromRoot rootref (docObjs doc)
 
-outlineFromRoot :: Int -> PDFObjIndex -> IO (PdfResult Dict)
+outlineFromRoot :: Int -> PDFObjIndex -> IO (PdfResult (Dict, Maybe Int))
 outlineFromRoot rootref objs =
   case findObjsByRef rootref objs of
     Nothing -> return $ Left (MissingObject rootref)
@@ -139,9 +210,23 @@ outlineFromRoot rootref objs =
       Just dict -> case outlinesRef dict of
         Left err -> return (Left err)
         Right outlineref -> case findObjsByRef outlineref objs of
-          Just [PdfDict d] -> return (Right d)
+          Just [PdfDict d] -> return (Right (d, destsRootRef dict objs))
           Just s -> return $ Left (ParseError ("Unknown outlines object: " ++ show s) BS.empty)
           Nothing -> return $ Left (MissingObject outlineref)
+
+destsRootRef :: Dict -> PDFObjIndex -> Maybe Int
+destsRootRef dict objs =
+  resolveNamesDict dict objs >>= \names ->
+    case findObjFromDict names "/Dests" of
+      Just (ObjRef r) -> Just r
+      _ -> Nothing
+
+resolveNamesDict :: Dict -> PDFObjIndex -> Maybe Dict
+resolveNamesDict dict objs =
+  case findObjFromDict dict "/Names" of
+    Just (PdfDict names) -> Just names
+    Just (ObjRef r) -> resolveDict r objs
+    _ -> Nothing
 
 findTitle :: Dict -> PDFObjIndex -> PdfResult String
 findTitle dict objs =
