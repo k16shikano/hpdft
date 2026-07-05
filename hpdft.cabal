@@ -20,6 +20,7 @@ build-type:          Simple
 extra-source-files:  README.md
                      , CHANGELOG.md
                      , docs/0.3-roadmap.md
+                     , docs/0.4-roadmap.md
 
 data-dir:            data/
 

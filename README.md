@@ -63,7 +63,8 @@ cabal run interpret-page -- FILE PAGE   # debug glyph positions
 
 ### Documentation
 
-- [0.3 roadmap & remaining tasks](docs/0.3-roadmap.md) — architecture, completed phases, TODO
+- [0.3 roadmap](docs/0.3-roadmap.md) — 0.3.0.0 までの architecture, completed phases
+- [0.4 roadmap](docs/0.4-roadmap.md) — 0.3.1 ruby, 0.4 API/diff/images plan
 - [Changelog](CHANGELOG.md) — release notes
 
 ### Library modules (0.3)
