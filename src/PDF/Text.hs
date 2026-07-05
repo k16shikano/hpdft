@@ -10,6 +10,7 @@ module PDF.Text
   , pdfToTextGeomDoc
   , pdfToTextTaggedBS
   , pdfToTextTaggedDoc
+  , pageTextGeom
   ) where
 
 import PDF.Definition
@@ -18,7 +19,7 @@ import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
 import PDF.Encrypt (Security)
 import PDF.Interpret (Glyph(..), PageItem(..), interpretPageItems)
-import PDF.Layout (joinGlyphsRun, layoutDocument, linesFromGlyphs, stripHeadersFooters, joinParaLines)
+import PDF.Layout (joinGlyphsRun, layoutDocument, layoutPageText, linesFromGlyphs, stripHeadersFooters, joinParaLines)
 import PDF.Structure (StructElem(..), structTree, logicalOrder)
 
 import Data.List (foldl')
@@ -77,6 +78,11 @@ pdfToTextGeomDoc doc = do
   let refs = pageRefsOrder rootref (docObjs doc)
   pages <- mapM (interpretPageItems doc) refs
   return $ BSLU.fromString (T.unpack (layoutDocument pages))
+
+pageTextGeom :: Document -> Int -> PdfResult BSL.ByteString
+pageTextGeom doc pageRef = do
+  items <- interpretPageItems doc pageRef
+  return $ BSLU.fromString (T.unpack (layoutPageText items))
 
 pdfToTextTaggedBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
 pdfToTextTaggedBS filename mpw = do

@@ -12,7 +12,7 @@ import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Outlines
 import PDF.Encrypt (Security)
-import PDF.Text (initstate, pdfToTextWithWarnings, pdfToTextGeomBS, pdfToTextTaggedBS)
+import PDF.Text (pdfToTextWithWarnings, pdfToTextGeomBS, pdfToTextTaggedBS, pageTextGeom)
 import PDF.Error (PdfError(..), PdfResult, PdfWarning(..), renderPdfWarning)
 
 import System.Environment (getArgs)
@@ -232,29 +232,12 @@ showPage :: FilePath -> Maybe String -> Int -> IO ()
 showPage filename mpw page = do
   doc <- runOrDie (openDocument filename mpw)
   root <- runOrDie (return (docRootRef doc))
-  let objs = docObjs doc
-      sec = docSecurity doc
-      pagetree = pageTreeToList $ pageorder root objs
-  case length pagetree >= page of
-    True -> contentByRefObjs sec objs $ pagetree !! (page - 1)
-    False -> putStrLn $ "hpdft: No Page "++(show page)
-
-contentByRefObjs :: Maybe Security -> PDFObjIndex -> Int -> IO ()
-contentByRefObjs sec objs ref = do
-  obj <- runOrDie (getObjectByRef ref objs)
-  let (txt, ws) = contentInObject sec obj objs
-  printWarnings ws
-  BSL.putStrLn txt
-  where contentInObject sec' obj' objs' =
-          case findDictOfType "/Page" obj' of
-            Just dict -> pageStream dict sec' objs'
-            Nothing -> ("", [])
-
-pageStream :: Dict -> Maybe Security -> PDFObjIndex -> (BSL.ByteString, [PdfWarning])
-pageStream dict sec objs =
-  case contentsStream dict initstate sec objs of
-    Right (s, ws) -> (s, ws)
-    Left _ -> ("", [])
+  let pagetree = pageTreeToList $ pageorder root (docObjs doc)
+  if page >= 1 && length pagetree >= page
+    then do
+      txt <- runOrDie (return (pageTextGeom doc (pagetree !! (page - 1))))
+      BSL.putStr txt
+    else putStrLn $ "hpdft: No Page "++(show page)
 
 showContent :: FilePath -> Maybe String -> Int -> IO ()
 showContent filename mpw ref = do
@@ -321,21 +304,18 @@ grepPDF filename mpw re = do
   doc <- runOrDie (openDocument filename mpw)
   root <- runOrDie (return (docRootRef doc))
   let objs = docObjs doc
-      sec = docSecurity doc
   mapM_
-    (\(ref, pagenm) -> grepByPage pagenm re (contentInObjs sec objs ref))
+    (\(ref, pagenm) -> grepByPage pagenm re (pageText doc ref))
     $ zip (pageTreeToList $ pageorder root objs) [1..]
   
   where
-    contentInObjs sec' objs' ref =
-      case findObjsByRef ref objs' of
-        Just obj -> case findDictOfType "/Page" obj of
-                      Just dict -> pageStream dict sec' objs'
-                      Nothing -> ("", [])
-        Nothing -> ("", [])
+    pageText doc ref =
+      case pageTextGeom doc ref of
+        Right txt -> txt
+        Left _ -> ""
 
-    grepByPage :: Int -> String -> (BSL.ByteString, [PdfWarning]) -> IO ()
-    grepByPage pagenm re (txt, _) = do
+    grepByPage :: Int -> String -> BSL.ByteString -> IO ()
+    grepByPage pagenm re txt = do
       let matched = filter (not . null) $ map (grepByLine re) $ BSL.lines txt
       when (not $ null matched) (showResult pagenm matched)
       return ()
