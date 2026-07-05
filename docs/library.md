@@ -7,7 +7,7 @@ hpdft is a Haskell library (and CLI) for parsing PDF files: text extraction with
 Add a dependency on Hackage (when published):
 
 ```cabal
-build-depends: hpdft >= 0.4.5
+build-depends: hpdft >= 0.4.6
 ```
 
 Or build from this repository:
@@ -39,9 +39,24 @@ For encrypted PDFs, pass `Just password` as the second argument. Failures (broke
 
 ## Text extraction
 
+### Streaming (viewer pipeline)
+
+As of 0.4.6, the bare `hpdft FILE` viewer uses legacy stream-order extraction streamed page by page. Library callers use `pdfToTextStreamDoc`:
+
+```haskell
+import PDF.Text (pdfToTextStreamDoc)
+import qualified Data.ByteString.Lazy as BSL
+
+pdfToTextStreamDoc doc $ \page total bs -> do
+  putStrLn ("page " ++ show page ++ "/" ++ show total)
+  BSL.putStr bs
+```
+
+Concatenating all page outputs in order equals `fst (pdfToTextDoc doc)`.
+
 ### Default pipeline (tagged → geometry)
 
-The CLI default (`hpdft FILE` or `hpdft text FILE`) matches `pdfToTextTaggedDoc`:
+The CLI default (`hpdft text FILE`) matches `pdfToTextTaggedDoc`:
 
 ```haskell
 import PDF.Text (pdfToTextTaggedDoc)
@@ -69,10 +84,10 @@ Use `pdfToTextTaggedDocWith` / `pdfToTextTaggedBSWith` with `LayoutOptions`. Whe
 ### Legacy stream-order extractor
 
 ```haskell
-import PDF.Text (pdfToTextDoc)
+import PDF.Text (pdfToTextDoc, pdfToTextStreamDoc)
 ```
 
-Returns `(ByteString, [PdfWarning])` directly (not `PdfResult`). Same output style as `hpdft text --legacy FILE`. Prefer the geometry or tagged paths for new code.
+`pdfToTextDoc` returns `(ByteString, [PdfWarning])` for the full document in one pass (not `PdfResult`). `pdfToTextStreamDoc` invokes a callback per page in document order; see above. Same output style as `hpdft text --legacy FILE`. Prefer geometry or tagged paths when reading order matters.
 
 ### Layout options
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.6.0 (2026-07-05)
+
+### Changed
+
+- **Breaking:** Bare `hpdft FILE` (no subcommand, no mode flags) is now a lightweight viewer: on a TTY it opens an ANSI preview in the lower half of the terminal using fast legacy stream-order extraction; when stdout is a pipe or file it streams legacy text page by page. `hpdft text FILE` keeps the high-quality tagged → geometry batch output on stdout.
+- `hpdft text --legacy FILE` now streams page by page (first bytes within about a second on large PDFs) instead of printing one full-document batch; total output is unchanged. Progress `hpdft: page N/M...` goes to stderr on a TTY; suppress with `--quiet`.
+
+### Added
+
+- `PDF.Text.pdfToTextStreamDoc` — legacy extraction with a per-page IO callback (document opened once).
+- Self-contained ANSI TUI preview (`TuiPreview`, `TuiScroll`); no brick/vty dependency. Top and bottom border bars, vi-style and arrow-key scrolling, less-style regex search (`/PATTERN`, `n`/`N`) with match highlighting, and East Asian width-aware rendering (IME-friendly search input).
+
+### Fixed
+
+- `hpdft toc` no longer fails with `missing key /Dest in outline` on PDFs whose outline entries use GoTo actions with named destinations (e.g. hyperref output); the name tree under `/Names` → `/Dests` is now resolved, and entries without a resolvable destination keep their title.
+
 ## 0.4.5.0 (2026-07-05)
 
 ### Changed

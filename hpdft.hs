@@ -12,7 +12,7 @@ import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Outlines
 import PDF.Encrypt (Security)
-import PDF.Text (pdfToTextWithWarnings, pdfToTextGeomBSWith, pdfToTextTaggedBSWith, pageTextGeomWith)
+import PDF.Text (pdfToTextGeomBSWith, pdfToTextTaggedBSWith, pageTextGeomWith, pdfToTextStreamDoc)
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions)
 import PDF.Diff (TextChange(..), compareDocuments)
 import PDF.Image (extractPageImagesToDir)
@@ -21,7 +21,7 @@ import PDF.Error (PdfError(..), PdfResult, PdfWarning(..), renderPdfWarning)
 
 import System.Environment (getArgs)
 import System.Exit (exitWith, ExitCode(..))
-import System.IO (hPutStrLn, stderr)
+import System.IO (hPutStr, hPutStrLn, stderr, stdout, hFlush, hIsTerminalDevice)
 import System.IO.Error (isDoesNotExistError)
 import Control.Exception (catch, IOException, ioError)
 import Control.Monad (when)
@@ -40,8 +40,10 @@ import Data.Semigroup ((<>))
 
 import Text.Regex.Base.RegexLike ( makeRegex )
 import Text.Regex.TDFA.String    ( regexec )
+import TuiPreview (runTuiPreview)
 
 import PDF.Definition (Obj(PdfStream))
+import Data.IORef (newIORef, readIORef, writeIORef)
 
 import qualified Paths_hpdft as Autogen (version)
 import Data.Version (showVersion)
@@ -83,6 +85,7 @@ versionInfo = "hpdft - a PDF to text converter, version " <> showVersion Autogen
 -- | Top-level command dispatch.
 data Cmd
   = CmdText ExtractOpt
+  | CmdView FilePath (Maybe String)
   | CmdImage ImagesOpt
   | CmdForm FormOpt
   | CmdDiff DiffOpt
@@ -99,6 +102,7 @@ data ExtractOpt = ExtractOpt
   , eoGeom      :: Bool
   , eoTagged    :: Bool
   , eoLegacy    :: Bool
+  , eoQuiet     :: Bool
   , eoFootnotes :: Bool
   , eoRuby      :: Bool
   , eoPassword  :: String
@@ -132,7 +136,7 @@ data DiffOpt = DiffOpt
 
 commandParser :: Parser Cmd
 commandParser = subparser
-  (  command "text" (info (CmdText <$> extractOpts) (progDesc "Extract text from PDF"))
+  (  command "text" (info (CmdText <$> extractOpts) (progDesc "Extract text to stdout (tagged -> geometry)"))
   <> command "image" (info (CmdImage <$> imagesOpts) (progDesc "Extract image XObjects from a page"))
   <> command "form" (info (CmdForm <$> formOpts) (progDesc "List or extract top-level Form XObjects on a page"))
   <> command "diff" (info diffCommand (progDesc "Compare two PDFs (paragraph-level diff)"))
@@ -214,6 +218,9 @@ extractOpts = ExtractOpt
   <*> switch
       ( long "legacy"
         <> help "Extract text using the pre-0.3 stream-order extractor" )
+  <*> switch
+      ( long "quiet"
+        <> help "Suppress page progress on stderr during --legacy streaming" )
   <*> switch
       ( long "footnotes"
         <> help "Inline footnote bodies at their anchors as <footnote> tags (geometry pipeline)" )
@@ -409,12 +416,15 @@ legacyToCmd LegacyOpt{loPage=pg, loRef=rf, loGrep=gr, loRefs=rs, loGeom=gm,
                       loPassword=pw, loFile=fn} =
   let mpw = maybePassword pw
       noMode = not gm && not tg && not lg
-      textCmd = CmdText (ExtractOpt pg gm tg lg fnn rb pw fn)
+      plainView = noMode && not fnn && not rb
+      textCmd = CmdText (ExtractOpt pg gm tg lg False fnn rb pw fn)
   in case () of
     _ | pg==0 && rf==0 && null gr && not rs && lg && not gm && not tg && not tt && not ii && not oo && not tr ->
         textCmd
       | pg==0 && rf==0 && null gr && not rs && gm && not tg && not lg && not tt && not ii && not oo && not tr ->
         textCmd
+      | pg==0 && rf==0 && null gr && not rs && plainView && not tt && not ii && not oo && not tr ->
+        CmdView fn mpw
       | pg==0 && rf==0 && null gr && not rs && (tg || noMode) && not gm && not lg && not tt && not ii && not oo && not tr ->
         textCmd
       | pg==0 && rf==0 && null gr && not rs && noMode && tt ->
@@ -449,6 +459,7 @@ containsFlag (a:as) f = a == f || containsFlag as f
 runCmd :: Cmd -> IO ()
 runCmd cmd = case cmd of
   CmdText opt -> runExtractText opt
+  CmdView fn mpw -> withFile fn $ runViewer fn mpw
   CmdImage opt -> runExtractImages opt
   CmdForm opt -> runExtractForm opt
   CmdDiff opt -> runDiff opt
@@ -462,17 +473,18 @@ runCmd cmd = case cmd of
 
 runExtractText :: ExtractOpt -> IO ()
 runExtractText ExtractOpt{eoPage=pg, eoGeom=gm, eoTagged=tg, eoLegacy=lg,
-                      eoFootnotes=fnn, eoRuby=rb, eoPassword=pw, eoFile=fn} =
+                      eoQuiet=quiet, eoFootnotes=fnn, eoRuby=rb,
+                      eoPassword=pw, eoFile=fn} =
   withFile fn $
   let mpw = maybePassword pw
       lopts = defaultLayoutOptions {optFootnotes = fnn, optRuby = rb}
-      noMode = not gm && not tg && not lg
   in if pg /= 0
      then showPage lopts fn mpw pg
      else case () of
-       _ | lg && not gm && not tg -> pdfToText fn mpw
+       _ | lg && not gm && not tg -> do
+             doc <- runOrDie (openDocument fn mpw)
+             streamLegacyToStdout doc quiet
          | gm && not tg && not lg -> pdfToTextGeom lopts fn mpw
-         | tg || noMode           -> pdfToTextTagged lopts fn mpw
          | otherwise              -> pdfToTextTagged lopts fn mpw
 
 runExtractImages :: ImagesOpt -> IO ()
@@ -610,11 +622,33 @@ withFile fp action =
         exitWith (ExitFailure 1)
       else ioError e
 
-pdfToText :: FilePath -> Maybe String -> IO ()
-pdfToText filename mpw = do
-  (txt, ws) <- runOrDie (pdfToTextWithWarnings filename mpw)
+-- | Bare @hpdft FILE@: TUI preview on a TTY, legacy streaming on a pipe.
+runViewer :: FilePath -> Maybe String -> IO ()
+runViewer filename mpw = do
+  doc <- runOrDie (openDocument filename mpw)
+  stdoutTTY <- hIsTerminalDevice stdout
+  if stdoutTTY
+    then runTuiPreview filename doc
+    else streamLegacyToStdout doc False
+
+streamLegacyToStdout :: Document -> Bool -> IO ()
+streamLegacyToStdout doc quiet = do
+  stderrTTY <- hIsTerminalDevice stderr
+  let showProgress pg total =
+        when (not quiet && stderrTTY && total > 0) $
+          hPutStr stderr ("\rhpdft: page " ++ show pg ++ "/" ++ show total ++ "...")
+      clearProgress total =
+        when (not quiet && stderrTTY && total > 0) $
+          hPutStr stderr ("\r\ESC[K")
+  totalRef <- newIORef (0 :: Int)
+  ws <- pdfToTextStreamDoc doc $ \pg total txt -> do
+    writeIORef totalRef total
+    showProgress pg total
+    BSL.putStr txt
+    hFlush stdout
+  total <- readIORef totalRef
+  clearProgress total
   printWarnings ws
-  BSL.putStrLn txt
 
 pdfToTextGeom :: LayoutOptions -> FilePath -> Maybe String -> IO ()
 pdfToTextGeom lopts filename mpw = do

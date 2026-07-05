@@ -47,6 +47,7 @@ module PDF.Text
   , pdfToTextTaggedDocWith
   , pageTextGeom
   , pageTextGeomWith
+  , pdfToTextStreamDoc
   ) where
 
 import PDF.Definition
@@ -106,6 +107,35 @@ pdfToTextDoc doc =
   case docRootRef doc of
     Right rootref -> walkdown initstate rootref (docSecurity doc) (docObjs doc)
     Left _ -> ("", [])
+
+-- | Legacy stream-order extraction, one page at a time in document order.
+--
+-- The callback receives a 1-based page number, total page count, and that
+-- page's legacy text (same bytes as the corresponding segment of 'pdfToTextDoc').
+-- Concatenating all page outputs in order yields the 'fst' of 'pdfToTextDoc'.
+-- Warnings from every page are collected and returned.
+pdfToTextStreamDoc ::
+  Document -> (Int -> Int -> BSL.ByteString -> IO ()) -> IO [PdfWarning]
+pdfToTextStreamDoc doc callback =
+  case pageRefs doc of
+    Left _ -> return []
+    Right refs -> do
+      let total = length refs
+          sec = docSecurity doc
+          objs = docObjs doc
+      wss <- mapM (streamPage total sec objs) (zip [1 ..] refs)
+      return (concat wss)
+  where
+    streamPage total sec objs (num, ref) =
+      case findObjsByRef ref objs of
+        Just os ->
+          case findDictOfType "/Page" os of
+            Just dict -> do
+              let (txt, ws) = pageContent dict initstate sec objs
+              callback num total txt
+              return ws
+            Nothing -> return []
+        Nothing -> return []
 
 pdfToTextGeomBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
 pdfToTextGeomBS = pdfToTextGeomBSWith defaultLayoutOptions

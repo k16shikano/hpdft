@@ -23,12 +23,13 @@ import PDF.Image
   , extractPageImages
   )
 import PDF.FormExtract (pageFormNames, extractFormPdf)
-import PDF.Text (pdfToTextTaggedBS)
+import PDF.Text (pdfToTextTaggedBS, pdfToTextDoc, pdfToTextStreamDoc)
 import PDF.Error (PdfResult)
 
 import qualified Data.Map as M
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as BSLC
 import qualified Data.Text as T
 
@@ -37,6 +38,24 @@ import System.IO.Unsafe (unsafePerformIO)
 import System.Directory (doesFileExist, getTemporaryDirectory)
 import System.FilePath ((</>))
 import Control.Monad (when)
+import Data.IORef (newIORef, readIORef, modifyIORef)
+import TuiScroll
+  ( ScrollState(..)
+  , initialScrollState
+  , scrollBy
+  , scrollToTop
+  , scrollToEnd
+  , scrollHalfPageDown
+  , scrollHalfPageUp
+  , searchForwardFrom
+  , searchBackwardFrom
+  , visibleLineRange
+  , statusLineNumber
+  , stringDisplayWidth
+  , clipToDisplayWidth
+  , padToDisplayWidth
+  )
+
 import Data.Word (Word8)
 
 epsilon :: Double
@@ -162,6 +181,8 @@ main = do
           ++ imageExtractResults
           ++ formExtractResults
           ++ taggedEndToEndResults
+          ++ textStreamResults
+          ++ tuiScrollResults
   let failures = [msg | Fail msg <- results]
       passed = length results - length failures
   mapM_ reportResult results
@@ -1204,3 +1225,97 @@ runTaggedFixture =
       Left err -> testFail "tagged.pdf end-to-end" (show err)
 
 {-# NOINLINE runTaggedFixture #-}
+
+textStreamResults :: [Result]
+textStreamResults =
+  [ runTextStreamConcat
+  , runTextStreamPageOrder
+  ]
+
+runTextStreamConcat :: Result
+runTextStreamConcat =
+  unsafePerformIO $ do
+    result <- openDocument "data/fixtures/multipage.pdf" Nothing
+    case result of
+      Left err -> return $ testFail "pdfToTextStreamDoc concat open" (show err)
+      Right doc -> do
+        let (expected, _) = pdfToTextDoc doc
+        ref <- newIORef BSL.empty
+        _ <- pdfToTextStreamDoc doc $ \_ _ bs -> modifyIORef ref (<> bs)
+        actual <- readIORef ref
+        return $ assertTextEqLazy "pdfToTextStreamDoc concat == pdfToTextDoc" expected actual
+
+{-# NOINLINE runTextStreamConcat #-}
+
+runTextStreamPageOrder :: Result
+runTextStreamPageOrder =
+  unsafePerformIO $ do
+    result <- openDocument "data/fixtures/multipage.pdf" Nothing
+    case result of
+      Left err -> return $ testFail "pdfToTextStreamDoc page order open" (show err)
+      Right doc -> do
+        ref <- newIORef ([] :: [(Int, Int)])
+        _ <- pdfToTextStreamDoc doc $ \pg total _ -> modifyIORef ref ((pg, total) :)
+        events <- readIORef ref
+        return $ assertBool "pdfToTextStreamDoc page order"
+          (reverse events == [(1, 3), (2, 3), (3, 3)])
+
+{-# NOINLINE runTextStreamPageOrder #-}
+
+assertTextEqLazy :: String -> BSL.ByteString -> BSL.ByteString -> Result
+assertTextEqLazy label expected actual =
+  if expected == actual
+    then pass label
+    else testFail label ("length expected " ++ show (BSL.length expected)
+                         ++ ", got " ++ show (BSL.length actual))
+
+tuiScrollResults :: [Result]
+tuiScrollResults =
+  let st = ScrollState {scrollTopLine = 0, scrollTotalLines = 20, scrollTextRows = 5}
+   in [ assertBool "tuiScroll initial top" (scrollTopLine (initialScrollState 5) == 0)
+      , assertBool "tuiScroll scrollBy down"
+          (scrollTopLine (scrollBy 3 st) == 3)
+      , assertBool "tuiScroll clamp at end"
+          (scrollTopLine (scrollBy 100 st) == 15)
+      , assertBool "tuiScroll scrollToTop"
+          (scrollTopLine (scrollToTop (scrollBy 10 st)) == 0)
+      , assertBool "tuiScroll scrollToEnd"
+          (scrollTopLine (scrollToEnd st) == 15)
+      , assertBool "tuiScroll half page down"
+          (scrollTopLine (scrollHalfPageDown st) == 2)
+      , assertBool "tuiScroll visible range"
+          (visibleLineRange (scrollBy 4 st) == (4, 9))
+      , assertBool "tuiScroll status line"
+          (statusLineNumber (scrollBy 4 st) == 5)
+      , assertBool "tuiScroll search forward hit"
+          (searchForwardFrom (== "b") 0 ["a", "b", "c", "b"] == Just 1)
+      , assertBool "tuiScroll search forward from offset"
+          (searchForwardFrom (== "b") 2 ["a", "b", "c", "b"] == Just 3)
+      , assertBool "tuiScroll search forward miss"
+          (searchForwardFrom (== "z") 0 ["a", "b"] == Nothing)
+      , assertBool "tuiScroll search forward negative start clamps"
+          (searchForwardFrom (== "a") (-3) ["a", "b"] == Just 0)
+      , assertBool "tuiScroll search backward hit"
+          (searchBackwardFrom (== "b") 3 ["a", "b", "c", "b"] == Just 3)
+      , assertBool "tuiScroll search backward from offset"
+          (searchBackwardFrom (== "b") 2 ["a", "b", "c", "b"] == Just 1)
+      , assertBool "tuiScroll search backward miss"
+          (searchBackwardFrom (== "z") 3 ["a", "b"] == Nothing)
+      , assertBool "tuiScroll search backward negative start"
+          (searchBackwardFrom (== "a") (-1) ["a"] == Nothing)
+      , assertBool "tuiScroll display width ascii"
+          (stringDisplayWidth "abc" == 3)
+      , assertBool "tuiScroll display width CJK"
+          (stringDisplayWidth "あい" == 4)
+      , assertBool "tuiScroll display width mixed"
+          (stringDisplayWidth "/検索x" == 6)
+      , assertBool "tuiScroll clip CJK at boundary"
+          (clipToDisplayWidth 3 "あい" == "あ")
+      , assertBool "tuiScroll clip mixed"
+          (clipToDisplayWidth 4 "aあい" == "aあ")
+      , assertBool "tuiScroll pad CJK to width"
+          (padToDisplayWidth 6 "あ" == "あ    ")
+      , assertBool "tuiScroll pad straddling wide char"
+          (stringDisplayWidth (padToDisplayWidth 4 "あい") == 4)
+      ]
+
