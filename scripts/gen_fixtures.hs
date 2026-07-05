@@ -525,6 +525,60 @@ tagged =
       xrefPos = BS.length body
   in body <> xrefTable offsets 11 <> trailerPartSize 11 Nothing xrefPos
 
+multipagePageStream :: Int -> BS.ByteString
+multipagePageStream n =
+  let num = BS.pack (show n)
+      body =
+        case n of
+          1 -> "This is the start of a long"
+          2 -> "sentence that continues here."
+          _ -> "Indented paragraph on"
+      bodyX = if n == 3 then "84" else "72"
+      page2extra =
+        if n == 2
+        then "\nBT /F1 12 Tf 72 660 Td (Second paragraph starts!) Tj ET"
+        else BS.empty
+      page3extra =
+        if n == 3
+        then "\nBT /F1 12 Tf 72 686 Td (page three.) Tj ET"
+        else BS.empty
+  in BS.concat
+    [ "BT /F1 12 Tf 250 750 Td (Sample Book) Tj ET\n"
+    , "BT /F1 12 Tf ", bodyX, " 700 Td (", body, ") Tj ET"
+    , page2extra
+    , page3extra, "\n"
+    , "BT /F1 12 Tf 280 50 Td (", num, ") Tj ET"
+    ]
+
+multipageContentStream :: Int -> BS.ByteString
+multipageContentStream n =
+  let strm = multipagePageStream n
+  in BS.concat
+       [ "<< /Length ", BS.pack (show (BS.length strm)), " >>\nstream\n"
+       , strm
+       , "\nendstream"
+       ]
+
+multipage :: BS.ByteString
+multipage =
+  let objects =
+        [ (1, "<< /Type /Catalog /Pages 2 0 R >>")
+        , (2, "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>")
+        , (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+              \/Resources << /Font << /F1 9 0 R >> >> /Contents 6 0 R >>")
+        , (4, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+              \/Resources << /Font << /F1 9 0 R >> >> /Contents 7 0 R >>")
+        , (5, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+              \/Resources << /Font << /F1 9 0 R >> >> /Contents 8 0 R >>")
+        , (6, multipageContentStream 1)
+        , (7, multipageContentStream 2)
+        , (8, multipageContentStream 3)
+        , (9, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+        ]
+      (body, offsets) = buildBody objects
+      xrefPos = BS.length body
+  in body <> xrefTableMulti offsets <> trailerPartSize 10 Nothing xrefPos
+
 main :: IO ()
 main = do
   args <- getArgs
@@ -543,6 +597,7 @@ main = do
     , ("geometry.pdf", geometry)
     , ("paragraphs.pdf", paragraphs)
     , ("tagged.pdf", tagged)
+    , ("multipage.pdf", multipage)
     ]
   where
     write dir (name, bytes) = do

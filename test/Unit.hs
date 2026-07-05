@@ -9,7 +9,7 @@ import PDF.Interpret
   , interpretContentWithFonts
   , interpretContentWithFontsItems
   )
-import PDF.Layout (layoutParagraphs, layoutPageText)
+import PDF.Layout (layoutParagraphs, layoutPageText, layoutDocument)
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
 import PDF.Document (Document(..))
 import PDF.Text (pdfToTextTaggedBS)
@@ -133,6 +133,7 @@ main = do
           ++ simpleWidthAtResults
           ++ interpretGeometryResults
           ++ layoutParagraphResults
+          ++ layoutDocumentResults
           ++ interpretGraphicResults
           ++ interpretMCIDResults
           ++ structureTreeResults
@@ -356,6 +357,105 @@ layoutParagraphResults =
           (T.pack "\x3042\x3044") (head vertCols)
       , assertTextEq "layout vertical second column"
           (T.pack "\x3046\x3048") (vertCols !! 1)
+      ]
+
+headerBodyFooter :: Int -> T.Text -> T.Text -> [PageItem]
+headerBodyFooter n header body =
+  [ ItemGlyph (mkGlyph 250 750 80 12 0 header)
+  , ItemGlyph (mkGlyph 72 700 100 12 0 body)
+  , ItemGlyph (mkGlyph 280 50 10 12 0 (T.pack (show n)))
+  ]
+
+layoutDocumentResults :: [Result]
+layoutDocumentResults =
+  let repeatedHdr =
+        layoutDocument
+          [ headerBodyFooter 1 "RepeatHeader" "Body one."
+          , headerBodyFooter 2 "RepeatHeader" "Body two."
+          , headerBodyFooter 3 "RepeatHeader" "Body three."
+          ]
+      pageNums =
+        layoutDocument
+          [ headerBodyFooter 1 "UniqueA" "Alpha text."
+          , headerBodyFooter 2 "UniqueB" "Beta text."
+          ]
+      uniqueHdr =
+        layoutDocument
+          [ headerBodyFooter 1 "HdrA" "One."
+          , headerBodyFooter 2 "HdrB" "Two."
+          , headerBodyFooter 3 "HdrC" "Three."
+          ]
+      cjkMerge =
+        layoutDocument
+          [ [ ItemGlyph (mkGlyph 72 700 12 12 0 "\x6587\x3068")
+            ]
+          , [ ItemGlyph (mkGlyph 72 700 12 12 0 "\x3046\x308b")
+            ]
+          ]
+      terminalSplit =
+        layoutDocument
+          [ [ ItemGlyph (mkGlyph 72 700 12 12 0 "\x7d42\x308f\x308a\x3002")
+            ]
+          , [ ItemGlyph (mkGlyph 72 700 12 12 0 "\x59cb\x307e\x308a")
+            ]
+          ]
+      indentPageSplit =
+        layoutDocument
+          [ [ ItemGlyph (mkGlyph 72 700 100 12 0 "First part")
+            ]
+          , [ ItemGlyph (mkGlyph 84 700 100 12 0 "Indented start")
+            , ItemGlyph (mkGlyph 72 680 100 12 0 "Same page body")
+            ]
+          ]
+      indent1em =
+        layoutParagraphs
+          [ ItemGlyph (mkGlyph 72 700 100 12 0 "Normal")
+          , ItemGlyph (mkGlyph 84 686 100 12 0 "Indented")
+          ]
+      titlePage =
+        layoutDocument
+          [ [ ItemGlyph (mkGlyph 250 750 80 12 0 "Unique Title Header")
+            , ItemGlyph (mkGlyph 250 400 80 12 0 "Book Title")
+            ]
+          , headerBodyFooter 2 "RepeatHeader" "Chapter one."
+          , headerBodyFooter 3 "RepeatHeader" "Chapter two."
+          ]
+      twoLineRepeated =
+        layoutDocument
+          (replicate 10
+             [ ItemGlyph (mkGlyph 250 750 80 12 0 "RepeatHeader")
+             , ItemGlyph (mkGlyph 72 700 100 12 0 "Body only.")
+             ])
+      alternatingHdr =
+        layoutDocument
+          (zipWith
+             (\hdr body -> headerBodyFooter 1 hdr body)
+             (cycle ["vi 序文", "序文 vii"])
+             (replicate 10 "Body text."))
+   in [ assertBool "layout doc repeated header removed"
+          (not (T.isInfixOf "RepeatHeader" repeatedHdr))
+      , assertBool "layout doc bare page numbers removed"
+          (not (any (\n -> T.strip n `elem` [T.pack "1", T.pack "2"]) (T.lines pageNums)))
+      , assertBool "layout doc unique headers kept"
+          (T.isInfixOf "HdrA" uniqueHdr
+           && T.isInfixOf "HdrB" uniqueHdr
+           && T.isInfixOf "HdrC" uniqueHdr)
+      , assertTextEq "layout doc CJK cross-page merge"
+          (T.pack "\x6587\x3068\x3046\x308b\n")
+          cjkMerge
+      , assertBool "layout doc terminal punctuation splits pages"
+          (length (T.lines (T.stripEnd terminalSplit)) >= 2)
+      , assertBool "layout doc indented page start splits"
+          (length (T.lines (T.stripEnd indentPageSplit)) >= 2)
+      , assertBool "layout doc indent break at 1.0em" (length indent1em == 2)
+      , assertBool "layout doc title page keeps all lines"
+          (T.isInfixOf "Unique Title Header" titlePage
+           && T.isInfixOf "Book Title" titlePage)
+      , assertBool "layout doc two-line page repeated header removed"
+          (not (T.isInfixOf "RepeatHeader" twoLineRepeated))
+      , assertBool "layout doc alternating roman headers removed"
+          (not (T.isInfixOf "vi 序文" alternatingHdr)
+           && not (T.isInfixOf "序文 vii" alternatingHdr))
       ]
 
 interpretGraphicResults :: [Result]

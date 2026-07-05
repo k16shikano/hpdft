@@ -3,39 +3,247 @@
 module PDF.Layout
   ( Rect(..)
   , PageItem(..)
+  , Line(..)
   , layoutParagraphs
   , layoutPageText
+  , layoutDocument
+  , stripHeadersFooters
+  , linesFromGlyphs
+  , joinParaLines
   , intraLineSpace
   , joinGlyphsRun
   ) where
 
 import PDF.Interpret (Glyph(..), Rect(..), PageItem(..))
 
-import Data.Char (ord)
+import Data.Char (isSpace, ord)
 import Data.List (foldl', maximumBy, sort)
 import Data.Ord (comparing)
 import qualified Data.Map as M
+import qualified Data.Set as S
 import qualified Data.Text as T
 
 layoutPageText :: [PageItem] -> T.Text
-layoutPageText items =
-  let ps = layoutParagraphs items
-  in if null ps
-     then "\n"
-     else T.intercalate "\n\n" ps `T.append` "\n"
+layoutPageText items = formatParagraphs (layoutParagraphs items)
+
+layoutDocument :: [[PageItem]] -> T.Text
+layoutDocument pages = formatParagraphs (documentParagraphs pages)
+
+formatParagraphs :: [T.Text] -> T.Text
+formatParagraphs ps =
+  if null ps
+  then "\n"
+  else T.intercalate "\n\n" ps `T.append` "\n"
 
 layoutParagraphs :: [PageItem] -> [T.Text]
 layoutParagraphs items =
+  case pageLines items of
+    PageFallback ps -> ps
+    PageNormal wmode graphics bounds ls ->
+      map joinParaLines (groupParagraphs wmode graphics bounds ls)
+
+documentParagraphs :: [[PageItem]] -> [T.Text]
+documentParagraphs pages =
+  let pageCount = length pages
+      layouts = map pageLines pages
+      stripped = applyHeaderFooterStrip pageCount layouts
+  in finalizeDoc $ foldl' processPage ([], []) stripped
+  where
+    applyHeaderFooterStrip n layouts =
+      let normalPairs = [(i, ls) | (i, PageNormal _ _ _ ls) <- zip [0 ..] layouts]
+          strippedNormals = stripHeadersFooters n (map snd normalPairs)
+          strippedMap = M.fromList (zip (map fst normalPairs) strippedNormals)
+      in [ case layout of
+             PageFallback ps -> PageFallback ps
+             PageNormal w g b ls ->
+               PageNormal w g b (M.findWithDefault ls i strippedMap)
+         | (i, layout) <- zip [0 ..] layouts
+         ]
+
+    continuePage done pageGroups =
+      case reverse pageGroups of
+        [] -> (done, [])
+        lastG : restRev -> (done ++ map joinParaLines (reverse restRev), lastG)
+
+    processPage (done, pending) (PageFallback ps) =
+      ( done ++ finalize pending ++ map T.strip ps
+      , []
+      )
+
+    processPage (done, pending) (PageNormal wmode graphics bounds ls) =
+      let pageGroups = groupParagraphs wmode graphics bounds ls
+          pageMinInline =
+            if null ls
+            then 0
+            else minimum (map lineInlineStart ls)
+      in case (pending, pageGroups) of
+        ([], _) -> continuePage done pageGroups
+        (ps, []) -> (done, ps)
+        (ps, g : gs) ->
+          case g of
+            firstLine : _ ->
+              let paraSoFar = joinParaLines ps
+                  lastLine = case reverse ps of
+                    l : _ -> l
+                    [] -> firstLine
+              in if pageBoundaryBreak paraSoFar firstLine pageMinInline lastLine firstLine
+                 then continuePage (done ++ [paraSoFar]) (g : gs)
+                 else case reverse gs of
+                        [] -> (done, ps ++ g)
+                        lastG : restRev ->
+                          ( done ++ joinParaLines (ps ++ g)
+                              : map joinParaLines (reverse restRev)
+                          , lastG
+                          )
+            [] -> (done, ps)
+
+    finalizeDoc (done, pending) = done ++ finalize pending
+
+    finalize [] = []
+    finalize ps = [joinParaLines ps]
+
+data PageLines
+  = PageFallback [T.Text]
+  | PageNormal Int [Rect] (Double, Double) [Line]
+  deriving (Show)
+
+pageLines :: [PageItem] -> PageLines
+pageLines items =
   let glyphs = [g | ItemGlyph g <- items]
       graphics = [r | ItemGraphic r <- items]
   in if null glyphs
-     then []
+     then PageFallback []
      else if fallbackNeeded glyphs
-          then [fallbackText glyphs]
+          then PageFallback [fallbackText glyphs]
           else let wmode = dominantWMode glyphs
                    pageBounds = pageExtents glyphs
                    ls = buildLines glyphs
-               in map joinParaLines (groupParagraphs wmode graphics pageBounds ls)
+               in PageNormal wmode graphics pageBounds ls
+
+linesFromGlyphs :: [Glyph] -> [Line]
+linesFromGlyphs = buildLines
+
+stripHeadersFooters :: Int -> [[Line]] -> [[Line]]
+stripHeadersFooters pageCount pagesLines =
+  let threshold =
+        let raw = ceiling (0.2 * fromIntegral pageCount :: Double) :: Int
+        in max 3 (min raw 5)
+      pageInfos =
+        [ (ls, pageBaselineExtent ls)
+        | ls <- pagesLines
+        , not (null ls)
+        ]
+      topCounts = countBandCores Top pageInfos
+      bottomCounts = countBandCores Bottom pageInfos
+      repeatedTop = repeatedCores threshold pageCount topCounts
+      repeatedBottom = repeatedCores threshold pageCount bottomCounts
+  in map (filterLine repeatedTop repeatedBottom) pagesLines
+  where
+    filterLine repTop repBottom ls
+      | length ls <= 2 =
+          let extent = pageBaselineExtent ls
+          in if any (isRemoved repTop repBottom extent) ls
+             then filter (not . isRemoved repTop repBottom extent) ls
+             else ls
+      | otherwise =
+          let extent = pageBaselineExtent ls
+          in filter (not . isRemoved repTop repBottom extent) ls
+
+    isRemoved repTop repBottom extent l =
+      let band = lineBand extent l
+          norm = normalizeHeaderFooterText (lineText l)
+      in shouldRemove band norm pageCount repTop repBottom
+
+    repeatedCores thresh n counts
+      | n >= 3 =
+          S.fromList [ core | (core, c) <- M.toList counts, c >= thresh ]
+      | otherwise = S.empty
+
+countBandCores :: Band -> [([Line], (Double, Double))] -> M.Map T.Text Int
+countBandCores band pageInfos =
+  M.fromListWith (+)
+    [ (headerFooterCore (lineText l), 1)
+    | (ls, extent) <- pageInfos
+    , l <- ls
+    , lineBand extent l == band
+    ]
+
+headerFooterCore :: T.Text -> T.Text
+headerFooterCore = T.filter (/= '#') . normalizeHeaderFooterText
+
+shouldRemove :: Band -> T.Text -> Int -> S.Set T.Text -> S.Set T.Text -> Bool
+shouldRemove band norm pageCount repTop repBottom
+  | band == Middle = False
+  | isBarePageNumber norm = pageCount >= 2
+  | otherwise =
+      let core = headerFooterCore norm
+          repeated = case band of
+            Top -> repTop
+            Bottom -> repBottom
+            Middle -> S.empty
+      in S.member core repeated
+
+data Band = Top | Bottom | Middle
+  deriving (Eq, Ord, Show)
+
+lineBand :: (Double, Double) -> Line -> Band
+lineBand (lo, hi) l =
+  let bl = lineBaseline l
+      span = hi - lo
+  in if span <= 0
+     then Middle
+     else if bl >= hi - 0.15 * span
+          then Top
+          else if bl <= lo + 0.15 * span
+               then Bottom
+               else Middle
+
+pageBaselineExtent :: [Line] -> (Double, Double)
+pageBaselineExtent ls =
+  let baselines = map lineBaseline ls
+  in (minimum baselines, maximum baselines)
+
+normalizeHeaderFooterText :: T.Text -> T.Text
+normalizeHeaderFooterText =
+  replaceRomanNumerals . replaceAsciiDigits . T.filter (not . isSpace)
+
+replaceAsciiDigits :: T.Text -> T.Text
+replaceAsciiDigits t =
+  let chars = T.unpack t
+      (out, _) = foldl' go ([], False) chars
+  in T.pack (reverse out)
+  where
+    go (acc, inRun) c
+      | c >= '0' && c <= '9' =
+          if inRun then (acc, True) else ('#' : acc, True)
+      | otherwise = (c : acc, False)
+
+replaceRomanNumerals :: T.Text -> T.Text
+replaceRomanNumerals t = T.pack (go (T.unpack t) [])
+  where
+    go [] acc = reverse acc
+    go (c : cs') acc =
+      let (tok, rest) = span isRomanDigit (c : cs')
+      in if not (null tok) && length tok <= 7
+         then go rest ('#' : acc)
+         else go cs' (c : acc)
+
+isRomanDigit :: Char -> Bool
+isRomanDigit c = c `elem` ("ivxlcdmIVXLCDM" :: String)
+
+isBarePageNumber :: T.Text -> Bool
+isBarePageNumber t =
+  not (T.null t)
+  && T.any (=='#') t
+  && T.all (\c -> c == '#' || c `elem` ("-/." :: String)) t
+
+pageBoundaryBreak :: T.Text -> Line -> Double -> Line -> Line -> Bool
+pageBoundaryBreak paraSoFar firstLine pageMinInline lastLine firstLine' =
+  endsWithTerminal paraSoFar
+  || indentPageBreak pageMinInline firstLine
+  || abs (lineSize firstLine' - lineSize lastLine)
+       > 0.15 * max (lineSize firstLine') (lineSize lastLine)
+  || lineWMode lastLine /= lineWMode firstLine'
 
 fallbackNeeded :: [Glyph] -> Bool
 fallbackNeeded glyphs =
@@ -214,7 +422,11 @@ typicalLeading gaps lineSize =
 
 indentBreak :: Double -> Line -> Bool
 indentBreak paraMinInline cur =
-  lineFirstInline cur - paraMinInline > 1.0 * lineSize cur
+  lineFirstInline cur - paraMinInline >= 0.85 * lineSize cur
+
+indentPageBreak :: Double -> Line -> Bool
+indentPageBreak pageMinInline cur =
+  lineFirstInline cur - pageMinInline >= 0.85 * lineSize cur
 
 graphicBreak :: Int -> [Rect] -> (Double, Double) -> Line -> Line -> Bool
 graphicBreak wmode graphics pageBounds prev cur =
@@ -276,3 +488,22 @@ joinParaLines ls =
             then T.empty
             else " "
       in a' `T.append` sep `T.append` b'
+
+terminalChars :: String
+terminalChars = "。．！？!?…"
+
+closingChars :: String
+closingChars = "」』）)]】〉》\"'"
+
+endsWithTerminal :: T.Text -> Bool
+endsWithTerminal t = endsWithTerminal' (T.strip t)
+  where
+    endsWithTerminal' s
+      | T.null s = False
+      | otherwise =
+          case T.unsnoc s of
+            Nothing -> False
+            Just (init, c)
+              | c `elem` closingChars -> endsWithTerminal' init
+              | c `elem` terminalChars -> True
+              | otherwise -> False

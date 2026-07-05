@@ -18,7 +18,7 @@ import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
 import PDF.Encrypt (Security)
 import PDF.Interpret (Glyph(..), PageItem(..), interpretPageItems)
-import PDF.Layout (joinGlyphsRun, layoutPageText)
+import PDF.Layout (joinGlyphsRun, layoutDocument, linesFromGlyphs, stripHeadersFooters, joinParaLines)
 import PDF.Structure (StructElem(..), structTree, logicalOrder)
 
 import Data.List (foldl')
@@ -76,7 +76,7 @@ pdfToTextGeomDoc doc = do
   rootref <- docRootRef doc
   let refs = pageRefsOrder rootref (docObjs doc)
   pages <- mapM (interpretPageItems doc) refs
-  return $ BSLU.fromString (T.unpack (T.concat (map layoutPageText pages)))
+  return $ BSLU.fromString (T.unpack (layoutDocument pages))
 
 pdfToTextTaggedBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
 pdfToTextTaggedBS filename mpw = do
@@ -108,9 +108,11 @@ assembleTagged root refs pages =
   let mcidMaps = zip refs (map mcidGlyphMap pages)
       mcidLookup = Map.fromList
         [((page, mcid), gs) | (page, m) <- mcidMaps, (mcid, gs) <- Map.toList m]
-      artifactMaps = Map.fromList
-        [(page, artifactGlyphs pg) | (page, pg) <- zip refs pages]
-      order = logicalOrder root
+      artifactLinesPerPage =
+        Map.fromList $
+          zip refs
+            (stripHeadersFooters (length pages)
+               (map (linesFromGlyphs . artifactGlyphs) pages))
 
       lastPathType [] = ""
       lastPathType path = last path
@@ -125,14 +127,15 @@ assembleTagged root refs pages =
             in (acc `T.append` sep `T.append` run, paraEnd)
 
       appendArtifacts acc page =
-        case Map.lookup page artifactMaps of
-          Just gs | not (null gs) ->
-            let run = joinGlyphsRun gs
+        case Map.lookup page artifactLinesPerPage of
+          Just ls | not (null ls) ->
+            let run = joinParaLines ls
             in if T.null acc
                then run
                else acc `T.append` "\n\n" `T.append` run
           _ -> acc
 
+      order = logicalOrder root
       (structText, _) = foldl' appendMCID (T.empty, False) order
       withArtifacts = foldl' appendArtifacts structText refs
   in if T.null withArtifacts then "\n" else withArtifacts `T.append` "\n"
