@@ -789,9 +789,7 @@ encodingFromDict sec objs d = case subtype of
                        Just (PdfText o) -> o
                        _ -> T.empty
           cmap = registry `T.append` "-" `T.append` ordering
-      in if cmap == "Adobe-Japan1"
-         then CIDmap cmap
-         else WithCharSet T.empty
+      in CIDmap cmap
 
 
 charDiff :: [Obj] -> Encoding

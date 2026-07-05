@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.6.2 (2026-07-06)
+
+### Fixed
+
+- Legacy extraction (and the TUI viewer, which uses the same path) no longer inserts U+FFFD before each character for Type0 Identity-H fonts whose `/CIDSystemInfo` ordering is not `Adobe-Japan1` (e.g. Kozuka Mincho in scanned CACM papers); hex CID strings are now split as 2-byte codes consistently with the geometry pipeline.
+
 ## 0.4.6.1 (2026-07-06)
 
 ### Fixed
