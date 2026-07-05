@@ -737,6 +737,8 @@ encodingFromDict sec objs d = case subtype of
     Just (PdfName "/MacRomanEncoding") -> NullMap
     Just (PdfName "/MacExpertEncoding") -> NullMap
     Just (PdfName "/WinAnsiEncoding") -> NullMap
+    Just (PdfName "/ZapfDingbats") -> WithCharSet "ZapfDingbats"
+    Just (PdfName "/Symbol") -> WithCharSet "Symbol"
     _ -> case findObjFromDict (fontDescriptorFromDict d objs) "/FontFile3" of
            Just (ObjRef fontfile) ->
              case rawStreamByRef sec objs fontfile of

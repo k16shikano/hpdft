@@ -633,19 +633,34 @@ encodingUnicode :: Encoding -> Int -> T.Text
 encodingUnicode (Encoding enc) code =
   case M.lookup (chr code) enc of
     Just glyph ->
-      case M.lookup (T.unpack glyph) pdfcharmap of
+      case bulletUnicode glyph of
         Just u -> u
-        Nothing -> if "/uni" `T.isPrefixOf` glyph
-                   then readUniGlyph glyph
-                   else glyph
+        Nothing ->
+          case M.lookup (T.unpack glyph) pdfcharmap of
+            Just u -> u
+            Nothing -> if "/uni" `T.isPrefixOf` glyph
+                       then readUniGlyph glyph
+                       else glyph
     Nothing -> T.singleton (safeChr code)
 encodingUnicode (CIDmap "Adobe-Japan1") code =
   case M.lookup code adobeJapanOneSixMap of
     Just bs -> T.pack (BSLU.toString bs)
     Nothing -> T.singleton (safeChr code)
 encodingUnicode (CIDmap _) code = T.singleton (safeChr code)
-encodingUnicode WithCharSet{} code = T.singleton (safeChr code)
+encodingUnicode (WithCharSet "ZapfDingbats") code =
+  fromMaybe (T.singleton (safeChr code)) (dingbatCodeUnicode code)
+encodingUnicode (WithCharSet _) code = T.singleton (safeChr code)
 encodingUnicode NullMap code = T.singleton (safeChr code)
+
+bulletUnicode :: T.Text -> Maybe T.Text
+bulletUnicode glyph
+  | glyph `elem` ["/bullet", "/circle", "/disc", "/filledbox"] = Just "\x2022"
+  | otherwise = Nothing
+
+dingbatCodeUnicode :: Int -> Maybe T.Text
+dingbatCodeUnicode code
+  | code `elem` [108, 110, 114, 183] = Just "\x2022"
+  | otherwise = Nothing
 
 readUniGlyph :: T.Text -> T.Text
 readUniGlyph s =

@@ -381,6 +381,44 @@ layoutParagraphResults =
         , ItemGlyph (mkGlyph 440 700 10 12 1 "\x3046")
         , ItemGlyph (mkGlyph 440 680 10 12 1 "\x3048")
         ]
+      outlierSplit = layoutParagraphs
+        [ ItemGlyph (mkGlyph 70 384 8 8 0 "\x5b9f")
+        , ItemGlyph (mkGlyph 255 387 4 6 0 "\x2020")
+        , ItemGlyph (mkGlyph 259 (-167) 3 5 0 "2")
+        , ItemGlyph (mkGlyph 263 384 8 8 0 "\x3092")
+        , ItemGlyph (mkGlyph 310 384 8 8 0 "\x8a18")
+        , ItemGlyph (mkGlyph 62 372 8 8 0 "\x6cd5")
+        , ItemGlyph (mkGlyph 70 372 8 8 0 "\x3067")
+        ]
+      cjkWrapSplit = layoutParagraphs
+        [ ItemGlyph (mkGlyph 310 384 8 8 0 "\x8a18")
+        , ItemGlyph (mkGlyph 62 372 8 8 0 "\x6cd5")
+        , ItemGlyph (mkGlyph 70 372 8 8 0 "\x3067")
+        , ItemGlyph (mkGlyph 78 372 8 8 0 "\x898b")
+        ]
+      dingbatBullet = layoutPageText
+        [ ItemGlyph (mkGlyph 60 434 0 9 0 "r")
+        , ItemGlyph (mkGlyph 66 431 0 8 0 "HTTP")
+        ]
+      letteredList = layoutParagraphs
+        [ ItemGlyph (mkGlyph 63 275 6 8 0 "a.")
+        , ItemGlyph (mkGlyph 74 275 40 8 0 "\x533a\x5225")
+        , ItemGlyph (mkGlyph 63 260 6 8 0 "b.")
+        , ItemGlyph (mkGlyph 70 260 40 8 0 "\x30bd\x30fc\x30b9")
+        , ItemGlyph (mkGlyph 58 241 40 8 0 "\x4fe1\x983c")
+        ]
+      hangList = layoutParagraphs
+        [ ItemGlyph (mkGlyph 66 201 80 8 0 "\x5909\x6570\x306f\x3053\x3068")
+        , ItemGlyph (mkGlyph 66 186 80 8 0 "\x30bd\x30fc\x30b9\x3053\x3068")
+        , ItemGlyph (mkGlyph 66 171 80 8 0 "\x30b9\x30ad\x30fc\x30de\x3053\x3068")
+        ]
+      codeBlockText = layoutPageText
+        [ ItemGlyph (mkGlyph 274 511 10 6 0 "\x30b3\x30fc\x30c9")
+        , ItemGlyph (mkGlyph 40 506 4 6 0 "1")
+        , ItemGlyph (mkGlyph 55 506 20 6 0 "is.into_iter()")
+        , ItemGlyph (mkGlyph 40 499 4 6 0 "2")
+        , ItemGlyph (mkGlyph 70 499 20 6 0 ".flatten()")
+        ]
    in [ assertBool "layout same-baseline two lines one paragraph" (length samePara == 1)
       , assertTextEq "layout same-baseline joined"
           (T.pack "Alpha Beta") (head samePara)
@@ -403,6 +441,24 @@ layoutParagraphResults =
           (T.pack "\x3042\x3044") (head vertCols)
       , assertTextEq "layout vertical second column"
           (T.pack "\x3046\x3048") (vertCols !! 1)
+      , assertBool "layout outlier glyph does not split paragraph" (length outlierSplit == 1)
+      , assertBool "layout outlier glyph keeps CJK wrap"
+          (T.isInfixOf (T.pack "\x8a18\x6cd5\x3067") (head outlierSplit))
+      , assertBool "layout CJK wrap keeps one paragraph" (length cjkWrapSplit == 1)
+      , assertTextEq "layout CJK wrap joined text"
+          (T.pack "\x8a18\x6cd5\x3067\x898b") (head cjkWrapSplit)
+      , assertTextEq "layout dingbat r prefix becomes bullet"
+          (T.pack "\8226 HTTP\n") dingbatBullet
+      , assertBool "layout lettered list items split" (length letteredList == 3)
+      , assertBool "layout hang-indent list items split" (length hangList == 3)
+      , assertBool "layout code block keeps newlines"
+          (length (T.lines codeBlockText) >= 3)
+      , assertBool "layout code caption separate from block"
+          (length (layoutParagraphs
+            [ ItemGlyph (mkGlyph 274 511 10 6 0 "\x30b3\x30fc\x30c9")
+            , ItemGlyph (mkGlyph 40 506 4 6 0 "1")
+            , ItemGlyph (mkGlyph 55 506 20 6 0 "is")
+            ]) == 2)
       ]
 
 sortLinesByReadingOrderResults :: [Result]
@@ -634,6 +690,17 @@ rubyResults =
         [ ItemGlyph (mkGlyph 72 700 120 12 0 mixedBase)
         , ItemGlyph (mkGlyph 72 710 80 7 0 mixedRuby)
         ]
+      interleavedPage =
+        let bodyY = 110.85098199999993
+            rubyY = 118.75664899999992
+            bodySz = 8.410829900000001
+            rubySz = 4.2053693
+        in [ ItemGlyph (mkGlyph 66.33 bodyY 100.93 bodySz 0 "\x64cd\4f5c\3092")
+           , ItemGlyph (mkGlyph 167.26 rubyY 8.41 rubySz 0 "\x3079\x304d")
+           , ItemGlyph (mkGlyph 167.26 bodyY 8.41 bodySz 0 "\x5186")
+           , ItemGlyph (mkGlyph 175.67 rubyY 8.41 rubySz 0 "\x3068\x3046")
+           , ItemGlyph (mkGlyph 175.67 bodyY 84.11 bodySz 0 "\x7b49\306a\3082\306e\306b\3059\308b\3053\3068\12290")
+           ]
       rubyOn = layoutParagraphsWith (defaultLayoutOptions {optRuby = True})
       rubyOff = layoutParagraphsWith defaultLayoutOptions
       horizOn = T.concat (rubyOn horizPage)
@@ -657,6 +724,15 @@ rubyResults =
           (T.isInfixOf ("\xff5c\x300a" `T.append` mixedRuby `T.append` "\x300b") mixedOn)
       , assertBool "ruby off leaves plain text"
           (not (T.isInfixOf "\x300a" horizOff) && T.isInfixOf kanji horizOff)
+      , assertBool "ruby interleaved stream order"
+          (T.isInfixOf
+            ("\x5186\x7b49\x300a\x3079\x304d\x3068\x3046\x300b")
+            (T.concat (rubyOn interleavedPage)))
+      , assertBool "ruby interleaved off suppresses orphan lines"
+          (let out = T.concat (rubyOff interleavedPage)
+           in T.isInfixOf "\x5186\x7b49" out
+              && not (T.isInfixOf "\x3079\x304d" out)
+              && not (T.isInfixOf "\x3068\x3046" out))
       ]
 
 interpretGraphicResults :: [Result]

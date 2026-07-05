@@ -26,7 +26,7 @@ module PDF.Layout
 
 import PDF.Interpret (Glyph(..), Rect(..), PageItem(..))
 
-import Data.Char (isSpace, ord)
+import Data.Char (isDigit, isSpace, ord)
 import Data.List (foldl', maximumBy, partition, sort, sortBy)
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Ord (Down(..), comparing)
@@ -161,9 +161,8 @@ applyFootnotes opts page =
 applyRuby :: LayoutOptions -> PageLines -> PageLines
 applyRuby opts page =
   case page of
-    PageNormal wmode _ bounds ls
-      | optRuby opts ->
-          PageNormal wmode [] bounds (pairRubyLines wmode bounds ls)
+    PageNormal wmode _ bounds ls ->
+      PageNormal wmode [] bounds (mergeInterleavedRubyLines wmode (optRuby opts) ls)
     _ -> page
 
 -- Aozora bunko ruby: fullwidth 《》 and optional ｜ before mixed-script bases.
@@ -198,37 +197,188 @@ scriptCategory c =
                          else Just CatOther
 
 pairRubyLines :: Int -> (Double, Double) -> [Line] -> [Line]
-pairRubyLines wmode _ ls =
-  let sorted = sortLinesByReadingOrder ls
-      bodySize = medianOf (map lineSize sorted)
-      isRubyLine l =
-        lineSize l <= 0.85 * bodySize
-        && not (T.null (T.strip (lineText l)))
-      (rubyLs, bodyLs) = partition isRubyLine sorted
-      attach acc ruby =
-        case findRubyParent wmode ruby acc of
-          Nothing -> acc
-          Just (idx, _) ->
-            let updated = insertRuby (acc !! idx) ruby
-            in take idx acc ++ [updated] ++ drop (idx + 1) acc
-  in foldl' attach bodyLs rubyLs
+pairRubyLines wmode _ = mergeInterleavedRubyLines wmode True
 
-findRubyParent :: Int -> Line -> [Line] -> Maybe (Int, Line)
-findRubyParent wmode ruby bodyLs =
-  listToMaybe
-    [ (i, b)
-    | (i, b) <- zip [0 ..] bodyLs
-    , rubyAlignsWithParent wmode ruby b
-    ]
+isRubyLine :: Int -> Double -> [Line] -> Line -> Bool
+isRubyLine wmode bodySize ls l =
+  lineSize l <= 0.85 * bodySize
+  && not (T.null (T.strip (lineText l)))
+  && any (rubyAlignsWithParent wmode l) (filter isBodyLine ls)
+  where
+    isBodyLine b = lineSize b > 0.85 * bodySize
+
+bodyMedianSize :: [Line] -> Double
+bodyMedianSize ls =
+  let sizes = map lineSize ls
+      med = medianOf sizes
+      bodySizes = [lineSize l | l <- ls, lineSize l > 0.85 * med]
+  in if null bodySizes then med else medianOf bodySizes
+
+baselineClose :: Double -> Line -> Line -> Bool
+baselineClose bodySize a b =
+  abs (lineBaseline a - lineBaseline b) <= 0.4 * bodySize
+
+shortBodyLine :: Line -> Bool
+shortBodyLine l = T.length (T.strip (lineText l)) <= 2
+
+firstCharText :: T.Text -> T.Text
+firstCharText t =
+  case T.uncons (T.strip t) of
+    Nothing -> T.empty
+    Just (c, _) -> T.singleton c
+
+clusterBaseText :: [(Line, Line)] -> T.Text
+clusterBaseText pairs =
+  let bs = map fst pairs
+  in T.concat
+       [ if length bs == 1
+         then T.strip (lineText b)
+         else if i == length bs - 1 && not (shortBodyLine b)
+              then firstCharText (lineText b)
+              else T.strip (lineText b)
+       | (i, b) <- zip [0 ..] bs
+       ]
+
+clusterSuffixText :: [(Line, Line)] -> T.Text
+clusterSuffixText pairs =
+  case reverse (map fst pairs) of
+    b : _ | not (shortBodyLine b) ->
+      let t = T.strip (lineText b)
+      in if T.null t then T.empty else T.drop 1 t
+    _ -> T.empty
+
+clusterRubyText :: [(Line, Line)] -> T.Text
+clusterRubyText = T.concat . map (T.strip . lineText . snd)
+
+clusterContinuation :: Line -> Line -> Bool
+clusterContinuation prev cur =
+  baselineClose (lineSize cur) prev cur
+  && lineInlineStart cur - lineInlineEnd prev <= 2 * lineSize cur
+
+removeRubyLine :: Line -> [Line] -> [Line]
+removeRubyLine r = filter (not . sameRubyLine r)
+
+sameRubyLine :: Line -> Line -> Bool
+sameRubyLine a b =
+  lineBaseline a == lineBaseline b
+  && lineInlineStart a == lineInlineStart b
+  && lineText a == lineText b
+
+findRubyForBody :: Int -> [Line] -> Line -> Maybe Line
+findRubyForBody wmode rubyLs body =
+  case [ r
+       | r <- rubyLs
+       , rubyAlignsWithParent wmode r body
+       ] of
+    [] -> Nothing
+    rs -> Just (maximumBy (comparing (\r -> rubyOverlapFrac wmode r body)) rs)
+
+mergeInterleavedRubyLines :: Int -> Bool -> [Line] -> [Line]
+mergeInterleavedRubyLines wmode includeRuby ls
+  | null ls = ls
+  | otherwise =
+      let bodySize = bodyMedianSize ls
+          (rubyLs, bodyLs) = partition (isRubyLine wmode bodySize ls) ls
+      in if null rubyLs
+         then ls
+         else mergeBodyBands wmode includeRuby bodySize rubyLs bodyLs
+
+mergeBodyBands :: Int -> Bool -> Double -> [Line] -> [Line] -> [Line]
+mergeBodyBands wmode includeRuby bodySize rubyLs bodyLs =
+  let bands = groupBodyBaselineBands bodySize (sortLinesByReadingOrder bodyLs)
+  in concatMap (mergeOneBand wmode includeRuby bodySize rubyLs) bands
+
+groupBodyBaselineBands :: Double -> [Line] -> [[Line]]
+groupBodyBaselineBands _ [] = []
+groupBodyBaselineBands bodySize (l:ls) =
+  let (same, rest) = span (baselineClose bodySize l) ls
+  in (l : same) : groupBodyBaselineBands bodySize rest
+
+mergeOneBand :: Int -> Bool -> Double -> [Line] -> [Line] -> [Line]
+mergeOneBand wmode includeRuby bodySize allRuby bodyBand =
+  let sorted = sortBy (comparing lineInlineStart) bodyBand
+      (segments, _) = foldSegments wmode bodySize allRuby sorted
+      repStart = head sorted
+      repEnd = last sorted
+      txt = renderRubySegments includeRuby segments
+  in if T.null txt
+     then []
+     else [ repStart
+              { lineText = txt
+              , lineInlineEnd = lineInlineEnd repEnd
+              , lineInlineStart = lineInlineStart repStart
+              , lineSize = max (lineSize repStart) (lineSize repEnd)
+              }
+          ]
+
+data RubySegment
+  = PlainSeg !Line
+  | ClusterSeg [(Line, Line)]
+  deriving (Show)
+
+foldSegments :: Int -> Double -> [Line] -> [Line] -> ([RubySegment], [Line])
+foldSegments wmode bodySize rubyPool =
+  go rubyPool
+  where
+    go pool [] = ([], pool)
+    go pool (b:bs) =
+      case findRubyForBody wmode pool b of
+        Nothing ->
+          let (plain, rest) = span (\l' -> case findRubyForBody wmode pool l' of Nothing -> True; _ -> False) (b:bs)
+              (rest', pool') = go pool (drop (length plain) (b:bs))
+          in (map PlainSeg plain ++ rest', pool')
+        Just r ->
+          let (cluster, restBs, pool') = spanCluster wmode bodySize (removeRubyLine r pool) r b bs
+              (rest', pool'') = go pool' restBs
+          in (ClusterSeg cluster : rest', pool'')
+
+spanCluster :: Int -> Double -> [Line] -> Line -> Line -> [Line]
+           -> ([(Line, Line)], [Line], [Line])
+spanCluster wmode bodySize pool r b bs =
+  go pool [(b, r)] bs
+  where
+    go rp pairs (b':bs') =
+      case findRubyForBody wmode rp b' of
+        Just r' | clusterContinuation (fst (last pairs)) b' ->
+          go (removeRubyLine r' rp) ((b', r') : pairs) bs'
+        _ -> (reverse pairs, b' : bs', rp)
+    go rp pairs [] = (reverse pairs, [], rp)
+
+renderRubySegments :: Bool -> [RubySegment] -> T.Text
+renderRubySegments includeRuby =
+  T.concat . map renderSeg
+  where
+    renderSeg (PlainSeg l) = T.strip (lineText l)
+    renderSeg (ClusterSeg pairs) =
+      let base = clusterBaseText pairs
+          ruby = clusterRubyText pairs
+          suffix = clusterSuffixText pairs
+          marked =
+            if includeRuby
+            then aozoraRuby base ruby
+            else base
+      in marked `T.append` suffix
 
 rubyAlignsWithParent :: Int -> Line -> Line -> Bool
 rubyAlignsWithParent wmode ruby parent =
   let bodySize = lineSize parent
       offset = rubyOffset wmode parent ruby
-      overlap = inlineOverlapFrac wmode ruby parent
+      overlap = rubyOverlapFrac wmode ruby parent
   in lineSize ruby <= 0.85 * bodySize
      && offset > 0.15 * bodySize && offset <= 1.2 * bodySize
      && overlap >= 0.2
+
+rubyOverlapFrac :: Int -> Line -> Line -> Double
+rubyOverlapFrac _ ruby parent =
+  let rLo = min (lineInlineStart ruby) (lineInlineEnd ruby)
+      rHi = max (lineInlineStart ruby) (lineInlineEnd ruby)
+      bLo = min (lineInlineStart parent) (lineInlineEnd parent)
+      bHi = max (lineInlineStart parent) (lineInlineEnd parent)
+      lo = max rLo bLo
+      hi = min rHi bHi
+      overlap = max 0 (hi - lo)
+      span = max (rHi - rLo) 1
+  in overlap / span
 
 rubyOffset :: Int -> Line -> Line -> Double
 rubyOffset wmode parent ruby =
@@ -247,13 +397,6 @@ inlineOverlapFrac _ a b =
       overlap = max 0 (hi - lo)
       span = max (bHi - bLo) 1
   in overlap / span
-
-insertRuby :: Line -> Line -> Line
-insertRuby parent ruby =
-  parent
-    { lineText =
-        aozoraRuby (T.strip (lineText parent)) (T.strip (lineText ruby))
-    }
 
 -- Footnote heuristic (horizontal pages only): small-size lines in the
 -- bottom band (or under a bottom horizontal rule) that start with a
@@ -419,9 +562,10 @@ pageLines items =
      then PageFallback []
      else if fallbackNeeded glyphs
           then PageFallback [fallbackText glyphs]
-          else let wmode = dominantWMode glyphs
-                   pageBounds = pageExtents glyphs
-                   ls = buildLines glyphs
+          else let visible = filterPageGlyphs glyphs
+                   wmode = dominantWMode visible
+                   pageBounds = pageExtents visible
+                   ls = map fixDingbatBulletLine (buildLines visible)
                in PageNormal wmode graphics pageBounds ls
 
 linesFromGlyphs :: [Glyph] -> [Line]
@@ -576,6 +720,42 @@ usableGlyph g =
   glyphSize g > 0
   && not (isNaN (glyphX g) || isInfinite (glyphX g))
   && not (isNaN (glyphY g) || isInfinite (glyphY g))
+
+-- | Drop coordinate outliers (e.g. footnote digits emitted far off-page).
+filterPageGlyphs :: [Glyph] -> [Glyph]
+filterPageGlyphs glyphs =
+  let horiz = filter ((== 0) . glyphWMode) glyphs
+      vert = filter ((== 1) . glyphWMode) glyphs
+      horizVis = filter ((>= 0) . glyphY) horiz
+  in filter (\g -> glyphInBand g horizVis vert) glyphs
+  where
+    glyphInBand g hs vs
+      | glyphWMode g == 1 = inBand (baselineOf 1) vs g
+      | otherwise = inBand glyphY hs g
+
+    inBand measure [] g = measure g >= 0
+    inBand measure gs g =
+      let v = measure g
+      in v >= 0 && case baselineBand measure gs of
+           Nothing -> True
+           Just (lo, hi) -> v >= lo && v <= hi
+
+    baselineBand measure gs =
+      let ys = sort (map measure gs)
+      in if length ys < 4
+         then Nothing
+         else let q1 = quantile 0.25 ys
+                  q3 = quantile 0.75 ys
+                  iqr = q3 - q1
+                  medSize = medianOf (map glyphSize gs)
+                  spread = max (max 1 iqr) (1.2 * medSize)
+                  pad = 3 * spread
+              in Just (q1 - pad, q3 + pad)
+
+    quantile q xs =
+      let n = length xs
+          i = min (n - 1) (max 0 (truncate (q * fromIntegral (n - 1))))
+      in xs !! i
 
 dominantWMode :: [Glyph] -> Int
 dominantWMode glyphs =
@@ -763,6 +943,113 @@ isCJK c =
   || (cp >= 0x3000 && cp <= 0x303F)
   || (cp >= 0xFF00 && cp <= 0xFFEF)
 
+listMarkerStart :: Line -> Bool
+listMarkerStart l =
+  let t = T.stripStart (lineText l)
+  in letteredMarker t || numberedListMarker t
+  where
+    letteredMarker t =
+      case T.uncons t of
+        Just (c, rest) | c >= 'a' && c <= 'z' ->
+          case T.uncons (T.stripStart rest) of
+            Just ('.', _) -> True
+            _ -> False
+        _ -> False
+    numberedListMarker t =
+      case T.uncons t of
+        Just (c, rest) | isDigit c ->
+          case T.span isDigit t of
+            (ds, rest') ->
+              not (T.null ds)
+              && T.length ds <= 2
+              && case T.uncons (T.stripStart rest') of
+                   Just ('.', _) -> True
+                   _ -> False
+        _ -> False
+
+hangWrappedContinuation :: Line -> Line -> Bool
+hangWrappedContinuation prev cur =
+  lineFirstInline cur > lineFirstInline prev + 0.6 * lineSize prev
+
+afterListHeadingBreak :: Int -> Line -> Line -> [Double] -> Bool
+afterListHeadingBreak wmode prev cur gaps =
+  listMarkerStart prev
+  && not (hangWrappedContinuation prev cur)
+  && abs (baselineGap wmode prev cur)
+       >= 0.75 * typicalLeading gaps (lineSize cur)
+
+listItemEnd :: Line -> Bool
+listItemEnd l =
+  let t = T.strip (lineText l)
+  in T.isSuffixOf "こと" t || endsWithTerminal t
+
+sameHangListItemBreak :: Int -> Line -> Line -> [Double] -> Bool
+sameHangListItemBreak wmode prev cur gaps
+  | isCodeLine prev || isCodeLine cur = False
+  | not (listItemEnd prev) = False
+  | otherwise =
+      let gap = abs (baselineGap wmode prev cur)
+          typical = typicalLeading gaps (lineSize cur)
+          tol = 0.35 * lineSize cur
+      in cjkAdjacent (lastChar (lineText prev)) (firstChar (lineText cur))
+         && abs (lineFirstInline cur - lineFirstInline prev) <= tol
+         && gap >= 0.85 * typical
+         && not (hangWrappedContinuation prev cur)
+
+isNumberedCodeLine :: Line -> Bool
+isNumberedCodeLine l = numberedCodeStart (T.stripStart (lineText l))
+
+numberedCodeStart :: T.Text -> Bool
+numberedCodeStart t =
+  case T.uncons t of
+    Just (c, rest) | isDigit c ->
+      case T.span isDigit t of
+        (ds, rest') ->
+          not (T.null ds)
+          && case T.uncons (T.stripStart rest') of
+               Just (codeSep, _)
+                 | codeSep == ' ' || codeSep == '.' -> True
+               _ -> False
+    _ -> False
+
+isCodeLine :: Line -> Bool
+isCodeLine l =
+  isNumberedCodeLine l
+  || (lineSize l <= 7.5 && smallMonospaceLine l && highLatinFraction (lineText l))
+
+smallMonospaceLine :: Line -> Bool
+smallMonospaceLine l =
+  let t = T.strip (lineText l)
+  in not (T.null t)
+     && lineSize l > 0
+     && T.any isLatinLetter t
+     && not (T.any isCJK t)
+
+highLatinFraction :: T.Text -> Bool
+highLatinFraction t =
+  let chars = filter (not . isSpace) (T.unpack t)
+      latin = length (filter isLatinLetter chars)
+  in not (null chars) && fromIntegral latin / fromIntegral (length chars) >= 0.5
+
+codeBlockBreak :: Line -> Line -> Bool
+codeBlockBreak prev cur =
+  isCodeLine cur /= isCodeLine prev
+
+codeIndentSpaces :: Double -> Double -> Line -> T.Text
+codeIndentSpaces minX charW l =
+  let offset = max 0 (lineFirstInline l - minX)
+      n = truncate (offset / max charW 1)
+  in T.replicate n " "
+
+joinCodeLines :: [Line] -> T.Text
+joinCodeLines ls =
+  let minX = minimum (map lineFirstInline ls)
+      charW = minimum (map (max 1 . (* 0.55) . lineSize) ls)
+  in T.intercalate "\n"
+       [ codeIndentSpaces minX charW l `T.append` T.strip (lineText l)
+       | l <- ls
+       ]
+
 groupParagraphs :: Int -> [Rect] -> (Double, Double) -> [Line] -> [[Line]]
 groupParagraphs wmode graphics bounds lines =
   go [] (filter (not . T.null . T.strip . lineText) (sortLinesByReadingOrder lines))
@@ -792,10 +1079,46 @@ paragraphBreak :: Int -> [Rect] -> (Double, Double) -> Line -> Line -> [Double] 
 paragraphBreak wmode graphics pageBounds prev cur gaps paraMinInline =
   let gap = baselineGap wmode prev cur
       typical = typicalLeading gaps (lineSize cur)
+      gapBreak = abs gap > 1.6 * typical
   in negativeAdvance wmode prev cur
-  || abs gap > 1.6 * typical
+  || listMarkerStart cur
+  || afterListHeadingBreak wmode prev cur gaps
+  || sameHangListItemBreak wmode prev cur gaps
+  || codeBlockBreak prev cur
+  || (gapBreak && not (cjkWrapContinuation prev cur))
   || indentBreak paraMinInline cur
-  || graphicBreak wmode graphics pageBounds prev cur
+  || (graphicBreak wmode graphics pageBounds prev cur
+      && not (cjkWrapContinuation prev cur))
+
+cjkWrapContinuation :: Line -> Line -> Bool
+cjkWrapContinuation prev cur =
+  case (lastChar (lineText prev), firstChar (lineText cur)) of
+    (Just a, Just b) ->
+      isCJK a && isCJK b && not (endsWithTerminal (lineText prev))
+    _ -> False
+
+fixDingbatBulletLine :: Line -> Line
+fixDingbatBulletLine l = l {lineText = fixDingbatBullet (lineText l)}
+
+fixDingbatBullet :: T.Text -> T.Text
+fixDingbatBullet t =
+  let open = T.singleton '\x300c'
+      t1 = fixPrefix t
+  in T.replace (T.pack " r" `T.append` open) (T.pack " \8226" `T.append` open) t1
+  where
+    fixPrefix t =
+      case T.uncons t of
+        Just ('r', rest) ->
+          case T.uncons rest of
+            Just ('\x300c', _) -> T.cons '\x2022' rest
+            Just (' ', rest') ->
+              case T.uncons rest' of
+                Just (c, _) | not (isLowerLatin c) -> T.cons '\x2022' (T.cons ' ' rest')
+                _ -> t
+            Nothing -> T.singleton '\x2022'
+            _ -> t
+        _ -> t
+    isLowerLatin c = c >= 'a' && c <= 'z'
 
 baselineGap :: Int -> Line -> Line -> Double
 baselineGap wmode prev cur = lineBaseline prev - lineBaseline cur
@@ -870,8 +1193,10 @@ rectInlineRange wmode r =
 
 joinParaLines :: [Line] -> T.Text
 joinParaLines [] = T.empty
-joinParaLines ls =
-  T.strip $ foldl1 mergeText (map (T.strip . lineText) ls)
+joinParaLines ls
+  | all isCodeLine ls = joinCodeLines ls
+  | otherwise =
+      T.strip $ foldl1 mergeText (map (T.strip . lineText) ls)
   where
     mergeText a b =
       let a' = T.stripEnd a

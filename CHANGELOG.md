@@ -8,6 +8,12 @@
 - Type0/CID fonts with `/DescendantFonts` as a direct object reference (not only array-wrapped) now resolve Adobe-Japan1 encoding and descendant `/W` widths
 - `codeToUnicode` falls back to Adobe-Japan1-6 when ToUnicode is missing on 2-byte CID fonts
 - Glyph advance uses `fiDefaultWidth` when per-code width lookup returns 0
+- Coordinate outlier glyphs (e.g. footnote digits at negative y) filtered before line building; fixes spurious paragraph splits
+- CJK line-wrap continuation heuristic joins mid-word breaks (e.g. 記/法) without merging distinct paragraphs
+- Interleaved ruby/body stream order merged into `base《ruby》` (e.g. 冪等《べきとう》); orphan ruby lines suppressed when `--ruby` is off
+- Lettered list markers (`a.`, `b.`), hang-indent bullet items, and list-item boundaries split paragraphs correctly
+- Code blocks (numbered lines, small monospace font) extracted with line breaks and x-position indent inference
+- ZapfDingbats bullet glyphs (`r` etc.) mapped to `•`; `/ZapfDingbats` encoding recognized
 
 ## 0.4.3.0 (2026-07-05)
 
