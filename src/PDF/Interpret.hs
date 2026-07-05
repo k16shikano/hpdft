@@ -25,14 +25,11 @@ import PDF.Encrypt (Security)
 import PDF.Error (PdfError(..), PdfResult)
 import PDF.Object (parseRefsArray)
 
-import Control.Applicative ((<|>))
-import Control.Monad (forM_, when)
-import Data.Char (chr, ord)
+import Data.Char (chr, isDigit, ord)
 import Data.List (find, foldl', isPrefixOf)
 import Data.Maybe (fromMaybe, isJust)
-import Numeric (readHex, readOct)
-import Text.Parsec hiding ((<|>), updateState)
-import Text.Parsec.ByteString.Lazy
+import Data.Word (Word8)
+import qualified Numeric as Num
 
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as BSLC
@@ -69,15 +66,16 @@ data TState = TState
   }
 
 data IState = IState
-  { gsCur      :: GState
-  , gsStack    :: [GState]
-  , tsCur      :: Maybe TState
-  , glyphsAcc  :: [Glyph] -> [Glyph]
-  , depth      :: Int
-  , isSec      :: Maybe Security
-  , isObjs     :: PDFObjIndex
-  , isRes      :: Dict
+  { gsCur         :: GState
+  , gsStack       :: [GState]
+  , tsCur         :: Maybe TState
+  , glyphsAcc     :: [Glyph] -> [Glyph]
+  , depth         :: Int
+  , isSec         :: Maybe Security
+  , isObjs        :: PDFObjIndex
+  , isRes         :: Dict
   , fontOverrides :: M.Map String FontInfo
+  , operandStack  :: [Obj]
   }
 
 initialGState :: GState
@@ -105,6 +103,7 @@ initialIState sec objs res = IState
   , isObjs = objs
   , isRes = res
   , fontOverrides = M.empty
+  , operandStack = []
   }
 
 maxFormDepth :: Int
@@ -118,17 +117,7 @@ interpretContentWithFonts :: Maybe Security -> PDFObjIndex -> Dict -> M.Map Stri
 interpretContentWithFonts sec objs res fonts bytes =
   let st0 = initialIState sec objs res
       st1 = st0 {fontOverrides = fonts}
-  in case runParser interpretEnd st1 "" bytes of
-    Left _  -> []
-    Right st -> reverse (glyphsAcc st [])
-
-interpretEnd :: ISParser IState
-interpretEnd = do
-  spaces
-  many contentOp
-  spaces
-  eof
-  getState
+  in reverse (glyphsAcc (runStream st1 bytes) [])
 
 interpretPage :: Document -> Int -> PdfResult [Glyph]
 interpretPage doc pageRef = do
@@ -169,117 +158,130 @@ pageContentsBytes sec objs dict = case M.lookup "/Contents" dict of
       return $ BSL.intercalate (BSLC.pack "\n") parts
     singleStream ref = rawStreamByRef sec objs ref
 
-type ISParser a = GenParser Char IState a
+data Token = TokOperand Obj | TokOperator String
 
-contentOp :: ISParser ()
-contentOp =
-  choice
-    [ try textObject
-    , try graphicsStateOp
-    , try textStateOp
-    , try textPositionOp
-    , try textShowOp
-    , try xObjectOp
-    , try inlineImageOp
-    , try ignoredPathPaintOp
-    , try ignoredColorOp
-    , try ignoredMarkedContentOp
-    , skipUnknownLine
-    ]
+runStream :: IState -> BSL.ByteString -> IState
+runStream st bs = loop st (skipWs bs)
+  where
+    loop s input
+      | BSL.null input = s
+      | otherwise = case readToken input of
+          Just (TokOperand o, rest) ->
+            loop (s {operandStack = o : operandStack s}) (skipWs rest)
+          Just (TokOperator "BI", rest) ->
+            loop (s {operandStack = []}) (skipInlineImage (skipWs rest))
+          Just (TokOperator op, rest) ->
+            loop (dispatchOp op s) (skipWs rest)
+          Nothing ->
+            loop s (BSL.tail input)
 
-textObject :: ISParser ()
-textObject = do
-  spaces
-  choice
-    [ try $ string "BT" >> spaces >> withTextState (manyTill contentOp (try (string "ET"))) >> spaces
-    , try $ string "ET" >> spaces >> modifyIState (\s -> s {tsCur = Nothing})
-    ]
+dispatchOp :: String -> IState -> IState
+dispatchOp op st =
+  let st' = execOp op st
+  in st' {operandStack = []}
 
-withTextState :: ISParser a -> ISParser a
-withTextState p = do
-  modifyIState (\s -> s {tsCur = Just (TState identity identity)})
-  p
+execOp :: String -> IState -> IState
+execOp "q" st = pushGStateSt st
+execOp "Q" st = popGStateSt st
+execOp "cm" st =
+  case popNums 6 st of
+    Just ([f, e, d, c, b, a], st') ->
+      modifyGStateSt (\gs -> gs {ctm = multiply (mkMatrix a b c d e f) (ctm gs)}) st'
+    _ -> st
+execOp "BT" st = st {tsCur = Just (TState identity identity)}
+execOp "ET" st = st {tsCur = Nothing}
+execOp "Tf" st =
+  case operandStack st of
+    PdfNumber size : PdfName font : _ ->
+      resolveFontSt font size st
+    _ -> st
+execOp "Tc" st = setGSDoubleSt (\v gs -> gs {gsCharSp = v}) st
+execOp "Tw" st = setGSDoubleSt (\v gs -> gs {gsWordSp = v}) st
+execOp "Tz" st =
+  case popNums 1 st of
+    Just ([v], st') -> modifyGStateSt (\gs -> gs {gsHScale = v / 100}) st'
+    _ -> st
+execOp "TL" st = setGSDoubleSt (\v gs -> gs {gsLeading = v}) st
+execOp "Ts" st = setGSDoubleSt (\v gs -> gs {gsRise = v}) st
+execOp "Tr" st =
+  case popNums 1 st of
+    Just ([v], st') -> modifyGStateSt (\gs -> gs {gsRender = truncate v}) st'
+    _ -> st
+execOp "Td" st =
+  case popNums 2 st of
+    Just ([ty, tx], st') -> textTdSt tx ty st'
+    _ -> st
+execOp "TD" st =
+  case popNums 2 st of
+    Just ([ty, tx], st') ->
+      let st'' = modifyGStateSt (\gs -> gs {gsLeading = -ty}) st'
+      in textTdSt tx ty st''
+    _ -> st
+execOp "Tm" st =
+  case popNums 6 st of
+    Just ([f, e, d, c, b, a], st') -> textSetMatrixSt (mkMatrix a b c d e f) st'
+    _ -> st
+execOp "T*" st = withTextMatrixSt textLeadingNewlineSt st
+execOp "Tj" st =
+  case operandStack st of
+    o : _ -> maybe st (`showBytesSt` st) (objBytes o)
+    _ -> st
+execOp "TJ" st =
+  case operandStack st of
+    o : _ -> maybe st (`showTJSt` st) (tjElems o)
+    _ -> st
+execOp "'" st =
+  case operandStack st of
+    o : _ ->
+      withTextMatrixSt
+        (\s -> maybe (textLeadingNewlineSt s) (`showBytesSt` (textLeadingNewlineSt s)) (objBytes o))
+        st
+    _ -> withTextMatrixSt textLeadingNewlineSt st
+execOp "\"" st =
+  case operandStack st of
+    o : PdfNumber ac : PdfNumber aw : _ ->
+      let st' = modifyGStateSt (\gs -> gs {gsWordSp = aw, gsCharSp = ac}) st
+      in withTextMatrixSt
+           (\s -> maybe (textLeadingNewlineSt s) (`showBytesSt` (textLeadingNewlineSt s)) (objBytes o))
+           st'
+    _ -> st
+execOp "Do" st =
+  case operandStack st of
+    PdfName name : _ -> invokeXObjectSt name st
+    _ -> st
+execOp _ st = st
 
-graphicsStateOp :: ISParser ()
-graphicsStateOp = do
-  spaces
-  choice
-    [ try $ string "q" >> spaces >> pushGState
-    , try $ string "Q" >> spaces >> popGState
-    , try $ do
-        a <- digitParam
-        spaces
-        b <- digitParam
-        spaces
-        c <- digitParam
-        spaces
-        d <- digitParam
-        spaces
-        e <- digitParam
-        spaces
-        f <- digitParam
-        spaces
-        string "cm"
-        spaces
-        let cmMat = mkMatrix a b c d e f
-        modifyGState (\gs -> gs {ctm = multiply cmMat (ctm gs)})
-    ]
+setGSDoubleSt :: (Double -> GState -> GState) -> IState -> IState
+setGSDoubleSt f st =
+  case popNums 1 st of
+    Just ([v], st') -> modifyGStateSt (f v) st'
+    _ -> st
 
-pushGState :: ISParser ()
-pushGState = modifyIState (\s -> s {gsStack = gsCur s : gsStack s})
+popNums :: Int -> IState -> Maybe ([Double], IState)
+popNums n st = go n (operandStack st) []
+  where
+    go 0 stack acc = Just (reverse acc, st {operandStack = stack})
+    go k (PdfNumber x : rest) acc = go (k - 1) rest (x : acc)
+    go _ _ _ = Nothing
 
-popGState :: ISParser ()
-popGState = modifyIState $ \s ->
-  case gsStack s of
-    (g:gs) -> s {gsCur = g, gsStack = gs}
-    []     -> s
+pushGStateSt :: IState -> IState
+pushGStateSt st = st {gsStack = gsCur st : gsStack st}
 
-textStateOp :: ISParser ()
-textStateOp = do
-  spaces
-  choice
-    [ try $ do
-        font <- pdfName
-        spaces
-        size <- digitParam
-        spaces
-        string "Tf"
-        spaces
-        resolveFont font size
-    , try $ setGSDouble "Tc" (\v gs -> gs {gsCharSp = v})
-    , try $ setGSDouble "Tw" (\v gs -> gs {gsWordSp = v})
-    , try $ do
-        v <- digitParam
-        spaces
-        string "Tz"
-        spaces
-        modifyGState (\gs -> gs {gsHScale = v / 100})
-    , try $ setGSDouble "TL" (\v gs -> gs {gsLeading = v})
-    , try $ setGSDouble "Ts" (\v gs -> gs {gsRise = v})
-    , try $ setGSInt "Tr" (\v gs -> gs {gsRender = v})
-    ]
+popGStateSt :: IState -> IState
+popGStateSt st =
+  case gsStack st of
+    (g : gs) -> st {gsCur = g, gsStack = gs}
+    []       -> st
 
-setGSDouble :: String -> (Double -> GState -> GState) -> ISParser ()
-setGSDouble op f = do
-  v <- digitParam
-  spaces
-  string op
-  spaces
-  modifyGState (f v)
+modifyGStateSt :: (GState -> GState) -> IState -> IState
+modifyGStateSt f st = st {gsCur = f (gsCur st)}
 
-setGSInt :: String -> (Int -> GState -> GState) -> ISParser ()
-setGSInt op f = do
-  v <- digitParam
-  spaces
-  string op
-  spaces
-  modifyGState (f (truncate v))
-
-resolveFont :: String -> Double -> ISParser ()
-resolveFont fontName size = do
-  st <- getState
+resolveFontSt :: String -> Double -> IState -> IState
+resolveFontSt fontName size st =
   let fi = lookupFont (isSec st) (isObjs st) (isRes st) fontName st
-  modifyGState (\gs -> gs {gsFontRes = Just fontName, gsFont = fi, gsFontSize = size})
+  in modifyGStateSt
+       (\gs -> gs {gsFontRes = Just fontName, gsFont = fi, gsFontSize = size})
+       st
 
 lookupFont sec objs res fontName st =
   case M.lookup fontName (fontOverrides st) of
@@ -302,155 +304,54 @@ fontFromDict sec objs fd name =
     Just (ObjRef r) -> Just (fontInfo sec r objs)
     _ -> Nothing
 
-textPositionOp :: ISParser ()
-textPositionOp = do
-  spaces
-  choice
-    [ try $ do
-        tx <- digitParam
-        spaces
-        ty <- digitParam
-        spaces
-        string "Td"
-        spaces
-        textTd tx ty
-    , try $ do
-        tx <- digitParam
-        spaces
-        ty <- digitParam
-        spaces
-        string "TD"
-        spaces
-        modifyGState (\gs -> gs {gsLeading = -ty})
-        textTd tx ty
-    , try $ do
-        a <- digitParam
-        spaces
-        b <- digitParam
-        spaces
-        c <- digitParam
-        spaces
-        d <- digitParam
-        spaces
-        e <- digitParam
-        spaces
-        f <- digitParam
-        spaces
-        string "Tm"
-        spaces
-        textSetMatrix (mkMatrix a b c d e f)
-    , try $ string "T*" >> spaces >> withTextMatrix textLeadingNewline
-    ]
-
-textTd :: Double -> Double -> ISParser ()
-textTd tx ty = withTextMatrix $ do
-  st <- getState
+textTdSt :: Double -> Double -> IState -> IState
+textTdSt tx ty st =
   case tsCur st of
-    Nothing -> return ()
+    Nothing -> st
     Just ts ->
       let tlm' = multiply (translate tx ty) (tlmMat ts)
-      in modifyIState (\s -> s {tsCur = Just (TState {tmMat = tlm', tlmMat = tlm'})})
+      in st {tsCur = Just (TState {tmMat = tlm', tlmMat = tlm'})}
 
-textSetMatrix :: Matrix -> ISParser ()
-textSetMatrix m = modifyIState (\s -> s {tsCur = Just (TState {tmMat = m, tlmMat = m})})
+textSetMatrixSt :: Matrix -> IState -> IState
+textSetMatrixSt m st = st {tsCur = Just (TState {tmMat = m, tlmMat = m})}
 
-textLeadingNewline :: ISParser ()
-textLeadingNewline = do
-  st <- getState
+textLeadingNewlineSt :: IState -> IState
+textLeadingNewlineSt st =
   let leading = -(gsLeading (gsCur st))
-  textTd 0 leading
+  in textTdSt 0 leading st
 
-withTextMatrix :: ISParser () -> ISParser ()
-withTextMatrix p = do
-  st <- getState
-  if isJust (tsCur st) then p else return ()
-
-textShowOp :: ISParser ()
-textShowOp = do
-  spaces
-  choice
-    [ try $ do
-        bytes <- stringOperand
-        spaces
-        string "Tj"
-        spaces
-        showBytes bytes
-    , try $ do
-        elems <- tjArray
-        spaces
-        string "TJ"
-        spaces
-        showTJ elems
-    , try $ do
-        string "'"
-        spaces
-        withTextMatrix textLeadingNewline
-        bytes <- stringOperand
-        spaces
-        showBytes bytes
-    , try $ do
-        aw <- digitParam
-        spaces
-        ac <- digitParam
-        spaces
-        bytes <- stringOperand
-        spaces
-        string "\""
-        spaces
-        modifyGState (\gs -> gs {gsWordSp = aw, gsCharSp = ac})
-        withTextMatrix textLeadingNewline
-        showBytes bytes
-    ]
-
-stringOperand :: ISParser [Int]
-stringOperand =
-  choice [ try hexStringBytes, try literalStringBytes ]
-
-tjArray :: ISParser [TJElem]
-tjArray = do
-  char '['
-  spaces
-  elems <- many tjElem
-  char ']'
-  return elems
+withTextMatrixSt :: (IState -> IState) -> IState -> IState
+withTextMatrixSt f st = if isJust (tsCur st) then f st else st
 
 data TJElem = TJString [Int] | TJAdjust Double
 
-tjElem :: ISParser TJElem
-tjElem =
-  choice
-    [ TJAdjust <$> (try digitParam <* spaces)
-    , TJString <$> (try stringOperand <* spaces)
-    ]
-
-showTJ :: [TJElem] -> ISParser ()
-showTJ elems = mapM_ go elems
+showTJSt :: [TJElem] -> IState -> IState
+showTJSt elems st = foldl' go st elems
   where
-    go (TJString bs) = showBytes bs
-    go (TJAdjust k)  = tjKern k
+    go s (TJString bs) = showBytesSt bs s
+    go s (TJAdjust k)  = tjKernSt k s
 
-tjKern :: Double -> ISParser ()
-tjKern k = withTextMatrix $ do
-  st <- getState
-  let gs = gsCur st
-      fi = gsFont gs
-      wmode = maybe 0 fiWMode fi
-      disp = -k / 1000 * gsFontSize gs * gsHScale gs
+tjKernSt :: Double -> IState -> IState
+tjKernSt k st =
   case tsCur st of
-    Nothing -> return ()
+    Nothing -> st
     Just ts ->
-      let tm' = if wmode == 1
+      let gs = gsCur st
+          fi = gsFont gs
+          wmode = maybe 0 fiWMode fi
+          disp = -k / 1000 * gsFontSize gs * gsHScale gs
+          tm' = if wmode == 1
                 then multiply (translate 0 disp) (tmMat ts)
                 else multiply (translate disp 0) (tmMat ts)
-      in modifyIState (\s -> s {tsCur = Just ts {tmMat = tm'}})
+      in st {tsCur = Just ts {tmMat = tm'}}
 
-showBytes :: [Int] -> ISParser ()
-showBytes bytes = withTextMatrix $ do
-  st <- getState
+showBytesSt :: [Int] -> IState -> IState
+showBytesSt bytes st =
   case (tsCur st, gsFont (gsCur st), gsFontRes (gsCur st)) of
-    (Nothing, _, _) -> return ()
-    (_, Nothing, _) -> return ()
-    (Just ts, Just fi, Just fname) -> do
+    (Nothing, _, _) -> st
+    (_, Nothing, _) -> st
+    (_, _, Nothing) -> st
+    (Just ts, Just fi, Just fname) ->
       let gs = gsCur st
           codes = bytesToCodes fi bytes
           originTrm = textRenderingMatrix gs ts
@@ -469,8 +370,8 @@ showBytes bytes = withTextMatrix $ do
             , glyphFont = fname
             , glyphWMode = fiWMode fi
             }
-      modifyIState (\s -> s {glyphsAcc = (glyph :) . glyphsAcc s, tsCur = Just ts {tmMat = endTm}})
-    _ -> return ()
+      in st {glyphsAcc = (glyph :) . glyphsAcc st, tsCur = Just ts {tmMat = endTm}}
+    _ -> st
 
 glyphStep :: GState -> FontInfo -> (T.Text, Matrix) -> Int -> (T.Text, Matrix)
 glyphStep gs fi (txt, tm) code =
@@ -515,7 +416,7 @@ encodingUnicode NullMap code = T.singleton (safeChr code)
 
 readUniGlyph :: String -> T.Text
 readUniGlyph s =
-  case readHex (drop 4 s) of
+  case Num.readHex (drop 4 s) of
     [(i, "")] -> T.singleton (chr i)
     _         -> T.pack s
 
@@ -553,55 +454,42 @@ dist :: Double -> Double -> Double -> Double -> Double
 dist x1 y1 x2 y2 =
   sqrt ((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
 
-xObjectOp :: ISParser ()
-xObjectOp = do
-  name <- pdfName
-  spaces
-  string "Do"
-  spaces
-  invokeXObject name
-
-invokeXObject :: String -> ISParser ()
-invokeXObject name = do
-  st <- getState
+invokeXObjectSt :: String -> IState -> IState
+invokeXObjectSt name st =
   case findObjFromDict (isRes st) "/XObject" of
     Just (PdfDict xd) -> case M.lookup name xd of
-      Just (ObjRef r) -> runXObject r
-      _ -> return ()
+      Just (ObjRef r) -> runXObjectSt r st
+      _ -> st
     Just (ObjRef xr) ->
       case findDictByRef xr (isObjs st) of
         Just xd -> case M.lookup name xd of
-          Just (ObjRef r) -> runXObject r
-          _ -> return ()
-        Nothing -> return ()
-    _ -> return ()
+          Just (ObjRef r) -> runXObjectSt r st
+          _ -> st
+        Nothing -> st
+    _ -> st
 
-runXObject :: Int -> ISParser ()
-runXObject ref = do
-  st0 <- getState
-  when (depth st0 >= maxFormDepth) $ return ()
-  case findObjsByRef ref (isObjs st0) of
-    Just os -> case findDict os of
-      Just d ->
-        case M.lookup "/Subtype" d of
-          Just (PdfName "/Form") -> do
-            stream <- case rawStreamByRef (isSec st0) (isObjs st0) ref of
-              Right s -> return s
-              Left _  -> return BSL.empty
-            let formMat = formMatrix d
-                formRes = fromMaybe (isRes st0) (findResourcesDict d (isObjs st0))
-            pushGState
-            modifyGState (\gs -> gs {ctm = multiply formMat (ctm gs)})
-            stMid <- getState
-            let stRun = stMid {isRes = formRes, depth = depth st0 + 1}
-            stDone <- case runParser formEnd stRun "" stream of
-              Right st -> return st
-              Left _ -> return stRun
-            popGState
-            modifyIState (\s -> s {glyphsAcc = glyphsAcc stDone, depth = depth st0, isRes = isRes st0})
-          _ -> return ()
-      Nothing -> return ()
-    Nothing -> return ()
+runXObjectSt :: Int -> IState -> IState
+runXObjectSt ref st0
+  | depth st0 >= maxFormDepth = st0
+  | otherwise =
+      case findObjsByRef ref (isObjs st0) of
+        Just os -> case findDict os of
+          Just d -> case M.lookup "/Subtype" d of
+            Just (PdfName "/Form") ->
+              case rawStreamByRef (isSec st0) (isObjs st0) ref of
+                Right stream ->
+                  let formMat = formMatrix d
+                      formRes = fromMaybe (isRes st0) (findResourcesDict d (isObjs st0))
+                      stPush = pushGStateSt st0
+                      stMat = modifyGStateSt (\gs -> gs {ctm = multiply formMat (ctm gs)}) stPush
+                      stRun = stMat {isRes = formRes, depth = depth st0 + 1, operandStack = []}
+                      stDone = runStream stRun stream
+                      stPop = popGStateSt st0
+                  in stPop {glyphsAcc = glyphsAcc stDone, depth = depth st0, isRes = isRes st0}
+                Left _ -> st0
+            _ -> st0
+          Nothing -> st0
+        Nothing -> st0
 
 formMatrix :: Dict -> Matrix
 formMatrix d = case M.lookup "/Matrix" d of
@@ -609,164 +497,233 @@ formMatrix d = case M.lookup "/Matrix" d of
     mkMatrix a b c d' e f
   _ -> identity
 
-inlineImageOp :: ISParser ()
-inlineImageOp = do
-  spaces
-  string "BI"
-  manyTill anyChar (try $ oneOf " \t\r\n" >> string "ID")
-  oneOf " \t\r\n"
-  skipTillEI
+objBytes :: Obj -> Maybe [Int]
+objBytes (PdfText s) = Just (map ord s)
+objBytes (PdfHex h) = Just (hexPairs h)
+objBytes _ = Nothing
 
-skipTillEI :: ISParser ()
-skipTillEI = go
+tjElems :: Obj -> Maybe [TJElem]
+tjElems (PdfArray objs) = mapM elemObj objs
   where
-    go = do
-      eof <|> try (do
-        _ <- oneOf " \t\r\n"
-        string "EI"
-        optional (oneOf " \t\r\n")
-        ) <|> do
-        _ <- anyChar
-        go
-
-ignoredPathPaintOp :: ISParser ()
-ignoredPathPaintOp = do
-  spaces
-  choice
-    [ try $ oneOf "qQ" >> spaces
-    , try $ oneOf "fFbBW" >> optional (string "*") >> spaces
-    , try $ oneOf "nsS" >> spaces
-    , try $ digitParam >> spaces >> oneOf "jJM" >> spaces
-    , try $ digitParam >> spaces >> oneOf "dwi" >> spaces
-    , try $ many (digitParam >> spaces) >> oneOf "ml" >> spaces
-    , try $ many (digitParam >> spaces) >> oneOf "vy" >> spaces
-    , try $ many (digitParam >> spaces) >> string "re" >> spaces
-    , try $ many (digitParam >> spaces) >> oneOf "c" >> spaces
-    , try $ oneOf "h" >> spaces
-    , try $ pdfName >> spaces >> string "gs" >> spaces
-    , try $ char '[' >> many digitParam >> char ']' >> spaces >> many1 digitParam >> spaces >> string "d" >> spaces
-    , try $ many (digitParam >> spaces) >> string "sh" >> spaces
-    ]
-
-ignoredColorOp :: ISParser ()
-ignoredColorOp = do
-  spaces
-  choice
-    [ try $ pdfName >> spaces >> (string "CS" <|> string "cs") >> spaces
-    , try $ many (digitParam >> spaces) >> string "rg" >> spaces
-    , try $ many (digitParam >> spaces) >> string "RG" >> spaces
-    , try $ digitParam >> spaces >> oneOf "gG" >> spaces
-    , try $ many (digitParam >> spaces) >> oneOf "kK" >> spaces
-    , try $ many (digitParam >> spaces) >> string "SCN" >> spaces
-    , try $ many (digitParam >> spaces) >> string "scn" >> spaces
-    , try $ many (digitParam >> spaces) >> string "SC" >> spaces
-    , try $ many (digitParam >> spaces) >> string "sc" >> spaces
-    , try $ pdfName >> spaces >> string "ri" >> spaces
-    , try $ pdfName >> spaces >> string "Intent" >> spaces
-    ]
-
-ignoredMarkedContentOp :: ISParser ()
-ignoredMarkedContentOp = do
-  spaces
-  choice
-    [ try $ pdfName >> spaces >> string "BMC" >> spaces >> manyTill contentOp (try (string "EMC")) >> spaces
-    , try $ pdfName >> propertyDict >> spaces >> string "BDC" >> spaces >> manyTill contentOp (try (string "EMC")) >> spaces
-    , try $ pdfName >> spaces >> string "EMC" >> spaces
-    , try $ pdfName >> propertyDict >> spaces >> string "DP" >> spaces
-    , try $ pdfName >> spaces >> string "MP" >> spaces
-    ]
-
-formEnd :: ISParser IState
-formEnd = do
-  spaces
-  many contentOp
-  spaces
-  getState
-
-propertyDict :: ISParser ()
-propertyDict = do
-  spaces
-  string "<<"
-  _ <- manyTill anyChar (try (string ">>"))
-  return ()
-
-skipUnknownLine :: ISParser ()
-skipUnknownLine = do
-  c <- lookAhead anyChar
-  if c `elem` (' ':['\t', '\r', '\n'])
-    then fail "not unknown"
-    else many1 (noneOf " \t\r\n") >> return ()
-
-pdfName :: ISParser String
-pdfName = (++) <$> string "/" <*> manyTill anyChar (try $ lookAhead $ oneOf " \t\r\n/[(")
-
-literalStringBytes :: ISParser [Int]
-literalStringBytes = do
-  char '('
-  bs <- manyTill stringChar (char ')')
-  spaces
-  return bs
-
-stringChar :: ISParser Int
-stringChar =
-  choice
-    [ try $ char '\\' >> char ')' >> return (ord ')')
-    , try $ char '\\' >> char '(' >> return (ord '(')
-    , try $ char '\\' >> char 'n' >> return (ord '\n')
-    , try $ char '\\' >> char 'r' >> return (ord '\r')
-    , try $ char '\\' >> char 't' >> return (ord '\t')
-    , try $ char '\\' >> char 'b' >> return (ord '\b')
-    , try $ char '\\' >> char 'f' >> return (ord '\f')
-    , try $ char '\\' >> char '\\' >> return (ord '\\')
-    , try $ octEscape
-    , ord <$> noneOf "\\)"
-    ]
-
-octEscape :: ISParser Int
-octEscape = do
-  char '\\'
-  ds <- count 3 (oneOf "01234567")
-  case readOct ds of
-    [(n, "")] -> return n
-    _         -> return (ord '?')
-
-hexStringBytes :: ISParser [Int]
-hexStringBytes = do
-  char '<'
-  hex <- many (oneOf "0123456789abcdefABCDEF")
-  char '>'
-  spaces
-  return (hexPairs hex)
+    elemObj (PdfNumber n) = Just (TJAdjust n)
+    elemObj o = TJString <$> objBytes o
+tjElems _ = Nothing
 
 hexPairs :: String -> [Int]
 hexPairs [] = []
 hexPairs [x] =
-  case readHex [x, '0'] of
+  case Num.readHex [x, '0'] of
     [(n, "")] -> [n]
     _         -> []
 hexPairs (a:b:rest) =
-  case readHex [a, b] of
+  case Num.readHex [a, b] of
     [(n, "")] -> n : hexPairs rest
     _         -> hexPairs rest
 
-digitParam :: ISParser Double
-digitParam = do
-  sign <- option "" (char '-' >> return "-")
-  num <- (try ((string "0" <|> string "") >> char '.' >> many1 digit >>= \ds -> return ('0':'.':ds)))
-         <|> (many1 digit >>= \ds -> option "" (char '.' >> many digit) >>= \fr -> return (ds ++ fr))
-  return $ parsePdfNumber (sign ++ num)
+w2c :: Word8 -> Char
+w2c = chr . fromIntegral
+
+isWs8 :: Word8 -> Bool
+isWs8 w = w2c w `elem` (" \t\r\n\f" :: String)
+
+delimChar8 :: Word8 -> Bool
+delimChar8 w = w2c w `elem` ("[]()<>/{" :: String)
+
+nameEnd8 :: Word8 -> Bool
+nameEnd8 w = isWs8 w || delimChar8 w
+
+hexDigit8 :: Word8 -> Bool
+hexDigit8 w = w2c w `elem` ("0123456789abcdefABCDEF" :: String)
+
+keywordEnd8 :: BSL.ByteString -> Bool
+keywordEnd8 bs = case BSL.uncons bs of
+  Nothing -> True
+  Just (w, _) -> isWs8 w || w == 37 || delimChar8 w
+
+skipWs :: BSL.ByteString -> BSL.ByteString
+skipWs bs = case BSL.uncons bs of
+  Nothing -> bs
+  Just (w, rest)
+    | isWs8 w -> skipWs rest
+    | w == 37 -> skipWs (BSL.dropWhile (\w' -> w2c w' `notElem` ("\r\n" :: String)) rest)
+    | otherwise -> bs
+
+readToken :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
+readToken bs =
+  let bs' = skipWs bs
+  in if BSL.null bs'
+     then Nothing
+     else case BSL.uncons bs' of
+       Nothing -> Nothing
+       Just (w, _) ->
+         case w of
+           91  -> readArray bs'
+           60  -> if BSL.take 2 bs' == BSLC.pack "<<" then readDict bs' else readHexString bs'
+           40  -> readLiteral bs'
+           47  -> readName bs'
+           45  -> readNumber bs'
+           43  -> readNumber bs'
+           46  -> readNumber bs'
+           39  -> Just (TokOperator "'", BSL.tail bs')
+           34  -> Just (TokOperator "\"", BSL.tail bs')
+           116 -> readKeyword bs' "true" PdfBool True
+           102 -> readKeyword bs' "false" PdfBool False
+           110 -> readKeyword bs' "null" (const PdfNull) ()
+           d   | isDigit (w2c d) -> readNumber bs'
+           _   -> readOperator bs'
+
+readKeyword :: BSL.ByteString -> String -> (a -> Obj) -> a -> Maybe (Token, BSL.ByteString)
+readKeyword bs kw mk val =
+  let k = BSLC.pack kw
+      n = fromIntegral (length kw)
+  in if BSL.take n bs == k && keywordEnd8 (BSL.drop n bs)
+     then Just (TokOperand (mk val), BSL.drop n bs)
+     else readOperator bs
+
+readNumber :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
+readNumber bs =
+  case spanNum (map w2c (BSL.unpack bs)) of
+    ([], _) -> Nothing
+    (num, rest) -> Just (TokOperand (PdfNumber (parsePdfNumber num)), BSLC.pack rest)
+
+spanNum :: String -> (String, String)
+spanNum s =
+  let (sign, s') = case s of
+        ('-' : t) -> ("-", t)
+        ('+' : t) -> ("", t)
+        _         -> ("", s)
+      (intp, s'') = span isDigit s'
+      (frac, s''') = case s'' of
+        '.' : t ->
+          let (ds, r) = span isDigit t
+          in if null ds && null intp then ("", s'') else ('.' : ds, r)
+        _ -> ("", s'')
+      num = sign ++ intp ++ frac
+  in if null intp && null (drop 1 frac) then ("", s) else (num, s''')
 
 parsePdfNumber :: String -> Double
 parsePdfNumber s
-  | null s || s == "-" = 0
-  | last s == '.' = read (s ++ "0")
-  | otherwise = read s
+  | null s || s == "-" || s == "+" = 0
+  | last s == '.' =
+      case reads (s ++ "0") of
+        [(n, "")] -> n
+        _         -> 0
+  | otherwise =
+      case reads s of
+        [(n, "")] -> n
+        _         -> 0
 
-modifyGState :: (GState -> GState) -> ISParser ()
-modifyGState f = modifyIState (\s -> s {gsCur = f (gsCur s)})
+readName :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
+readName bs =
+  let body = BSL.dropWhile (not . nameEnd8) (BSL.tail bs)
+      len = BSL.length bs - BSL.length body
+  in if len > 1
+     then Just (TokOperand (PdfName (map w2c (BSL.unpack (BSL.take len bs)))), body)
+     else Nothing
 
-modifyIState :: (IState -> IState) -> ISParser ()
-modifyIState f = modifyState f
+readLiteral :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
+readLiteral bs =
+  case parseLiteral (map w2c (BSL.unpack (BSL.tail bs))) 1 [] of
+    Nothing -> Nothing
+    Just (bytes, rest) -> Just (TokOperand (PdfText (map chr bytes)), BSLC.pack rest)
+
+parseLiteral :: String -> Int -> [Int] -> Maybe ([Int], String)
+parseLiteral [] _ _ = Nothing
+parseLiteral s@(')' : rest) 1 acc = Just (reverse acc, rest)
+parseLiteral ('\\' : ')' : rest) depth acc = parseLiteral rest depth (ord ')' : acc)
+parseLiteral ('\\' : '(' : rest) depth acc = parseLiteral rest depth (ord '(' : acc)
+parseLiteral ('\\' : 'n' : rest) depth acc = parseLiteral rest depth (ord '\n' : acc)
+parseLiteral ('\\' : 'r' : rest) depth acc = parseLiteral rest depth (ord '\r' : acc)
+parseLiteral ('\\' : 't' : rest) depth acc = parseLiteral rest depth (ord '\t' : acc)
+parseLiteral ('\\' : 'b' : rest) depth acc = parseLiteral rest depth (ord '\b' : acc)
+parseLiteral ('\\' : 'f' : rest) depth acc = parseLiteral rest depth (ord '\f' : acc)
+parseLiteral ('\\' : '\\' : rest) depth acc = parseLiteral rest depth (ord '\\' : acc)
+parseLiteral ('\\' : d : rest) depth acc
+  | d `elem` ("01234567" :: String) =
+      let (oct, rest') = span (`elem` ("01234567" :: String)) (d : rest)
+          oct3 = take 3 oct
+          val = case Num.readOct oct3 of
+            [(n, "")] -> n
+            _         -> ord '?'
+      in parseLiteral rest' depth (val : acc)
+parseLiteral ('\\' : _ : rest) depth acc = parseLiteral rest depth (ord '?' : acc)
+parseLiteral ('(' : rest) depth acc = parseLiteral rest (depth + 1) acc
+parseLiteral (c : rest) depth acc = parseLiteral rest depth (ord c : acc)
+
+readHexString :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
+readHexString bs =
+  let hex = BSL.takeWhile hexDigit8 (BSL.tail bs)
+      rest = BSL.drop (1 + BSL.length hex) bs
+  in case BSL.uncons rest of
+       Just (62, r) -> Just (TokOperand (PdfHex (map w2c (BSL.unpack hex))), BSL.tail r)
+       _ -> Nothing
+
+readArray :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
+readArray bs = parseArrayElems (BSL.tail bs) []
+
+parseArrayElems :: BSL.ByteString -> [Obj] -> Maybe (Token, BSL.ByteString)
+parseArrayElems bs acc =
+  let bs' = skipWs bs
+  in case BSL.uncons bs' of
+       Just (93, rest) -> Just (TokOperand (PdfArray (reverse acc)), rest)
+       _ -> case readToken bs' of
+         Just (TokOperand o, rest) -> parseArrayElems rest (o : acc)
+         _ -> Nothing
+
+readDict :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
+readDict bs = parseDictPairs (BSL.drop 2 bs) M.empty
+
+parseDictPairs :: BSL.ByteString -> Dict -> Maybe (Token, BSL.ByteString)
+parseDictPairs bs acc =
+  let bs' = skipWs bs
+  in case BSL.take 2 bs' of
+       k | k == BSLC.pack ">>" ->
+         Just (TokOperand (PdfDict acc), BSL.drop 2 bs')
+       _ -> case readToken bs' of
+         Just (TokOperand (PdfName key), rest1) ->
+           case readToken (skipWs rest1) of
+             Just (TokOperand val, rest2) -> parseDictPairs rest2 (M.insert key val acc)
+             _ -> Nothing
+         _ -> Nothing
+
+readOperator :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
+readOperator bs =
+  let (op, rest) = spanOp (map w2c (BSL.unpack bs))
+  in if null op
+     then Nothing
+     else Just (TokOperator op, BSLC.pack rest)
+
+spanOp :: String -> (String, String)
+spanOp s =
+  let (op, rest) = span isOpChar s
+  in (op, rest)
+
+isOpChar :: Char -> Bool
+isOpChar c = c `elem` (('A' : ['B' .. 'Z'] ++ ['a' .. 'z'] ++ ['0' .. '9'] ++ "*") :: String)
+
+skipInlineImage :: BSL.ByteString -> BSL.ByteString
+skipInlineImage bs =
+  let afterID = skipToWsKeyword bs "ID"
+  in skipToWsKeyword afterID "EI"
+
+skipToWsKeyword :: BSL.ByteString -> String -> BSL.ByteString
+skipToWsKeyword bs kw =
+  let n = fromIntegral (length kw)
+      lim = max 0 (BSL.length bs - n)
+      kwBs = BSLC.pack kw
+  in case findMatch n kwBs 0 lim of
+       Nothing -> BSL.empty
+       Just i ->
+         let after = BSL.drop (i + 1 + n) bs
+         in skipWs after
+  where
+    findMatch n kwBs i lim
+      | i > lim = Nothing
+      | otherwise =
+          let w = BSL.index bs i
+          in if isWs8 w && BSL.take n (BSL.drop (i + 1) bs) == kwBs
+             then Just i
+             else findMatch n kwBs (i + 1) lim
 
 findDict :: [Obj] -> Maybe Dict
 findDict objs = case find isDict objs of
