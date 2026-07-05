@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 import PDF.Matrix (Matrix, identity, multiply, apply, applyVec, translate, scale, mkMatrix, components)
 import PDF.Definition (Obj(..), FontInfo(..), Encoding(..))
-import PDF.DocumentStructure (parseCIDWidths, simpleWidthAt)
 import PDF.Interpret
   ( Glyph(..)
   , Rect(..)
@@ -13,10 +12,13 @@ import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, needsAozoraBar, aozo
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
 import PDF.Document (Document(..), openDocument)
 import PDF.Page (pageCount, pageRefAt, pageParagraphs)
+import PDF.Diff (TextChange(..), compareDocuments, diffParagraphs)
+import PDF.DocumentStructure (parseCIDWidths, simpleWidthAt, decodeStreamBytes)
 import PDF.Text (pdfToTextTaggedBS)
 import PDF.Error (PdfResult)
 
 import qualified Data.Map as M
+import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSLC
 import qualified Data.Text as T
 
@@ -142,6 +144,8 @@ main = do
           ++ interpretMCIDResults
           ++ structureTreeResults
           ++ pageApiResults
+          ++ diffResults
+          ++ filterDecodeResults
           ++ taggedEndToEndResults
   let failures = [msg | Fail msg <- results]
       passed = length results - length failures
@@ -830,6 +834,66 @@ assertEqInt label expected actual =
 {-# NOINLINE runMultipagePageCount #-}
 {-# NOINLINE runMultipagePageRefAt #-}
 {-# NOINLINE runParagraphsPageParagraphs #-}
+
+diffResults :: [Result]
+diffResults =
+  [ assertBool "diffParagraphs identical lists" (null (diffParagraphs ps ps))
+  , assertBool "diffParagraphs one change"
+      ( case diffParagraphs [T.pack "First paragraph text", T.pack "Second"]
+              [T.pack "First paragraph changed", T.pack "Second"] of
+          [TextChange{changeParaA = Just 0, changeParaB = Just 0, changeOld = old, changeNew = new}] ->
+            old == T.pack "First paragraph text"
+              && new == T.pack "First paragraph changed"
+          _ -> False
+      )
+  , assertBool "diffParagraphs insert only"
+      ( case diffParagraphs [T.pack "A"] [T.pack "A", T.pack "B"] of
+          [TextChange{changeParaB = Just 1, changeOld = old, changeNew = new}] ->
+            T.null old && new == T.pack "B"
+          _ -> False
+      )
+  , assertBool "diffParagraphs delete only"
+      ( case diffParagraphs [T.pack "A", T.pack "B"] [T.pack "A"] of
+          [TextChange{changeParaA = Just 1, changeOld = old, changeNew = new}] ->
+            old == T.pack "B" && T.null new
+          _ -> False
+      )
+  , runMultipageSelfDiff
+  ]
+  where
+    ps = [T.pack "Alpha", T.pack "Beta"]
+
+runMultipageSelfDiff :: Result
+runMultipageSelfDiff =
+  let path = "data/fixtures/multipage.pdf"
+  in unsafePerformIO $ do
+    result <- openDocument path Nothing
+    return $ case result of
+      Right doc ->
+        case compareDocuments defaultLayoutOptions doc doc of
+          Right changes -> assertBool "multipage.pdf self-diff empty" (null changes)
+          Left err -> testFail "multipage.pdf self-diff" (show err)
+      Left err -> testFail "multipage.pdf self-diff open" (show err)
+
+{-# NOINLINE runMultipageSelfDiff #-}
+
+filterDecodeResults :: [Result]
+filterDecodeResults =
+  [ assertBool "DCTDecode pass-through"
+      ( case decodeStreamBytes dctDict (BSLC.pack jpegStub) of
+          Right bs -> bs == BS.pack jpegStub
+          _ -> False
+      )
+  , assertBool "no filter pass-through"
+      ( case decodeStreamBytes noFilterDict (BSLC.pack "plain") of
+          Right bs -> bs == BS.pack "plain"
+          _ -> False
+      )
+  ]
+  where
+    dctDict = M.fromList [("/Filter", PdfName "/DCTDecode")]
+    noFilterDict = M.empty
+    jpegStub = "\xff\xd8\xff\xe0" ++ replicate 10 'x' ++ "\xff\xd9"
 
 runTaggedFixture :: Result
 runTaggedFixture =

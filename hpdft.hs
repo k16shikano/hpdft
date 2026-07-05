@@ -14,6 +14,7 @@ import PDF.Outlines
 import PDF.Encrypt (Security)
 import PDF.Text (pdfToTextWithWarnings, pdfToTextGeomBSWith, pdfToTextTaggedBSWith, pageTextGeomWith)
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions)
+import PDF.Diff (TextChange(..), compareDocuments)
 import PDF.Error (PdfError(..), PdfResult, PdfWarning(..), renderPdfWarning)
 
 import System.Environment (getArgs)
@@ -48,7 +49,7 @@ deprecationMsg =
 
 subcommandNames :: [String]
 subcommandNames =
-  [ "extract", "info", "title", "toc", "trailer", "object", "refs", "grep" ]
+  [ "extract", "diff", "info", "title", "toc", "trailer", "object", "refs", "grep" ]
 
 main :: IO ()
 main = do
@@ -71,6 +72,7 @@ versionInfo = "hpdft - a PDF to text converter, version " <> showVersion Autogen
 -- | Top-level command dispatch.
 data Cmd
   = CmdExtract ExtractOpt
+  | CmdDiff DiffOpt
   | CmdInfo FilePath (Maybe String)
   | CmdTitle FilePath (Maybe String)
   | CmdToc FilePath (Maybe String)
@@ -90,9 +92,20 @@ data ExtractOpt = ExtractOpt
   , eoFile      :: FilePath
   }
 
+data DiffOpt = DiffOpt
+  { doGeom      :: Bool
+  , doLegacy    :: Bool
+  , doRuby      :: Bool
+  , doJson      :: Bool
+  , doPassword  :: String
+  , doFileA     :: FilePath
+  , doFileB     :: FilePath
+  }
+
 commandParser :: Parser Cmd
 commandParser = subparser
   (  command "extract" (info extractCommand (progDesc "Extract text from PDF"))
+  <> command "diff" (info diffCommand (progDesc "Compare two PDFs (paragraph-level diff)"))
   <> command "info" (info infoCommand (progDesc "Show PDF metadata"))
   <> command "title" (info titleCommand (progDesc "Show document title"))
   <> command "toc" (info tocCommand (progDesc "Show table of contents"))
@@ -143,6 +156,38 @@ extractOpts = ExtractOpt
   <*> strArgument
       ( help "input pdf file"
         <> metavar "FILE"
+        <> action "file" )
+
+diffCommand :: Parser Cmd
+diffCommand = CmdDiff <$> diffOpts
+
+diffOpts :: Parser DiffOpt
+diffOpts = DiffOpt
+  <$> switch
+      ( long "geom"
+        <> help "Use geometry-based layout (default for diff)" )
+  <*> switch
+      ( long "legacy"
+        <> help "Ignored for diff (geometry pipeline always used)" )
+  <*> switch
+      ( long "ruby"
+        <> help "Embed ruby in Aozora bunko notation during layout" )
+  <*> switch
+      ( long "json"
+        <> help "Emit JSON instead of human-readable diff" )
+  <*> strOption
+      ( long "password"
+        <> short 'P'
+        <> value ""
+        <> metavar "PASSWORD"
+        <> help "Password for encrypted PDF (applied to both files)" )
+  <*> strArgument
+      ( help "first PDF file"
+        <> metavar "FILE_A"
+        <> action "file" )
+  <*> strArgument
+      ( help "second PDF file"
+        <> metavar "FILE_B"
         <> action "file" )
 
 passwordOpt :: Parser String
@@ -321,6 +366,7 @@ legacyToCmd LegacyOpt{loPage=pg, loRef=rf, loGrep=gr, loRefs=rs, loGeom=gm,
 runCmd :: Cmd -> IO ()
 runCmd cmd = case cmd of
   CmdExtract opt -> runExtract opt
+  CmdDiff opt -> runDiff opt
   CmdInfo fn mpw -> withFile fn $ showInfo fn mpw
   CmdTitle fn mpw -> withFile fn $ showTitle fn mpw
   CmdToc fn mpw -> withFile fn $ showOutlines fn mpw
@@ -343,6 +389,77 @@ runExtract ExtractOpt{eoPage=pg, eoGeom=gm, eoTagged=tg, eoLegacy=lg,
          | gm && not tg && not lg -> pdfToTextGeom lopts fn mpw
          | tg || noMode           -> pdfToTextTagged lopts fn mpw
          | otherwise              -> pdfToTextTagged lopts fn mpw
+
+runDiff :: DiffOpt -> IO ()
+runDiff DiffOpt{doRuby=rb, doJson=json, doPassword=pw, doFileA=fa, doFileB=fb} =
+  withFile fa $
+  withFile fb $
+  let mpw = maybePassword pw
+      lopts = defaultLayoutOptions {optRuby = rb}
+  in do
+    docA <- runOrDie (openDocument fa mpw)
+    docB <- runOrDie (openDocument fb mpw)
+    changes <- runOrDie (return (compareDocuments lopts docA docB))
+    if json
+      then putStrLn (renderDiffJson changes)
+      else mapM_ putStrLn (renderDiffHuman changes)
+
+renderDiffHuman :: [TextChange] -> [String]
+renderDiffHuman = map renderOne
+  where
+    renderOne (PageCountMismatch pa pb) =
+      "page count mismatch: " ++ show pa ++ " vs " ++ show pb
+    renderOne TextChange{changePageA = pa, changePageB = pb,
+                         changeParaA = pxa, changeParaB = pxb,
+                         changeOld = old, changeNew = new} =
+      unlines
+        ( pageLine
+        : paraLine
+        : ("- old: " ++ T.unpack old) : ("+ new: " ++ T.unpack new) : []
+        )
+      where
+        pageLine =
+          case (pa, pb) of
+            (Just a, Just b) | a == b -> "page " ++ show a ++ ":"
+            (Just a, Just b) -> "page " ++ show a ++ " vs " ++ show b ++ ":"
+            (Just a, Nothing) -> "page " ++ show a ++ " (only in first file):"
+            (Nothing, Just b) -> "page " ++ show b ++ " (only in second file):"
+            _ -> "page ?:"
+        paraLine =
+          case (pxa, pxb) of
+            (Just a, Just b) | a == b -> "para " ++ show (a + 1) ++ ":"
+            (Just a, Just b) -> "para " ++ show (a + 1) ++ " vs " ++ show (b + 1) ++ ":"
+            (Just a, Nothing) -> "para " ++ show (a + 1) ++ ":"
+            (Nothing, Just b) -> "para " ++ show (b + 1) ++ ":"
+            _ -> "para ?:"
+
+renderDiffJson :: [TextChange] -> String
+renderDiffJson changes = "[" ++ intercalate "," (map encodeChange changes) ++ "]"
+  where
+    encodeChange (PageCountMismatch pa pb) =
+      "{\"type\":\"pageCountMismatch\",\"pagesA\":" ++ show pa
+        ++ ",\"pagesB\":" ++ show pb ++ "}"
+    encodeChange TextChange{changePageA = pa, changePageB = pb,
+                            changeParaA = pxa, changeParaB = pxb,
+                            changeOld = old, changeNew = new} =
+      "{\"type\":\"textChange\""
+        ++ maybeField "pageA" pa
+        ++ maybeField "pageB" pb
+        ++ maybeField "paraA" pxa
+        ++ maybeField "paraB" pxb
+        ++ ",\"old\":" ++ jsonString old
+        ++ ",\"new\":" ++ jsonString new
+        ++ "}"
+    maybeField _ Nothing = ""
+    maybeField k (Just v) = ",\"" ++ k ++ "\":" ++ show v
+    jsonString t =
+      "\"" ++ concatMap esc (T.unpack t) ++ "\""
+    esc '\\' = "\\\\"
+    esc '"' = "\\\""
+    esc '\n' = "\\n"
+    esc '\r' = "\\r"
+    esc '\t' = "\\t"
+    esc c = [c]
 
 describeError :: PdfError -> String
 describeError (ParseError msg _) = "parse error: " ++ msg

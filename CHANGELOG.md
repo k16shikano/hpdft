@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.2.0 (2026-07-05)
+
+### Added
+
+- `PDF.Diff` — paragraph-level text diff between two documents (`compareDocuments`, `diffParagraphs`)
+- `hpdft diff FILE_A FILE_B` CLI subcommand with `--json`, `-P`, `--ruby` (and `--geom`/`--legacy` flags)
+- `/DCTDecode` stream filter support (JPEG pass-through) in `decodeStreamBytes`
+- Filter array cascade and `/ASCII85Decode` in stream decoding
+- Unit tests for diff and DCTDecode filter
+
 ## 0.4.1.0 (2026-07-05)
 
 ### Changed

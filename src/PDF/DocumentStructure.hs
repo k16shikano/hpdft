@@ -36,10 +36,12 @@ module PDF.DocumentStructure
        , parseCIDWidths
        , simpleWidthAt
        , findResourcesDict
+       , decodeStreamBytes
        ) where
 
 import Data.Char (chr, isDigit, ord)
 import Data.List (find, foldl', isSuffixOf, nub)
+import Data.Bits ((.&.), shiftR)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Builder as B
@@ -226,15 +228,73 @@ rawStream sec objNum objs = case find isStream objs of
         decryptStream sec' objNum' 0 $ BSL.toStrict s
       return $ BSL.fromStrict decoded
 
+supportedStreamFilters :: [String]
+supportedStreamFilters =
+  [ "/FlateDecode", "/DCTDecode", "/ASCII85Decode" ]
+
 decodeStreamBytes :: Dict -> BSL.ByteString -> PdfResult BS.ByteString
 decodeStreamBytes d s = do
-  filtered <- case M.lookup "/Filter" d of
-    Just (PdfName "/FlateDecode") -> Right $ BSL.toStrict $ decompress s
-    Nothing -> Right $ BSL.toStrict s
-    Just (PdfName f) ->
-      Left (UnsupportedFeature ("Unknown Stream Compression: " ++ T.unpack f))
-    Just _ -> Left (UnsupportedFeature "No Stream Compression Filter.")
+  filters <- streamFilterNames d
+  filtered <- applyStreamFilters filters s
   applyPredictor d filtered
+
+streamFilterNames :: Dict -> PdfResult [T.Text]
+streamFilterNames d = case M.lookup "/Filter" d of
+  Nothing -> Right []
+  Just (PdfName n) -> Right [n]
+  Just (PdfArray arr) ->
+    Right [ n | PdfName n <- arr ]
+  Just _ ->
+    Left (UnsupportedFeature "invalid /Filter entry (expected name or array of names)")
+
+applyStreamFilters :: [T.Text] -> BSL.ByteString -> PdfResult BS.ByteString
+applyStreamFilters [] s = Right (BSL.toStrict s)
+applyStreamFilters (f : fs) s = do
+  step <- decodeOneStreamFilter f s
+  applyStreamFilters fs (BSL.fromStrict step)
+
+decodeOneStreamFilter :: T.Text -> BSL.ByteString -> PdfResult BS.ByteString
+decodeOneStreamFilter "/FlateDecode" s =
+  Right $ BSL.toStrict $ decompress s
+decodeOneStreamFilter "/DCTDecode" s =
+  Right $ BSL.toStrict s
+decodeOneStreamFilter "/ASCII85Decode" s =
+  decodeASCII85 (BSL.toStrict s)
+decodeOneStreamFilter f _ =
+  Left $
+    UnsupportedFeature
+      ( "unsupported stream filter "
+          ++ T.unpack f
+          ++ " (supported: "
+          ++ unwords supportedStreamFilters
+          ++ ")"
+      )
+
+-- | PDF ASCII85Decode (base-85, 'z' = four zero bytes, '~>' EOD).
+decodeASCII85 :: BS.ByteString -> PdfResult BS.ByteString
+decodeASCII85 bs =
+  Right $ BS.pack $ go (Prelude.filter isAscii85Data (BS.unpack bs)) []
+  where
+    isAscii85Data c =
+      let o = ord c
+       in (o >= 33 && o <= 117) || c == 'z' || c == 'Z'
+    go [] acc = reverse acc
+    go ('z' : rest) acc = go rest ('\0' : '\0' : '\0' : '\0' : acc)
+    go ('Z' : rest) acc = go rest ('\0' : '\0' : '\0' : '\0' : acc)
+    go cs acc =
+      let grp = Prelude.take 5 cs
+          rest = drop 5 cs
+          pad = replicate (5 - Prelude.length grp) 'u'
+          vals = map (\c -> ord c - 33) (grp ++ pad)
+          n = foldl' (\a x -> a * 85 + x) 0 vals
+          bytes =
+            [ (n `shiftR` 24) .&. 0xff
+            , (n `shiftR` 16) .&. 0xff
+            , (n `shiftR` 8) .&. 0xff
+            , n .&. 0xff
+            ]
+          out = map chr (Prelude.take (max 0 (Prelude.length grp - 1)) (reverse bytes))
+       in if null grp then reverse acc else go rest (out ++ acc)
 
 applyPredictor :: Dict -> BS.ByteString -> PdfResult BS.ByteString
 applyPredictor d bs = case findObjFromDict d "/DecodeParms" of

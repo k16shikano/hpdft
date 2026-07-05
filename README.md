@@ -18,6 +18,7 @@ Legacy flat-flag invocation (`hpdft document.pdf`, `hpdft -p 3 document.pdf`) st
 ```
 hpdft extract [OPTIONS] FILE              # text extraction (tagged → geom)
 hpdft extract text [OPTIONS] FILE         # explicit text extraction
+hpdft diff [OPTIONS] FILE_A FILE_B        # paragraph-level diff
 hpdft info FILE                           # PDF metadata
 hpdft title FILE                          # document title
 hpdft toc FILE                            # table of contents
@@ -36,6 +37,12 @@ Extract options:
   -P,--password PASSWORD   Password for encrypted PDF
   FILE                     input pdf file
   -h,--help                Show help text
+
+Diff options:
+  --json                   JSON output
+  --ruby                   Embed ruby in Aozora bunko notation
+  -P,--password PASSWORD   Password for encrypted PDF (both files)
+  FILE_A FILE_B            PDF files to compare
 ```
 
 By default, `hpdft extract FILE` extracts text in logical order using the tagged PDF structure when the document has a usable one, and otherwise falls back to geometry-based paragraph reconstruction (equivalent to `--geom`). Use `--legacy` for the pre-0.3 stream-order extractor.
@@ -54,7 +61,7 @@ Requires GHC 9.14+ (see `hpdft.cabal`).
 
 ```bash
 cabal build
-cabal test                              # golden (22) + unit (279)
+cabal test                              # golden (22) + unit
 bash scripts/verify_text.sh             # compare all fixture outputs
 cabal run interpret-page -- FILE PAGE   # debug glyph positions
 ```
@@ -71,6 +78,7 @@ cabal run interpret-page -- FILE PAGE   # debug glyph positions
 |--------|---------|
 | `PDF.Document` | Single-read document handle |
 | `PDF.Page` | Page enumeration and structured extraction |
+| `PDF.Diff` | Paragraph-level document comparison |
 | `PDF.Text` | Text extraction drivers |
 | `PDF.Interpret` | Content-stream geometry interpreter |
 | `PDF.Layout` | Line/paragraph reconstruction |
@@ -79,5 +87,5 @@ cabal run interpret-page -- FILE PAGE   # debug glyph positions
 
 ## Version
 
-Released: **0.4.1.0** on `feature/0.4-api` (2026-07-05).
-Previous release: **0.4.0.0**.
+Released: **0.4.2.0** on `feature/0.4-api` (2026-07-05).
+Previous release: **0.4.1.0**.
