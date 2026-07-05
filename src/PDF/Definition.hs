@@ -74,6 +74,16 @@ instance Show Encoding where
 
 type CMap = Map Int String
 
+data FontInfo = FontInfo
+  { fiEncoding     :: Encoding
+  , fiToUnicode    :: CMap
+  , fiWidth        :: Int -> Double
+  , fiWidthV       :: Int -> Double
+  , fiWMode        :: Int
+  , fiBytesPerCode :: Int
+  , fiDefaultWidth :: Double
+  }
+
 data PSR = PSR { linex      :: Double
                , liney      :: Double
                , absolutex  :: Double

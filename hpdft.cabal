@@ -99,5 +99,6 @@ test-suite hpdft-unit
   main-is:             Unit.hs
   hs-source-dirs:      test
   build-depends:       base >= 4.20.0 && < 4.23
+                     , containers >= 0.7 && < 0.9
                      , hpdft
   default-language:    Haskell2010

@@ -31,10 +31,13 @@ module PDF.DocumentStructure
        , indexPDFObjs
        , extractObjBody
        , rawStream
+       , fontInfo
+       , parseCIDWidths
+       , simpleWidthAt
        ) where
 
 import Data.Char (chr, isDigit, ord)
-import Data.List (find, foldl', nub)
+import Data.List (find, foldl', isSuffixOf, nub)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Builder as B
@@ -781,4 +784,164 @@ noToUnicode sec x objs =
             otherwise -> M.empty
         otherwise -> M.empty
     otherwise -> M.empty
+
+
+fontInfo :: Maybe Security -> Int -> PDFObjIndex -> FontInfo
+fontInfo sec x objs =
+  case findObjFromDictWithRef x "/Subtype" objs of
+    Just (PdfName "/Type0") -> type0FontInfo sec x objs
+    _ -> simpleFontInfo sec x objs
+
+simpleFontInfo :: Maybe Security -> Int -> PDFObjIndex -> FontInfo
+simpleFontInfo sec x objs =
+  let enc = encoding sec x objs
+      tuc = toUnicode sec x objs
+      fd = fontDescriptorFor x objs
+      defaultW = case findObjFromDict fd "/MissingWidth" of
+        Just (PdfNumber w) -> w
+        _ -> 0
+      firstChar = case findObjFromDictWithRef x "/FirstChar" objs of
+        Just (PdfNumber n) -> truncate n
+        _ -> 0
+      widths = case findObjFromDictWithRef x "/Widths" objs of
+        Just wobj -> resolveObjArray wobj objs
+        _ -> []
+      widthFn code = simpleWidthAt firstChar widths defaultW code
+  in FontInfo
+    { fiEncoding = enc
+    , fiToUnicode = tuc
+    , fiWidth = widthFn
+    , fiWidthV = const defaultVerticalW1
+    , fiWMode = 0
+    , fiBytesPerCode = 1
+    , fiDefaultWidth = defaultW
+    }
+
+type0FontInfo :: Maybe Security -> Int -> PDFObjIndex -> FontInfo
+type0FontInfo sec x objs =
+  let enc = encoding sec x objs
+      tuc = toUnicode sec x objs
+      cidDict = firstDescendantFont x objs
+      defaultW = case cidDict >>= \d -> findObjFromDict d "/DW" of
+        Just (PdfNumber w) -> w
+        _ -> 1000
+      widthMap = case cidDict >>= \d -> findObjFromDict d "/W" of
+        Just wobj -> parseCIDWidths (resolveObjArray wobj objs)
+        _ -> M.empty
+      (_, w1Default) = dw2Defaults cidDict
+      widthVMap = case cidDict >>= \d -> findObjFromDict d "/W2" of
+        Just wobj -> parseCIDVerticalWidths (resolveObjArray wobj objs)
+        _ -> M.empty
+      wmode = wmodeFromEncoding (findObjFromDictWithRef x "/Encoding" objs)
+      widthFn cid = M.findWithDefault defaultW cid widthMap
+      widthVFn cid = M.findWithDefault w1Default cid widthVMap
+  in FontInfo
+    { fiEncoding = enc
+    , fiToUnicode = tuc
+    , fiWidth = widthFn
+    , fiWidthV = widthVFn
+    , fiWMode = wmode
+    , fiBytesPerCode = 2
+    , fiDefaultWidth = defaultW
+    }
+
+defaultVerticalW1 :: Double
+defaultVerticalW1 = -1000
+
+fontDescriptorFor :: Int -> PDFObjIndex -> Dict
+fontDescriptorFor fdr objs = case findObjFromDictWithRef fdr "/FontDescriptor" objs of
+  Just (ObjRef r) -> fromMaybe M.empty $ findDictByRef r objs
+  Just (PdfDict d) -> d
+  _ -> M.empty
+
+resolveObjArray :: Obj -> PDFObjIndex -> [Obj]
+resolveObjArray obj objs = case obj of
+  ObjRef r -> case findObjsByRef r objs of
+    Just [PdfArray arr] -> arr
+    Just os -> maybe [] id (findFirstArray os)
+    Nothing -> []
+  PdfArray arr -> arr
+  _ -> []
+
+findFirstArray :: [Obj] -> Maybe [Obj]
+findFirstArray os = case find isArrayObj os of
+  Just (PdfArray arr) -> Just arr
+  _ -> Nothing
+  where
+    isArrayObj (PdfArray _) = True
+    isArrayObj _            = False
+
+firstDescendantFont :: Int -> PDFObjIndex -> Maybe Dict
+firstDescendantFont fontRef objs =
+  case descendantFontObjs fontRef objs of
+    (df:_) -> cidFontDict df objs
+    _ -> Nothing
+
+descendantFontObjs :: Int -> PDFObjIndex -> [Obj]
+descendantFontObjs fontRef objs =
+  case findObjFromDictWithRef fontRef "/DescendantFonts" objs of
+    Just (PdfArray dfrs) -> dfrs
+    Just (ObjRef r) -> case findObjsByRef r objs of
+      Just (PdfArray dfrs : _) -> dfrs
+      Just os -> fromMaybe [] (findFirstArray os)
+      Nothing -> []
+    _ -> []
+
+cidFontDict :: Obj -> PDFObjIndex -> Maybe Dict
+cidFontDict df objs = case df of
+  ObjRef r -> findDictByRef r objs
+  PdfDict d -> Just d
+  _ -> Nothing
+
+dw2Defaults :: Maybe Dict -> (Double, Double)
+dw2Defaults Nothing = (880, defaultVerticalW1)
+dw2Defaults (Just d) = case findObjFromDict d "/DW2" of
+  Just (PdfArray [PdfNumber vy, PdfNumber w1]) -> (vy, w1)
+  _ -> (880, defaultVerticalW1)
+
+wmodeFromEncoding :: Maybe Obj -> Int
+wmodeFromEncoding (Just (PdfName n)) | "-V" `isSuffixOf` n = 1
+wmodeFromEncoding _ = 0
+
+simpleWidthAt :: Int -> [Obj] -> Double -> Int -> Double
+simpleWidthAt firstChar widths defaultWidth code =
+  let idx = code - firstChar
+  in if idx >= 0 && idx < length widths
+     then case widths !! idx of
+            PdfNumber w -> w
+            _ -> defaultWidth
+     else defaultWidth
+
+parseCIDWidths :: [Obj] -> Map Int Double
+parseCIDWidths = foldCIDMetrics widthFromObj M.empty
+
+parseCIDVerticalWidths :: [Obj] -> Map Int Double
+parseCIDVerticalWidths = foldCIDMetrics verticalW1FromObj M.empty
+
+foldCIDMetrics :: (Obj -> Maybe Double) -> Map Int Double -> [Obj] -> Map Int Double
+foldCIDMetrics metricFn = go
+  where
+    go m [] = m
+    go m (PdfNumber c : PdfArray ws : rest) =
+      let m' = foldl' insertAt m (zip [0..] ws)
+          insertAt acc (i, w) = case metricFn w of
+            Just n -> M.insert (truncate c + i) n acc
+            Nothing -> acc
+      in go m' rest
+    go m (PdfNumber cFirst : PdfNumber cLast : w : rest) =
+      case metricFn w of
+        Just n ->
+          let m' = foldl' (\acc cid -> M.insert cid n acc) m [truncate cFirst .. truncate cLast]
+          in go m' rest
+        Nothing -> go m rest
+    go m (_:rest) = go m rest
+
+widthFromObj :: Obj -> Maybe Double
+widthFromObj (PdfNumber w) = Just w
+widthFromObj _ = Nothing
+
+verticalW1FromObj :: Obj -> Maybe Double
+verticalW1FromObj (PdfArray [PdfNumber _vx, PdfNumber vy]) = Just vy
+verticalW1FromObj (PdfNumber w) = Just w
+verticalW1FromObj _ = Nothing
 
