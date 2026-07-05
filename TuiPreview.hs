@@ -4,7 +4,6 @@ module TuiPreview (runTuiPreview) where
 
 import PDF.Document (Document)
 import PDF.Text (pdfToTextStreamDoc)
-import PDF.Error (PdfWarning, renderPdfWarning)
 import TuiScroll
   ( ScrollState(..)
   , initialScrollState
@@ -42,7 +41,6 @@ import System.IO
   , hGetChar
   , hGetEcho
   , hPutStr
-  , hPutStrLn
   , hReady
   , hSetBuffering
   , hSetEcho
@@ -54,16 +52,13 @@ import Text.Regex.Base.RegexLike (makeRegexM, matchAll, matchTest)
 import Text.Regex.TDFA (Regex)
 
 runTuiPreview :: FilePath -> Document -> IO ()
-runTuiPreview path doc = do
-  warningsRef <- newIORef []
+runTuiPreview path doc =
   let run term =
-        uiLoop term path doc warningsRef `catch` \e ->
+        uiLoop term path doc `catch` \e ->
           case e of
             UserInterrupt -> return ()
             _ -> throwIO e
-  bracket acquireTerminal releaseTerminal run
-  ws <- readIORef warningsRef
-  mapM_ (hPutStrLn stderr . ("hpdft: warning: " ++) . renderPdfWarning) ws
+  in bracket acquireTerminal releaseTerminal run
 
 data Terminal = Terminal
   { termStdout      :: Handle
@@ -169,8 +164,8 @@ readKey h = do
       pending <- hReady h
       when pending $ hGetChar h >> return ()
 
-uiLoop :: Terminal -> FilePath -> Document -> IORef [PdfWarning] -> IO ()
-uiLoop term path doc warningsRef = do
+uiLoop :: Terminal -> FilePath -> Document -> IO ()
+uiLoop term path doc = do
   linesRef <- newIORef ([] :: [Text])
   pagesLoadedRef <- newIORef (0 :: Int)
   totalPagesRef <- newIORef (0 :: Int)
@@ -183,14 +178,13 @@ uiLoop term path doc warningsRef = do
   msgRef <- newIORef (Nothing :: Maybe String)
 
   let producer = do
-        ws <- pdfToTextStreamDoc doc $ \pg total bs -> do
+        _ <- pdfToTextStreamDoc doc $ \pg total bs -> do
           writeIORef totalPagesRef total
           modifyIORef' linesRef $ appendChunk (decodeLenient bs)
           writeIORef pagesLoadedRef pg
           ls <- readIORef linesRef
           modifyIORef' scrollRef (\st -> st {scrollTotalLines = length ls})
           writeIORef redrawRef True
-        writeIORef warningsRef ws
         writeIORef doneRef True
         writeIORef redrawRef True
 

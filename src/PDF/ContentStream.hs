@@ -336,10 +336,43 @@ bytesletter cmap = do
 
 hexletters :: PSParser T.Text
 hexletters = do
+  st <- getState
   char '<'
-  lets <- manyTill hexletter (try $ char '>')
+  hexChars <- many (oneOf "0123456789ABCDEFabcdef")
+  char '>'
   spaces
-  return $ T.concat lets
+  let cmap = Map.findWithDefault Map.empty (curfont st) (cmaps st)
+      codes = hexStringToCodes (fontBytesPerCode st) hexChars
+  parts <- mapM (lookupUcs cmap) codes
+  return $ T.concat parts
+
+-- | Split a hex string into character codes (matches 'PDF.Interpret.hexPairs'
+-- and 'bytesToCodes' for 1- vs 2-byte fonts).
+fontBytesPerCode :: PSR -> Int
+fontBytesPerCode st =
+  case Map.lookup (curfont st) (fontmaps st) of
+    Just (CIDmap _) -> 2
+    _ -> 1
+
+hexStringToCodes :: Int -> String -> [Int]
+hexStringToCodes bpc hex =
+  let bytes = hexPairs hex
+  in if bpc == 2 then pairBytes bytes else bytes
+  where
+    pairBytes [] = []
+    pairBytes [_] = []
+    pairBytes (a:b:rest) = (a * 256 + b) : pairBytes rest
+
+hexPairs :: String -> [Int]
+hexPairs [] = []
+hexPairs [x] =
+  case readHex [x, '0'] of
+    [(n, "")] -> [n]
+    _         -> []
+hexPairs (a:b:rest) =
+  case readHex [a, b] of
+    [(n, "")] -> n : hexPairs rest
+    _         -> hexPairs rest
 
 octletters :: PSParser T.Text
 octletters = do
@@ -374,14 +407,13 @@ cidletters = choice [try hexletter, try octletter]
 hexletter :: PSParser T.Text
 hexletter = do
   st <- getState
-  let font = curfont st
-      cmap = Map.findWithDefault Map.empty font (cmaps st)
-  hexDigits <- choice [ try $ count 4 $ oneOf "0123456789ABCDEFabcdef"
-                      , try $ count 2 $ oneOf "0123456789ABCDEFabcdef"
+  let cmap = Map.findWithDefault Map.empty (curfont st) (cmaps st)
+  -- Single code inside a hex string fragment (legacy path; prefer hexletters).
+  hexDigits <- choice [ try $ count 2 $ oneOf "0123456789ABCDEFabcdef"
                       , try $ (:"0") <$> (oneOf "0123456789ABCDEFabcdef")
                       ]
   case readHex hexDigits of
-    [(h,"")] -> lookupUcs cmap h
+    [(h, "")] -> lookupUcs cmap h
     _ -> return "????"
 
 octletter :: PSParser T.Text

@@ -47,7 +47,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Builder as B
 import qualified Data.Text as T
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Numeric (readDec)
 
 import Data.Attoparsec.ByteString.Char8 hiding (take, isDigit)
@@ -114,7 +114,7 @@ buildIndex bytes msec xref = objs
     objs = M.mapWithKey resolve xref
     containerCache =
       M.fromList
-        [ (cnum, objStmEntries cnum)
+        [ (cnum, objStmBody cnum)
         | cnum <- nub [c | InObjStm c _ <- M.elems xref]
         ]
     resolve objNum (InFile off) =
@@ -122,21 +122,19 @@ buildIndex bytes msec xref = objs
       in snd (parsePDFObj msec (objNum, body))
     resolve objNum (InObjStm cnum idx) =
       case M.lookup cnum containerCache of
-        Just entries ->
-          case lookup objNum entries of
-            Just o -> o
-            Nothing ->
-              case drop idx entries of
-                ((_, o) : _) -> o
-                _ -> [PdfNull]
+        Just (locations, body) ->
+          let off = case listToMaybe (drop idx locations) of
+                Just (_, o) -> Just o
+                Nothing -> lookup objNum locations
+          in maybe [PdfNull] (parseObjStmObject body) off
         Nothing -> [PdfNull]
-    objStmEntries cnum =
+    objStmBody cnum =
       case rawStream msec cnum (M.findWithDefault [PdfNull] cnum objs) of
         Right streamBytes ->
-          case pdfObjStm cnum (BSL.toStrict streamBytes) of
-            Right entries -> entries
-            Left _ -> []
-        Left _ -> []
+          case parseObjStmHeader (BSL.toStrict streamBytes) of
+            Right cache -> cache
+            Left _ -> ([], BS.empty)
+        Left _ -> ([], BS.empty)
 
 buildIndexEager :: BS.ByteString -> Maybe Security -> PdfResult PDFObjIndex
 buildIndexEager bytes msec = do
@@ -672,20 +670,32 @@ refOffset = spaces *> ((,)
         _ -> fail "invalid object stream reference"
 
 pdfObjStm n s =
-  case parseOnly refOffset s of
-    Right (location, objstr) ->
-      mapM (\(r,o) -> (,) r <$> parseDict (BS.pack $ drop o objstr)) location
+  case parseObjStmHeader s of
+    Right (location, body) ->
+      Right [ (r, parseObjStmObject body o) | (r, o) <- location ]
     Left err ->
       Left (ParseError ("Failed to parse Object Stream: " ++ show err) (BS.take 80 s))
-  where parseDict s' = case parseOnly pdfdictionary s' of
-          Right obj -> Right [obj]
-          Left  _   -> case parseOnly pdfarray s' of
-            Right obj -> Right [obj]
-            Left _ -> case parseOnly pdfletters s' of
-              Right obj -> Right [obj]
-              Left err ->
-                Left (ParseError ((show err) ++ ": Failed to parse obj around")
-                      (BS.take 100 s'))
+
+parseObjStmHeader :: BS.ByteString -> Either String ([(Int, Int)], BS.ByteString)
+parseObjStmHeader s =
+  case parseOnly refOffset s of
+    Right (location, objstr) -> Right (location, BS.pack objstr)
+    Left err -> Left (show err)
+
+parseObjStmObject :: BS.ByteString -> Int -> [Obj]
+parseObjStmObject body off =
+  case parseObjStmValue (BS.drop off body) of
+    Right obj -> obj
+    Left _ -> [PdfNull]
+
+parseObjStmValue :: BS.ByteString -> Either String [Obj]
+parseObjStmValue s' = case parseOnly pdfdictionary s' of
+  Right obj -> Right [obj]
+  Left _ -> case parseOnly pdfarray s' of
+    Right obj -> Right [obj]
+    Left _ -> case parseOnly pdfletters s' of
+      Right obj -> Right [obj]
+      Left err -> Left (show err)
 
 
 -- make fontmap from page's /Resources (see 3.7.2 of PDF Ref.)
