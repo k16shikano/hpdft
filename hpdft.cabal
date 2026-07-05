@@ -1,6 +1,6 @@
-cabal-version:       3.12
+cabal-version:       3.8
 name:                hpdft
-version:             0.4.6.0
+version:             0.4.6.1
 synopsis:            PDF parsing library and CLI for text, layout, diff, images, and forms
 description:
     hpdft is a Haskell library and command-line tool for parsing PDF files.
@@ -67,22 +67,22 @@ library
   other-modules:       Paths_hpdft
   other-extensions:    OverloadedStrings
   build-depends:       attoparsec >= 0.14.4 && < 0.15
-                     , base >= 4.20.0 && < 4.23
+                     , base >= 4.18.0 && < 4.23
                      , binary >= 0.8.9 && < 0.9
-                     , bytestring >= 0.11.5 && < 0.13
-                     , containers >= 0.7 && < 0.9
+                     , bytestring >= 0.11.4 && < 0.13
+                     , containers >= 0.6.7 && < 0.9
                      , crypton >= 0.34 && < 0.36
-                     , directory >= 1.3.9 && < 1.4
+                     , directory >= 1.3.8 && < 1.4
                      , dlist >= 1.0 && < 1.1
                      , file-embed >= 0.0.16 && < 0.1
-                     , filepath >= 1.5.2 && < 1.6
+                     , filepath >= 1.4.2 && < 1.6
                      , memory >= 0.18.0 && < 0.19
                      , optparse-applicative >= 0.18.1 && < 0.19
                      , parallel >= 3.2.2 && < 3.4
                      , deepseq >= 1.4.8 && < 1.6
                      , parsec >= 3.1.18 && < 3.2
                      , semigroups >= 0.20 && < 0.21
-                     , text >= 2.1.2 && < 2.2.2
+                     , text >= 2.0.2 && < 2.2.2
                      , utf8-string >= 1.0.2 && < 1.1
                      , zlib >= 0.7.1 && < 0.8
   autogen-modules:   Paths_hpdft
@@ -98,8 +98,8 @@ executable hpdft
                      , TuiScroll
   other-extensions:    OverloadedStrings
   build-depends:       array >= 0.5 && < 0.6
-                     , base >= 4.20.0 && < 4.23
-                     , bytestring >= 0.11.5 && < 0.13
+                     , base >= 4.18.0 && < 4.23
+                     , bytestring >= 0.11.4 && < 0.13
                      , hpdft
                      , memory >= 0.18.0 && < 0.19
                      , optparse-applicative >= 0.18.1 && < 0.19
@@ -107,7 +107,7 @@ executable hpdft
                      , regex-tdfa >= 1.3.2 && < 1.4
                      , semigroups >= 0.20 && < 0.21
                      , terminal-size >= 0.3 && < 0.4
-                     , text >= 2.1.2 && < 2.2.2
+                     , text >= 2.0.2 && < 2.2.2
                      , utf8-string >= 1.0.2 && < 1.1
   autogen-modules:   Paths_hpdft
   default-language:  Haskell2010
@@ -118,10 +118,10 @@ test-suite hpdft-golden
   main-is:             Golden.hs
   hs-source-dirs:      test
   ghc-options:         -threaded -rtsopts "-with-rtsopts=-N -A64m"
-  build-depends:       base >= 4.20.0 && < 4.23
-                     , bytestring >= 0.11.5 && < 0.13
-                     , directory >= 1.3.9 && < 1.4
-                     , filepath >= 1.5.2 && < 1.6
+  build-depends:       base >= 4.18.0 && < 4.23
+                     , bytestring >= 0.11.4 && < 0.13
+                     , directory >= 1.3.8 && < 1.4
+                     , filepath >= 1.4.2 && < 1.6
                      , hpdft
   default-language:    Haskell2010
 
@@ -131,32 +131,32 @@ test-suite hpdft-unit
   hs-source-dirs:      test
                      , .
   ghc-options:         -threaded -rtsopts "-with-rtsopts=-N -A64m"
-  build-depends:       base >= 4.20.0 && < 4.23
-                     , bytestring >= 0.11.5 && < 0.13
-                     , containers >= 0.7 && < 0.9
-                     , directory >= 1.3.9 && < 1.4
-                     , filepath >= 1.5.2 && < 1.6
+  build-depends:       base >= 4.18.0 && < 4.23
+                     , bytestring >= 0.11.4 && < 0.13
+                     , containers >= 0.6.7 && < 0.9
+                     , directory >= 1.3.8 && < 1.4
+                     , filepath >= 1.4.2 && < 1.6
                      , hpdft
-                     , text >= 2.1.2 && < 2.2.2
+                     , text >= 2.0.2 && < 2.2.2
   other-modules:       TuiScroll
   default-language:    Haskell2010
 
 executable interpret-page
   main-is:             scripts/interpret_page.hs
   hs-source-dirs:      .
-  build-depends:       base >= 4.20.0 && < 4.23
+  build-depends:       base >= 4.18.0 && < 4.23
                      , hpdft
-                     , text >= 2.1.2 && < 2.2.2
+                     , text >= 2.0.2 && < 2.2.2
   default-language:    Haskell2010
   buildable:           True
 
 executable extract-text
   main-is:             Main.hs
   hs-source-dirs:      examples/extract-text
-  build-depends:       base >= 4.20.0 && < 4.23
-                     , bytestring >= 0.11.5 && < 0.13
-                     , directory >= 1.3.9 && < 1.4
-                     , filepath >= 1.5.2 && < 1.6
+  build-depends:       base >= 4.18.0 && < 4.23
+                     , bytestring >= 0.11.4 && < 0.13
+                     , directory >= 1.3.8 && < 1.4
+                     , filepath >= 1.4.2 && < 1.6
                      , hpdft
   default-language:    Haskell2010
   buildable:           True
@@ -164,10 +164,10 @@ executable extract-text
 executable page-api
   main-is:             Main.hs
   hs-source-dirs:      examples/page-api
-  build-depends:       base >= 4.20.0 && < 4.23
-                     , directory >= 1.3.9 && < 1.4
-                     , filepath >= 1.5.2 && < 1.6
+  build-depends:       base >= 4.18.0 && < 4.23
+                     , directory >= 1.3.8 && < 1.4
+                     , filepath >= 1.4.2 && < 1.6
                      , hpdft
-                     , text >= 2.1.2 && < 2.2.2
+                     , text >= 2.0.2 && < 2.2.2
   default-language:    Haskell2010
   buildable:           True

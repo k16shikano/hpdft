@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.6.1 (2026-07-06)
+
+### Fixed
+
+- Object streams whose entries mix dictionaries and arrays (e.g. page-tree nodes stored in a single ObjStm) no longer leave intermediate `/Pages` nodes unresolved; page 1 and document order match the PDF catalog again.
+- `hpdft.cabal`: `cabal-version` lowered to 3.8 and dependency bounds widened for GHC 9.8 (Hackage docbuilder compatibility).
+
 ## 0.4.6.0 (2026-07-05)
 
 ### Changed
