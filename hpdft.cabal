@@ -43,6 +43,7 @@ library
                      , PDF.Type1
                      , PDF.Matrix
                      , PDF.Interpret
+                     , PDF.Layout
   other-modules:       Paths_hpdft
   other-extensions:    OverloadedStrings
   build-depends:       attoparsec >= 0.14.4 && < 0.15

@@ -1,0 +1,37 @@
+%PDF-1.5
+%µ¶
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 248 >>
+stream
+BT /F1 12 Tf 14 TL 72 700 Td (Line one of A.) Tj T* (Line two of A.) Tj T* (Line three of A.) Tj ET
+BT /F1 12 Tf 92 642 Td (Indent line B1.) Tj ET
+BT /F1 12 Tf 72 628 Td (Line B2.) Tj ET
+72 610 400 2 re f
+BT /F1 12 Tf 72 590 Td (Line C only.) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000247 00000 n 
+0000000546 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+616
+%%EOF

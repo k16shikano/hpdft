@@ -12,7 +12,7 @@ import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Outlines
 import PDF.Encrypt (Security)
-import PDF.Text (initstate, pdfToTextWithWarnings)
+import PDF.Text (initstate, pdfToTextWithWarnings, pdfToTextGeomBS)
 import PDF.Error (PdfError(..), PdfResult, PdfWarning(..), renderPdfWarning)
 
 import System.Environment (getArgs)
@@ -87,6 +87,7 @@ data CmdOpt = CmdOpt {
   ref  :: Int,
   grep :: String,
   refs :: Bool,
+  geom :: Bool,
   pdftitle :: Bool,
   pdfinfo :: Bool,
   pdfoutline :: Bool,
@@ -120,6 +121,9 @@ options = CmdOpt
             <> short 'R'
             <> help "Show object references in page order" )
           <*> switch
+          ( long "geom"
+            <> help "Extract text using geometry-based layout" )
+          <*> switch
           ( long "title"
             <> short 'T'
             <> help "Show title (from metadata)" )
@@ -146,16 +150,17 @@ options = CmdOpt
             <> action "file" )
 
 hpdft :: CmdOpt -> IO ()
-hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
+hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, geom=gm, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
   withFile fn $
   let mpw = Just pw
   in case () of
-    _ | pg==0 && rf==0 && null gr && not rs && not tt && not ii && not oo && not tr -> pdfToText fn mpw
-      | pg==0 && rf==0 && null gr && not rs && tt      -> showTitle fn mpw
-      | pg==0 && rf==0 && null gr && not rs && ii      -> showInfo fn mpw
-      | pg==0 && rf==0 && null gr && not rs && oo      -> showOutlines fn mpw
-      | pg==0 && rf==0 && null gr && not rs && tr      -> showTrailer fn
-      | pg==0 && rf==0 && null gr && rs                -> showRefs fn mpw
+    _ | pg==0 && rf==0 && null gr && not rs && gm && not tt && not ii && not oo && not tr -> pdfToTextGeom fn mpw
+      | pg==0 && rf==0 && null gr && not rs && not gm && not tt && not ii && not oo && not tr -> pdfToText fn mpw
+      | pg==0 && rf==0 && null gr && not rs && not gm && tt      -> showTitle fn mpw
+      | pg==0 && rf==0 && null gr && not rs && not gm && ii      -> showInfo fn mpw
+      | pg==0 && rf==0 && null gr && not rs && not gm && oo      -> showOutlines fn mpw
+      | pg==0 && rf==0 && null gr && not rs && not gm && tr      -> showTrailer fn
+      | pg==0 && rf==0 && null gr && rs && not gm                -> showRefs fn mpw
       | rf==0 && null gr && pg/=0                      -> showPage fn mpw pg
       | pg==0 && null gr && rf/=0                      -> showContent fn mpw rf
       | pg==0 && rf==0 && not (null gr)                -> grepPDF fn mpw gr
@@ -165,6 +170,11 @@ pdfToText :: FilePath -> Maybe String -> IO ()
 pdfToText filename mpw = do
   (txt, ws) <- runOrDie (pdfToTextWithWarnings filename mpw)
   printWarnings ws
+  BSL.putStrLn txt
+
+pdfToTextGeom :: FilePath -> Maybe String -> IO ()
+pdfToTextGeom filename mpw = do
+  txt <- runOrDie (pdfToTextGeomBS filename mpw)
   BSL.putStrLn txt
 
 data  PageTree = Nop | Page Int | Pages [PageTree]

@@ -456,6 +456,38 @@ geometry =
       xrefPos = BS.length body
   in body <> xrefTable offsets 6 <> trailerPart Nothing xrefPos
 
+paragraphsStream :: BS.ByteString
+paragraphsStream =
+  BS.concat
+    [ "BT /F1 12 Tf 14 TL 72 700 Td (Line one of A.) Tj T* (Line two of A.) Tj T* (Line three of A.) Tj ET\n"
+    , "BT /F1 12 Tf 92 642 Td (Indent line B1.) Tj ET\n"
+    , "BT /F1 12 Tf 72 628 Td (Line B2.) Tj ET\n"
+    , "72 610 400 2 re f\n"
+    , "BT /F1 12 Tf 72 590 Td (Line C only.) Tj ET"
+    ]
+
+paragraphsContentStream :: BS.ByteString
+paragraphsContentStream =
+  BS.concat
+    [ "<< /Length ", BS.pack (show (BS.length paragraphsStream)), " >>\nstream\n"
+    , paragraphsStream
+    , "\nendstream"
+    ]
+
+paragraphs :: BS.ByteString
+paragraphs =
+  let objects =
+        [ (1, "<< /Type /Catalog /Pages 2 0 R >>")
+        , (2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+        , (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+              \/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>")
+        , (4, paragraphsContentStream)
+        , (5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+        ]
+      (body, offsets) = buildBody objects
+      xrefPos = BS.length body
+  in body <> xrefTable offsets 6 <> trailerPart Nothing xrefPos
+
 main :: IO ()
 main = do
   args <- getArgs
@@ -472,6 +504,7 @@ main = do
     , ("encrypted-rc4.pdf", encryptedRc4)
     , ("binary-endstream.pdf", binaryEndstream)
     , ("geometry.pdf", geometry)
+    , ("paragraphs.pdf", paragraphs)
     ]
   where
     write dir (name, bytes) = do

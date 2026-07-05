@@ -6,6 +6,8 @@ module PDF.Text
   , pdfToTextBS
   , pdfToTextWithWarnings
   , pdfToTextDoc
+  , pdfToTextGeomBS
+  , pdfToTextGeomDoc
   ) where
 
 import PDF.Definition
@@ -13,9 +15,13 @@ import PDF.Error (PdfResult, PdfWarning(..))
 import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
 import PDF.Encrypt (Security)
+import PDF.Interpret (interpretPageItems)
+import PDF.Layout (layoutPageText)
 
 import qualified Data.Map as Map
 import qualified Data.ByteString.Lazy.Char8 as BSL
+import qualified Data.ByteString.Lazy.UTF8 as BSLU
+import qualified Data.Text as T
 
 initstate :: PSR
 initstate = PSR { linex=0
@@ -55,6 +61,34 @@ pdfToTextDoc doc =
   case docRootRef doc of
     Right rootref -> walkdown initstate rootref (docSecurity doc) (docObjs doc)
     Left _ -> ("", [])
+
+pdfToTextGeomBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
+pdfToTextGeomBS filename mpw = do
+  docResult <- openDocument filename mpw
+  return (docResult >>= pdfToTextGeomDoc)
+
+pdfToTextGeomDoc :: Document -> PdfResult BSL.ByteString
+pdfToTextGeomDoc doc = do
+  rootref <- docRootRef doc
+  let refs = pageRefsOrder rootref (docObjs doc)
+  pages <- mapM (interpretPageItems doc) refs
+  return $ BSLU.fromString (T.unpack (T.concat (map layoutPageText pages)))
+
+pageRefsOrder :: Int -> PDFObjIndex -> [Int]
+pageRefsOrder parent objs =
+  case findObjsByRef parent objs of
+    Just os -> case findDictOfType "/Catalog" os of
+      Just dict -> case findPages dict of
+        Just pr -> pageRefsOrder pr objs
+        Nothing -> []
+      Nothing -> case findDictOfType "/Pages" os of
+        Just dict -> case findKids dict of
+          Just kidsrefs -> concatMap (\k -> pageRefsOrder k objs) kidsrefs
+          Nothing -> []
+        Nothing -> case findDictOfType "/Page" os of
+          Just _ -> [parent]
+          Nothing -> []
+    Nothing -> []
 
 walkdown :: PSR -> Int -> Maybe Security -> PDFObjIndex -> (BSL.ByteString, [PdfWarning])
 walkdown st parent sec objs =

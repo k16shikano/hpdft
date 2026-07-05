@@ -1,7 +1,15 @@
+{-# LANGUAGE OverloadedStrings #-}
 import PDF.Matrix (Matrix, identity, multiply, apply, applyVec, translate, scale, mkMatrix, components)
 import PDF.Definition (Obj(..), FontInfo(..), Encoding(..))
 import PDF.DocumentStructure (parseCIDWidths, simpleWidthAt)
-import PDF.Interpret (Glyph(..), interpretContentWithFonts)
+import PDF.Interpret
+  ( Glyph(..)
+  , Rect(..)
+  , PageItem(..)
+  , interpretContentWithFonts
+  , interpretContentWithFontsItems
+  )
+import PDF.Layout (layoutParagraphs, layoutPageText)
 
 import qualified Data.Map as M
 import qualified Data.ByteString.Lazy.Char8 as BSLC
@@ -119,6 +127,8 @@ main = do
           ++ parseCIDWidthsResults
           ++ simpleWidthAtResults
           ++ interpretGeometryResults
+          ++ layoutParagraphResults
+          ++ interpretGraphicResults
   let failures = [msg | Fail msg <- results]
       passed = length results - length failures
   mapM_ reportResult results
@@ -271,6 +281,88 @@ interpretGeometryResults =
       ]
   where
     hexTj = runInterp "BT /F1 10 Tf 0 0 Td <4142>Tj ET"
+
+mkGlyph :: Double -> Double -> Double -> Double -> Int -> T.Text -> Glyph
+mkGlyph x y w sz wmode txt =
+  Glyph
+    { glyphText = txt
+    , glyphX = x
+    , glyphY = y
+    , glyphWidth = w
+    , glyphSize = sz
+    , glyphFont = "/F1"
+    , glyphWMode = wmode
+    }
+
+layoutParagraphResults :: [Result]
+layoutParagraphResults =
+  let samePara = layoutParagraphs
+        [ ItemGlyph (mkGlyph 72 700 100 12 0 "Alpha")
+        , ItemGlyph (mkGlyph 72 686 100 12 0 "Beta")
+        ]
+      gapSplit = layoutParagraphs
+        [ ItemGlyph (mkGlyph 72 700 100 12 0 "First")
+        , ItemGlyph (mkGlyph 72 650 100 12 0 "Second")
+        ]
+      indentSplit = layoutParagraphs
+        [ ItemGlyph (mkGlyph 72 700 100 12 0 "Normal")
+        , ItemGlyph (mkGlyph 92 686 100 12 0 "Indented")
+        ]
+      ruleSplit = layoutParagraphs
+        [ ItemGlyph (mkGlyph 72 700 100 12 0 "Above")
+        , ItemGraphic (Rect 70 680 200 682)
+        , ItemGlyph (mkGlyph 72 660 100 12 0 "Below")
+        ]
+      latinSpace = layoutPageText
+        [ ItemGlyph (mkGlyph 72 700 6 12 0 "A")
+        , ItemGlyph (mkGlyph 85 700 6 12 0 "B")
+        ]
+      cjkNoSpace = layoutPageText
+        [ ItemGlyph (mkGlyph 72 700 12 12 0 "\x3068")
+        , ItemGlyph (mkGlyph 84 700 12 12 0 "\x3046")
+        ]
+      fallbackZero = layoutParagraphs
+        [ ItemGlyph (mkGlyph 72 700 10 0 0 "X")
+        , ItemGlyph (mkGlyph 72 686 10 0 0 "Y")
+        ]
+      vertCols = layoutParagraphs
+        [ ItemGlyph (mkGlyph 500 700 10 12 1 "\x3042")
+        , ItemGlyph (mkGlyph 500 680 10 12 1 "\x3044")
+        , ItemGlyph (mkGlyph 440 700 10 12 1 "\x3046")
+        , ItemGlyph (mkGlyph 440 680 10 12 1 "\x3048")
+        ]
+   in [ assertBool "layout same-baseline two lines one paragraph" (length samePara == 1)
+      , assertTextEq "layout same-baseline joined"
+          (T.pack "Alpha Beta") (head samePara)
+      , assertBool "layout large gap two paragraphs" (length gapSplit == 2)
+      , assertBool "layout indent starts new paragraph" (length indentSplit == 2)
+      , assertBool "layout graphic rule splits paragraphs" (length ruleSplit == 2)
+      , assertTextEq "layout Latin gap inserts space" (T.pack "A B\n") latinSpace
+      , assertTextEq "layout CJK gap no space" (T.pack "\x3068\x3046\n") cjkNoSpace
+      , assertBool "layout fallback zero sizes" (length fallbackZero == 1)
+      , assertTextEq "layout fallback joins with newline"
+          (T.pack "X\nY") (head fallbackZero)
+      , assertBool "layout vertical two columns" (length vertCols == 2)
+      , assertTextEq "layout vertical first column"
+          (T.pack "\x3042\x3044") (head vertCols)
+      , assertTextEq "layout vertical second column"
+          (T.pack "\x3046\x3048") (vertCols !! 1)
+      ]
+
+interpretGraphicResults :: [Result]
+interpretGraphicResults =
+  let items = interpretContentWithFontsItems Nothing M.empty testResources testFonts
+          (BSLC.pack "10 0 0 10 50 100 cm 0 0 20 10 re f")
+      graphics = [r | ItemGraphic r <- items]
+   in [ assertBool "interpret re f emits one graphic" (length graphics == 1)
+      , assertRectEq "interpret re f bbox x0" 50 (rectX0 (head graphics))
+      , assertRectEq "interpret re f bbox y0" 100 (rectY0 (head graphics))
+      , assertRectEq "interpret re f bbox x1" 250 (rectX1 (head graphics))
+      , assertRectEq "interpret re f bbox y1" 200 (rectY1 (head graphics))
+      ]
+
+assertRectEq :: String -> Double -> Double -> Result
+assertRectEq label expected actual = assertDoubleEq label expected actual
 
 parseCIDWidthsResults :: [Result]
 parseCIDWidthsResults =
