@@ -17,6 +17,7 @@ Available options:
   --geom                   Extract text using geometry-based layout
   --tagged                 Extract text using tagged PDF structure
   --legacy                 Extract text using the pre-0.3 stream-order extractor
+  --footnotes              Inline footnote bodies at their anchors as <footnote> tags (geometry pipeline)
   -T,--title               Show title (from metadata)
   -I,--info                Show PDF metainfo
   -O,--toc                 Show table of contents (from metadata)

@@ -7,10 +7,15 @@ module PDF.Text
   , pdfToTextWithWarnings
   , pdfToTextDoc
   , pdfToTextGeomBS
+  , pdfToTextGeomBSWith
   , pdfToTextGeomDoc
+  , pdfToTextGeomDocWith
   , pdfToTextTaggedBS
+  , pdfToTextTaggedBSWith
   , pdfToTextTaggedDoc
+  , pdfToTextTaggedDocWith
   , pageTextGeom
+  , pageTextGeomWith
   ) where
 
 import PDF.Definition
@@ -19,7 +24,7 @@ import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
 import PDF.Encrypt (Security)
 import PDF.Interpret (Glyph(..), PageItem(..), interpretPageItems)
-import PDF.Layout (joinGlyphsRun, layoutDocument, layoutPageText, linesFromGlyphs, stripHeadersFooters, joinParaLines)
+import PDF.Layout (LayoutOptions, defaultLayoutOptions, joinGlyphsRun, layoutDocumentWith, layoutPageTextWith, linesFromGlyphs, stripHeadersFooters, joinParaLines)
 import PDF.Structure (StructElem(..), structTree, logicalOrder)
 
 import Data.List (foldl')
@@ -68,39 +73,54 @@ pdfToTextDoc doc =
     Left _ -> ("", [])
 
 pdfToTextGeomBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
-pdfToTextGeomBS filename mpw = do
+pdfToTextGeomBS = pdfToTextGeomBSWith defaultLayoutOptions
+
+pdfToTextGeomBSWith :: LayoutOptions -> FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
+pdfToTextGeomBSWith opts filename mpw = do
   docResult <- openDocument filename mpw
-  return (docResult >>= pdfToTextGeomDoc)
+  return (docResult >>= pdfToTextGeomDocWith opts)
 
 pdfToTextGeomDoc :: Document -> PdfResult BSL.ByteString
-pdfToTextGeomDoc doc = do
+pdfToTextGeomDoc = pdfToTextGeomDocWith defaultLayoutOptions
+
+pdfToTextGeomDocWith :: LayoutOptions -> Document -> PdfResult BSL.ByteString
+pdfToTextGeomDocWith opts doc = do
   rootref <- docRootRef doc
   let refs = pageRefsOrder rootref (docObjs doc)
   pages <- mapM (interpretPageItems doc) refs
-  return $ BSLU.fromString (T.unpack (layoutDocument pages))
+  return $ BSLU.fromString (T.unpack (layoutDocumentWith opts pages))
 
 pageTextGeom :: Document -> Int -> PdfResult BSL.ByteString
-pageTextGeom doc pageRef = do
+pageTextGeom = pageTextGeomWith defaultLayoutOptions
+
+pageTextGeomWith :: LayoutOptions -> Document -> Int -> PdfResult BSL.ByteString
+pageTextGeomWith opts doc pageRef = do
   items <- interpretPageItems doc pageRef
-  return $ BSLU.fromString (T.unpack (layoutPageText items))
+  return $ BSLU.fromString (T.unpack (layoutPageTextWith opts items))
 
 pdfToTextTaggedBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
-pdfToTextTaggedBS filename mpw = do
+pdfToTextTaggedBS = pdfToTextTaggedBSWith defaultLayoutOptions
+
+pdfToTextTaggedBSWith :: LayoutOptions -> FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
+pdfToTextTaggedBSWith opts filename mpw = do
   docResult <- openDocument filename mpw
-  return (docResult >>= pdfToTextTaggedDoc)
+  return (docResult >>= pdfToTextTaggedDocWith opts)
 
 pdfToTextTaggedDoc :: Document -> PdfResult BSL.ByteString
-pdfToTextTaggedDoc doc = do
+pdfToTextTaggedDoc = pdfToTextTaggedDocWith defaultLayoutOptions
+
+pdfToTextTaggedDocWith :: LayoutOptions -> Document -> PdfResult BSL.ByteString
+pdfToTextTaggedDocWith opts doc = do
   mroot <- structTree doc
   case mroot of
-    Nothing -> pdfToTextGeomDoc doc
+    Nothing -> pdfToTextGeomDocWith opts doc
     Just root -> do
       rootref <- docRootRef doc
       let refs = pageRefsOrder rootref (docObjs doc)
       pages <- mapM (interpretPageItems doc) refs
       if taggedUsable pages
          then Right (BSLU.fromString (T.unpack (assembleTagged root refs pages)))
-         else pdfToTextGeomDoc doc
+         else pdfToTextGeomDocWith opts doc
 
 taggedUsable :: [[PageItem]] -> Bool
 taggedUsable pages =

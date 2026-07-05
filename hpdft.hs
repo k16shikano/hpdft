@@ -12,7 +12,8 @@ import PDF.DocumentStructure
 import PDF.PDFIO
 import PDF.Outlines
 import PDF.Encrypt (Security)
-import PDF.Text (pdfToTextWithWarnings, pdfToTextGeomBS, pdfToTextTaggedBS, pageTextGeom)
+import PDF.Text (pdfToTextWithWarnings, pdfToTextGeomBSWith, pdfToTextTaggedBSWith, pageTextGeomWith)
+import PDF.Layout (LayoutOptions(..), defaultLayoutOptions)
 import PDF.Error (PdfError(..), PdfResult, PdfWarning(..), renderPdfWarning)
 
 import System.Environment (getArgs)
@@ -90,6 +91,7 @@ data CmdOpt = CmdOpt {
   geom :: Bool,
   tagged :: Bool,
   legacy :: Bool,
+  footnotes :: Bool,
   pdftitle :: Bool,
   pdfinfo :: Bool,
   pdfoutline :: Bool,
@@ -132,6 +134,9 @@ options = CmdOpt
           ( long "legacy"
             <> help "Extract text using the pre-0.3 stream-order extractor" )
           <*> switch
+          ( long "footnotes"
+            <> help "Inline footnote bodies at their anchors as <footnote> tags (geometry pipeline)" )
+          <*> switch
           ( long "title"
             <> short 'T'
             <> help "Show title (from metadata)" )
@@ -158,22 +163,23 @@ options = CmdOpt
             <> action "file" )
 
 hpdft :: CmdOpt -> IO ()
-hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, geom=gm, tagged=tg, legacy=lg, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
+hpdft cmd@CmdOpt{password=pw, file=fn, page=pg, ref=rf, grep=gr, refs=rs, geom=gm, tagged=tg, legacy=lg, footnotes=fnn, pdftitle=tt, pdfinfo=ii, pdfoutline=oo, trailer=tr} =
   withFile fn $
   let mpw = Just pw
       noMode = not gm && not tg && not lg
+      lopts = defaultLayoutOptions {optFootnotes = fnn}
   in case () of
     _ | pg==0 && rf==0 && null gr && not rs && lg && not gm && not tg && not tt && not ii && not oo && not tr -> pdfToText fn mpw
-      | pg==0 && rf==0 && null gr && not rs && gm && not tg && not lg && not tt && not ii && not oo && not tr -> pdfToTextGeom fn mpw
-      | pg==0 && rf==0 && null gr && not rs && (tg || noMode) && not gm && not lg && not tt && not ii && not oo && not tr -> pdfToTextTagged fn mpw
+      | pg==0 && rf==0 && null gr && not rs && gm && not tg && not lg && not tt && not ii && not oo && not tr -> pdfToTextGeom lopts fn mpw
+      | pg==0 && rf==0 && null gr && not rs && (tg || noMode) && not gm && not lg && not tt && not ii && not oo && not tr -> pdfToTextTagged lopts fn mpw
       | pg==0 && rf==0 && null gr && not rs && noMode && tt      -> showTitle fn mpw
       | pg==0 && rf==0 && null gr && not rs && noMode && ii      -> showInfo fn mpw
       | pg==0 && rf==0 && null gr && not rs && noMode && oo      -> showOutlines fn mpw
       | pg==0 && rf==0 && null gr && not rs && noMode && tr      -> showTrailer fn
       | pg==0 && rf==0 && null gr && rs && noMode                -> showRefs fn mpw
-      | rf==0 && null gr && pg/=0                      -> showPage fn mpw pg
+      | rf==0 && null gr && pg/=0                      -> showPage lopts fn mpw pg
       | pg==0 && null gr && rf/=0                      -> showContent fn mpw rf
-      | pg==0 && rf==0 && not (null gr)                -> grepPDF fn mpw gr
+      | pg==0 && rf==0 && not (null gr)                -> grepPDF lopts fn mpw gr
       | otherwise -> return ()
 
 pdfToText :: FilePath -> Maybe String -> IO ()
@@ -182,14 +188,14 @@ pdfToText filename mpw = do
   printWarnings ws
   BSL.putStrLn txt
 
-pdfToTextGeom :: FilePath -> Maybe String -> IO ()
-pdfToTextGeom filename mpw = do
-  txt <- runOrDie (pdfToTextGeomBS filename mpw)
+pdfToTextGeom :: LayoutOptions -> FilePath -> Maybe String -> IO ()
+pdfToTextGeom lopts filename mpw = do
+  txt <- runOrDie (pdfToTextGeomBSWith lopts filename mpw)
   BSL.putStrLn txt
 
-pdfToTextTagged :: FilePath -> Maybe String -> IO ()
-pdfToTextTagged filename mpw = do
-  txt <- runOrDie (pdfToTextTaggedBS filename mpw)
+pdfToTextTagged :: LayoutOptions -> FilePath -> Maybe String -> IO ()
+pdfToTextTagged lopts filename mpw = do
+  txt <- runOrDie (pdfToTextTaggedBSWith lopts filename mpw)
   BSL.putStrLn txt
 
 data  PageTree = Nop | Page Int | Pages [PageTree]
@@ -228,14 +234,14 @@ pageTreeToList (Pages ps) = concatMap pageTreeToList ps
 pageTreeToList (Page n) = [n]
 pageTreeToList Nop = []
 
-showPage :: FilePath -> Maybe String -> Int -> IO ()
-showPage filename mpw page = do
+showPage :: LayoutOptions -> FilePath -> Maybe String -> Int -> IO ()
+showPage lopts filename mpw page = do
   doc <- runOrDie (openDocument filename mpw)
   root <- runOrDie (return (docRootRef doc))
   let pagetree = pageTreeToList $ pageorder root (docObjs doc)
   if page >= 1 && length pagetree >= page
     then do
-      txt <- runOrDie (return (pageTextGeom doc (pagetree !! (page - 1))))
+      txt <- runOrDie (return (pageTextGeomWith lopts doc (pagetree !! (page - 1))))
       BSL.putStr txt
     else putStrLn $ "hpdft: No Page "++(show page)
 
@@ -299,8 +305,8 @@ showTrailer filename = do
   doc <- runOrDie (openDocument filename Nothing)
   putStrLn $ ppDictEntries (docTrailer doc)
 
-grepPDF :: FilePath -> Maybe String -> String -> IO ()
-grepPDF filename mpw re = do
+grepPDF :: LayoutOptions -> FilePath -> Maybe String -> String -> IO ()
+grepPDF lopts filename mpw re = do
   doc <- runOrDie (openDocument filename mpw)
   root <- runOrDie (return (docRootRef doc))
   let objs = docObjs doc
@@ -310,7 +316,7 @@ grepPDF filename mpw re = do
   
   where
     pageText doc ref =
-      case pageTextGeom doc ref of
+      case pageTextGeomWith lopts doc ref of
         Right txt -> txt
         Left _ -> ""
 
