@@ -79,5 +79,5 @@ cabal run interpret-page -- FILE PAGE   # debug glyph positions
 
 ## Version
 
-Current development: **0.3.0.0** on branch `feature/0.3-error-model`.
-Released on `master`: **0.2.0.0**.
+Released: **0.3.0.0** on `master` (2026-07-05).
+Previous release: **0.2.0.0**.

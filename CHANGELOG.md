@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.3.0.0 (unreleased)
+## 0.3.0.0 (2026-07-05)
 
-`feature/0.3-error-model` ブランチ。`master`（0.2.0.0）からの非互換変更を含む。
+`master`（0.2.0.0）からの非互換変更を含む。
 
 ### Added
 
