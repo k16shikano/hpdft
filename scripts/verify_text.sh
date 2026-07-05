@@ -11,7 +11,7 @@ EXPDIR="$FIXDIR/expected"
 EXPLEGACYDIR="$FIXDIR/expected-legacy"
 
 if [[ -z "${HPDFT:-}" ]]; then
-  HPDFT="$(find "$ROOT/dist-newstyle/build" -path '*/hpdft/hpdft' -type f -executable 2>/dev/null | head -1 || true)"
+  HPDFT="$(find "$ROOT/dist-newstyle/build" -path '*/hpdft/hpdft' -type f -executable -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)"
 fi
 
 if [[ -z "${HPDFT:-}" || ! -x "$HPDFT" ]]; then
@@ -23,9 +23,9 @@ if [[ "${1:-}" == "--update" ]]; then
   mkdir -p "$EXPDIR" "$EXPLEGACYDIR"
   for pdf in "$FIXDIR"/*.pdf; do
     name="$(basename "$pdf" .pdf)"
-    "$HPDFT" "$pdf" > "$EXPDIR/$name.txt"
+    "$HPDFT" text "$pdf" > "$EXPDIR/$name.txt"
     echo "updated $EXPDIR/$name.txt"
-    "$HPDFT" --legacy "$pdf" > "$EXPLEGACYDIR/$name.txt"
+    "$HPDFT" text --legacy "$pdf" > "$EXPLEGACYDIR/$name.txt"
     echo "updated $EXPLEGACYDIR/$name.txt"
   done
   exit 0
@@ -54,8 +54,8 @@ run_check() {
 
 for pdf in "$FIXDIR"/*.pdf; do
   name="$(basename "$pdf" .pdf)"
-  run_check "$name" "$EXPDIR/$name.txt" "$HPDFT" "$pdf"
-  run_check "$name (legacy)" "$EXPLEGACYDIR/$name.txt" "$HPDFT" --legacy "$pdf"
+  run_check "$name" "$EXPDIR/$name.txt" "$HPDFT" text "$pdf"
+  run_check "$name (legacy)" "$EXPLEGACYDIR/$name.txt" "$HPDFT" text --legacy "$pdf"
 done
 
 exit "$fail"

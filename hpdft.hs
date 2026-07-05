@@ -648,6 +648,8 @@ streamLegacyToStdout doc quiet = do
     hFlush stdout
   total <- readIORef totalRef
   clearProgress total
+  -- Trailing newline for parity with the pre-0.4.6 batch output (putStrLn).
+  putStrLn ""
   printWarnings ws
 
 pdfToTextGeom :: LayoutOptions -> FilePath -> Maybe String -> IO ()
