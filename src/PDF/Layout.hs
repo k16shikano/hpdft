@@ -14,6 +14,7 @@ module PDF.Layout
   , layoutDocumentWith
   , stripHeadersFooters
   , linesFromGlyphs
+  , sortLinesByReadingOrder
   , joinParaLines
   , intraLineSpace
   , joinGlyphsRun
@@ -22,8 +23,8 @@ module PDF.Layout
 import PDF.Interpret (Glyph(..), Rect(..), PageItem(..))
 
 import Data.Char (isSpace, ord)
-import Data.List (foldl', maximumBy, sort)
-import Data.Ord (comparing)
+import Data.List (foldl', maximumBy, partition, sort, sortBy)
+import Data.Ord (Down(..), comparing)
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Text as T
@@ -309,6 +310,19 @@ pageLines items =
 
 linesFromGlyphs :: [Glyph] -> [Line]
 linesFromGlyphs = buildLines
+
+-- RTL horizontal text is not supported; only LTR horizontal and vertical CJK.
+sortLinesByReadingOrder :: [Line] -> [Line]
+sortLinesByReadingOrder [] = []
+sortLinesByReadingOrder ls =
+  let (w0, w1) = partition ((== 0) . lineWMode) ls
+      sortHoriz = sortOn (\l -> (Down (lineBaseline l), lineFirstInline l))
+      sortVert = sortOn (\l -> (Down (lineBaseline l), Down (lineFirstInline l)))
+  in if null w0 || null w1
+     then if null w1 then sortHoriz w0 else sortVert w1
+     else sortHoriz w0 ++ sortVert w1
+  where
+    sortOn f = sortBy (comparing f)
 
 stripHeadersFooters :: Int -> [[Line]] -> [[Line]]
 stripHeadersFooters pageCount pagesLines =
@@ -643,7 +657,7 @@ isCJK c =
 
 groupParagraphs :: Int -> [Rect] -> (Double, Double) -> [Line] -> [[Line]]
 groupParagraphs wmode graphics bounds lines =
-  go [] (filter (not . T.null . T.strip . lineText) lines)
+  go [] (filter (not . T.null . T.strip . lineText) (sortLinesByReadingOrder lines))
   where
     go _ [] = []
     go pageGaps (l:ls) =

@@ -9,7 +9,7 @@ import PDF.Interpret
   , interpretContentWithFonts
   , interpretContentWithFontsItems
   )
-import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, layoutParagraphs, layoutParagraphsWith, layoutPageText, layoutDocument)
+import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, layoutParagraphs, layoutParagraphsWith, layoutPageText, layoutDocument, sortLinesByReadingOrder, linesFromGlyphs, Line(..))
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
 import PDF.Document (Document(..))
 import PDF.Text (pdfToTextTaggedBS)
@@ -133,6 +133,7 @@ main = do
           ++ simpleWidthAtResults
           ++ interpretGeometryResults
           ++ layoutParagraphResults
+          ++ sortLinesByReadingOrderResults
           ++ layoutDocumentResults
           ++ superscriptResults
           ++ interpretGraphicResults
@@ -382,6 +383,57 @@ layoutParagraphResults =
           (T.pack "\x3046\x3048") (vertCols !! 1)
       ]
 
+sortLinesByReadingOrderResults :: [Result]
+sortLinesByReadingOrderResults =
+  let rowOrderItems =
+        [ ItemGlyph (mkGlyph 72 650 30 12 0 "Bot-C")
+        , ItemGlyph (mkGlyph 72 700 30 12 0 "Top-A")
+        , ItemGlyph (mkGlyph 200 700 30 12 0 "Top-B")
+        ]
+      rowOrderText = layoutPageText rowOrderItems
+      vertReversedItems =
+        [ ItemGlyph (mkGlyph 440 700 10 12 1 "\x3046")
+        , ItemGlyph (mkGlyph 440 680 10 12 1 "\x3048")
+        , ItemGlyph (mkGlyph 500 700 10 12 1 "\x3042")
+        , ItemGlyph (mkGlyph 500 680 10 12 1 "\x3044")
+        ]
+      vertReversed = layoutParagraphs vertReversedItems
+      sameRowLines =
+        [ mkTestLine 700 72 78 0 "A"
+        , mkTestLine 700 200 206 0 "B"
+        ]
+      sortedSameRow = map lineText (sortLinesByReadingOrder sameRowLines)
+   in [ assertBool "sort rows: Top before Bot"
+          (let t = T.stripEnd rowOrderText
+               (preA, _) = T.breakOn "Top-A" t
+               (preB, _) = T.breakOn "Bot-C" t
+           in T.isInfixOf "Top-A" t
+              && T.isInfixOf "Bot-C" t
+              && T.length preA <= T.length preB)
+      , assertTextEq "sort same row left-to-right"
+          (T.pack "A B") (T.intercalate " " sortedSameRow)
+      , assertBool "sort vertical columns right-to-left"
+          (length vertReversed == 2
+           && head vertReversed == T.pack "\x3042\x3044"
+           && vertReversed !! 1 == T.pack "\x3046\x3048")
+      , assertTextEq "sortLinesByReadingOrder direct"
+          (T.pack "A B") (T.intercalate " " sortedSameRow)
+      ]
+
+mkTestLine :: Double -> Double -> Double -> Int -> T.Text -> Line
+mkTestLine baseline inlineStart inlineEnd wmode txt =
+  Line
+    { lineBaseline = baseline
+    , lineInlineStart = inlineStart
+    , lineInlineEnd = inlineEnd
+    , lineSize = 12
+    , lineFirstInline = inlineStart
+    , lineWMode = wmode
+    , lineText = txt
+    , lineMarkers = []
+    , lineLastSuper = False
+    }
+
 headerBodyFooter :: Int -> T.Text -> T.Text -> [PageItem]
 headerBodyFooter n header body =
   [ ItemGlyph (mkGlyph 250 750 80 12 0 header)
@@ -490,8 +542,8 @@ superscriptResults =
       bodyAfter x t = ItemGlyph (mkGlyph x 700 10 10 0 t)
       merged = layoutParagraphs
         [ body "text", supAt 132 "\8224", supAt 136 "1", bodyAfter 140 "." ]
-      farSup = layoutParagraphs
-        [ body "text", ItemGlyph (mkGlyph 132 708.5 4 7 0 "\8224") ]
+      farSupGlyphs =
+        [ g | ItemGlyph g <- [body "text", ItemGlyph (mkGlyph 132 708.5 4 7 0 "\8224")]]
       rebase = layoutParagraphs
         [ ItemGlyph (mkGlyph 72 87.6 4 7 0 "\8224")
         , ItemGlyph (mkGlyph 76 87.6 4 7 0 "1")
@@ -523,7 +575,8 @@ superscriptResults =
    in [ assertBool "superscript merges inline" (length merged == 1)
       , assertTextEq "superscript inline text order"
           (T.pack "text\8224\&1.") (head merged)
-      , assertBool "superscript beyond window splits" (length farSup == 2)
+      , assertBool "superscript beyond window stays separate line"
+          (length (linesFromGlyphs farSupGlyphs) == 2)
       , assertBool "marker line rebases onto body" (length rebase == 1)
       , assertTextEq "rebased line text" (T.pack "\8224\&1note body") (head rebase)
       , assertBool "footnotes on: body inlined"
