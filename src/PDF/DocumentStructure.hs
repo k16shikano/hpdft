@@ -823,21 +823,16 @@ noToUnicode sec x objs =
 
 noToUnicodeFromDict :: Maybe Security -> PDFObjIndex -> Dict -> CMap
 noToUnicodeFromDict sec objs d =
-  case findObjFromDict d "/DescendantFonts" of
-    Just (ObjRef ref) ->
-      case findObjsByRef ref objs of
-        Just [(PdfArray ((ObjRef subref):_))] ->
-          case findObjFromDictWithRef subref "/FontDescriptor" objs of
-            Just (ObjRef desc) ->
-              case findObjFromDictWithRef desc "/FontFile2" objs of
-                Just (ObjRef fontfile) ->
-                  case rawStreamByRef sec objs fontfile of
-                    Right bs -> OpenType.cmap $ BSL.toStrict bs
-                    Left _ -> M.empty
-                _ -> M.empty
-            _ -> M.empty
-        _ -> M.empty
-    _ -> M.empty
+  case firstDescendantFontDict d objs of
+    Nothing -> M.empty
+    Just cidDict ->
+      let fd = fontDescriptorFromDict cidDict objs
+      in case findObjFromDict fd "/FontFile2" of
+           Just (ObjRef fontfile) ->
+             case rawStreamByRef sec objs fontfile of
+               Right bs -> OpenType.cmap $ BSL.toStrict bs
+               Left _ -> M.empty
+           _ -> M.empty
 
 
 fontInfo :: Maybe Security -> Int -> PDFObjIndex -> FontInfo
@@ -958,9 +953,17 @@ descendantFontObjsFromDict d objs =
     Just (PdfArray dfrs) -> dfrs
     Just (ObjRef r) -> case findObjsByRef r objs of
       Just (PdfArray dfrs : _) -> dfrs
+      Just os | isDescendantFontObj os -> [ObjRef r]
       Just os -> fromMaybe [] (findFirstArray os)
       Nothing -> []
     _ -> []
+  where
+    isDescendantFontObj os = case findDict os of
+      Just cd -> case M.lookup "/Subtype" cd of
+        Just (PdfName "/CIDFontType0") -> True
+        Just (PdfName "/CIDFontType2") -> True
+        _ -> False
+      Nothing -> False
 
 cidFontDict :: Obj -> PDFObjIndex -> Maybe Dict
 cidFontDict df objs = case df of

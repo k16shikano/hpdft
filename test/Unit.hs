@@ -282,6 +282,7 @@ interpretGeometryResults =
       scaled = runInterp "q 2 0 0 2 0 0 cm BT /F1 10 Tf 30 200 Td (Q) Tj Q ET"
       restore = runInterp "q 2 0 0 2 0 0 cm BT /F1 10 Tf 10 10 Td (A) Tj ET Q BT /F1 10 Tf 10 10 Td (B) Tj ET"
       vert = runInterpVertical "BT /F1 10 Tf 100 200 Td (A) Tj ET"
+      leadingDot = runInterp "q .913 0 0 .913 0 595.276 cm BT /F1 10 Tf 0 0 Td (X) Tj ET"
    in [ assertBool "interpret Tj AB produces one segment" (length ab == 1)
       , assertTextEq "interpret Tj AB text" (T.pack "AB") (glyphText (head ab))
       , assertGlyphOrigin "interpret Tj AB origin" 100 700 (head ab)
@@ -307,6 +308,9 @@ interpretGeometryResults =
       , assertGlyphWidth "interpret vertical width" 5 (head vert)
       , assertBool "interpret hex Tj without space" (length hexTj == 1)
       , assertTextEq "interpret hex Tj text" (T.pack "AB") (glyphText (head hexTj))
+      , assertBool "interpret leading-dot cm produces one segment" (length leadingDot == 1)
+      , assertGlyphSize "interpret leading-dot cm size" 9.13 (head leadingDot)
+      , assertGlyphWidth "interpret leading-dot cm width" 4.565 (head leadingDot)
       ]
   where
     hexTj = runInterp "BT /F1 10 Tf 0 0 Td <4142>Tj ET"

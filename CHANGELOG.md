@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2.0 (2026-07-05)
+
+### Fixed
+
+- `parsePdfNumber` now accepts leading-dot numbers (`.913` → `0.913`, `-.5` → `-0.5`) used by LaTeX/pdflatex `cm` operators; fixes zero glyph size and char-per-line layout fallback
+- Type0/CID fonts with `/DescendantFonts` as a direct object reference (not only array-wrapped) now resolve Adobe-Japan1 encoding and descendant `/W` widths
+- `codeToUnicode` falls back to Adobe-Japan1-6 when ToUnicode is missing on 2-byte CID fonts
+- Glyph advance uses `fiDefaultWidth` when per-code width lookup returns 0
+
 ## 0.4.3.0 (2026-07-05)
 
 ### Added

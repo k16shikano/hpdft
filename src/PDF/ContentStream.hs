@@ -702,11 +702,24 @@ digitParam = do
          ((++) <$> (many1 digit) <*> ((++) <$> (many $ char '.') <*> many digit))
   return $ parsePdfNumber $ sign ++ num
 
+normalizePdfNumber :: String -> String
+normalizePdfNumber s
+  | null s = s
+  | head s == '.' = '0' : s
+  | length s >= 2 && head s == '-' && s !! 1 == '.' = '-' : '0' : drop 2 s
+  | otherwise = s
+
 parsePdfNumber :: String -> Double
 parsePdfNumber s
-  | null s || s == "-" = 0
-  | last s == '.' = read (s ++ "0")
-  | otherwise = read s
+  | null s || s == "-" || s == "+" = 0
+  | last s == '.' =
+      case reads (normalizePdfNumber s ++ "0") of
+        [(n, "")] -> n
+        _         -> 0
+  | otherwise =
+      case reads (normalizePdfNumber s) of
+        [(n, "")] -> n
+        _         -> 0
 
 hexParam :: Parser T.Text
 hexParam = do

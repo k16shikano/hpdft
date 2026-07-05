@@ -505,9 +505,32 @@ lookupFontResource sec objs res fontName =
 fontFromDict :: Maybe Security -> PDFObjIndex -> Dict -> T.Text -> Maybe FontInfo
 fontFromDict sec objs fd name =
   case M.lookup name fd of
-    Just (ObjRef r) -> Just (fontInfo sec r objs)
-    Just (PdfDict d) -> Just (fontInfoFromDict sec objs d)
+    Just (ObjRef r) -> Just (repairCidFontInfo name (fontInfo sec r objs))
+    Just (PdfDict d) -> Just (repairCidFontInfo name (fontInfoFromDict sec objs d))
     _ -> Nothing
+
+repairCidFontInfo :: T.Text -> FontInfo -> FontInfo
+repairCidFontInfo name fi
+  | not (isCidFontName name) = fi
+  | fiBytesPerCode fi == 2, CIDmap{} <- fiEncoding fi = fi
+  | fiBytesPerCode fi == 2, Encoding{} <- fiEncoding fi = fi
+  | otherwise = defaultAdobeJapanFontInfo fi
+
+isCidFontName :: T.Text -> Bool
+isCidFontName name =
+  any (`T.isPrefixOf` name) ["/C0_", "/C1_", "/C2_", "/C3_"]
+
+defaultAdobeJapanFontInfo :: FontInfo -> FontInfo
+defaultAdobeJapanFontInfo fi =
+  let dw = if fiDefaultWidth fi == 0 then 1000 else fiDefaultWidth fi
+      widthFn cid = let w = fiWidth fi cid in if w == 0 then dw else w
+  in fi
+    { fiEncoding = CIDmap "Adobe-Japan1"
+    , fiBytesPerCode = 2
+    , fiDefaultWidth = dw
+    , fiWidth = widthFn
+    , fiWidthV = \cid -> let w = fiWidthV fi cid in if w == 0 then defaultVerticalW1 else w
+    }
 
 textTdSt :: Double -> Double -> IState -> IState
 textTdSt tx ty st =
@@ -600,7 +623,11 @@ codeToUnicode :: FontInfo -> Int -> T.Text
 codeToUnicode fi code =
   case M.lookup code (fiToUnicode fi) of
     Just s -> s
-    Nothing -> encodingUnicode (fiEncoding fi) code
+    Nothing ->
+      case fiEncoding fi of
+        NullMap | fiBytesPerCode fi == 2 ->
+          encodingUnicode (CIDmap "Adobe-Japan1") code
+        enc -> encodingUnicode enc code
 
 encodingUnicode :: Encoding -> Int -> T.Text
 encodingUnicode (Encoding enc) code =
@@ -631,15 +658,28 @@ safeChr n
   | n >= 0 && n <= 0x10FFFF = chr n
   | otherwise = '\xfffd'
 
+fontWidthUnits :: FontInfo -> Int -> Double
+fontWidthUnits fi code =
+  let w = fiWidth fi code
+  in if w == 0 then fiDefaultWidth fi else w
+
+fontWidthVUnits :: FontInfo -> Int -> Double
+fontWidthVUnits fi code =
+  let w = fiWidthV fi code
+  in if w == 0 then defaultVerticalW1 else w
+
+defaultVerticalW1 :: Double
+defaultVerticalW1 = -1000
+
 codeAdvance :: GState -> FontInfo -> Int -> (Double, Double)
 codeAdvance gs fi code =
   let tfs = gsFontSize gs
       tc = gsCharSp gs
       tw = gsWordSp gs
       th = gsHScale gs
-      w0 = fiWidth fi code / 1000
+      w0 = fontWidthUnits fi code / 1000
   in if fiWMode fi == 1
-     then (0, (fiWidthV fi code / 1000) * tfs + tc + tw)
+     then (0, (fontWidthVUnits fi code / 1000) * tfs + tc + tw)
      else let space = if fiBytesPerCode fi == 1 && code == 32 then tw else 0
           in ((w0 * tfs + tc + space) * th, 0)
 
@@ -831,15 +871,22 @@ isOpChar8 w =
   || (c >= '0' && c <= '9')
   || c == '*'
 
+normalizePdfNumber :: String -> String
+normalizePdfNumber s
+  | null s = s
+  | head s == '.' = '0' : s
+  | length s >= 2 && head s == '-' && s !! 1 == '.' = '-' : '0' : drop 2 s
+  | otherwise = s
+
 parsePdfNumber :: String -> Double
 parsePdfNumber s
   | null s || s == "-" || s == "+" = 0
   | last s == '.' =
-      case reads (s ++ "0") of
+      case reads (normalizePdfNumber s ++ "0") of
         [(n, "")] -> n
         _         -> 0
   | otherwise =
-      case reads s of
+      case reads (normalizePdfNumber s) of
         [(n, "")] -> n
         _         -> 0
 
