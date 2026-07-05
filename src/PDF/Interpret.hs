@@ -9,6 +9,7 @@ module PDF.Interpret
   , PageItem(..)
   , interpretPage
   , interpretPageItems
+  , interpretPageImageHits
   , interpretContent
   , interpretContentItems
   , interpretContentWithFonts
@@ -93,6 +94,8 @@ data IState = IState
   , gsStack       :: [GState]
   , tsCur         :: Maybe TState
   , itemsRev       :: [PageItem]
+  , imagesRev     :: [(Int, Rect)]
+  , collectImages :: Bool
   , pathAcc       :: [(Double, Double)]
   , depth         :: Int
   , isSec         :: Maybe Security
@@ -123,6 +126,8 @@ initialIState sec objs res = IState
   , gsStack = []
   , tsCur = Nothing
   , itemsRev = []
+  , imagesRev = []
+  , collectImages = False
   , pathAcc = []
   , depth = 0
   , isSec = sec
@@ -161,6 +166,19 @@ interpretPage doc pageRef = do
 
 interpretPageItems :: Document -> Int -> PdfResult [PageItem]
 interpretPageItems doc pageRef = do
+  (_, content, res) <- pageInterpretInputs doc pageRef
+  return $ interpretContentItems (docSecurity doc) (docObjs doc) res content
+
+interpretPageImageHits :: Document -> Int -> PdfResult [(Int, Rect)]
+interpretPageImageHits doc pageRef = do
+  (_, content, res) <- pageInterpretInputs doc pageRef
+  let st0 =
+        (initialIState (docSecurity doc) (docObjs doc) res)
+          {collectImages = True}
+  return $ reverse (imagesRev (runStream st0 content))
+
+pageInterpretInputs :: Document -> Int -> PdfResult (Dict, BSL.ByteString, Dict)
+pageInterpretInputs doc pageRef = do
   pageDict <- case findObjsByRef pageRef (docObjs doc) of
     Just os -> case findDictOfType "/Page" os of
       Just d -> Right d
@@ -170,7 +188,7 @@ interpretPageItems doc pageRef = do
     Just r -> Right r
     Nothing -> Right M.empty
   content <- pageContentsBytes (docSecurity doc) (docObjs doc) pageDict
-  return $ interpretContentItems (docSecurity doc) (docObjs doc) res content
+  return (pageDict, content, res)
 
 pageResourcesInherited :: Dict -> PDFObjIndex -> Maybe Dict
 pageResourcesInherited dict objs =
@@ -676,7 +694,12 @@ runXObjectSt ref st0
                   in stPop {itemsRev = itemsRev stDone, depth = depth st0, isRes = isRes st0}
                 Left _ -> st0
             Just (PdfName "/Image") ->
-              emitGraphicSt (ctmUnitSquare (ctm (gsCur st0))) st0
+              let bbox = ctmUnitSquare (ctm (gsCur st0))
+                  st1 =
+                    if collectImages st0
+                      then st0 {imagesRev = (ref, bbox) : imagesRev st0}
+                      else st0
+               in emitGraphicSt bbox st1
             _ -> st0
           Nothing -> st0
         Nothing -> st0

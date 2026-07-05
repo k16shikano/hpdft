@@ -1,6 +1,6 @@
 cabal-version:       3.12
 name:                hpdft
-version:             0.4.2.0
+version:             0.4.3.0
 synopsis:            A tool for looking through PDF file using Haskell
 description:
     
@@ -45,6 +45,7 @@ library
                      , PDF.Text
                      , PDF.Page
                      , PDF.Diff
+                     , PDF.Image
                      , PDF.Type1
                      , PDF.Matrix
                      , PDF.Interpret
@@ -60,6 +61,7 @@ library
                      , crypton >= 0.34 && < 0.36
                      , directory >= 1.3.9 && < 1.4
                      , file-embed >= 0.0.16 && < 0.1
+                     , filepath >= 1.5.2 && < 1.6
                      , memory >= 0.18.0 && < 0.19
                      , optparse-applicative >= 0.18.1 && < 0.19
                      , parsec >= 3.1.18 && < 3.2

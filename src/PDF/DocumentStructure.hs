@@ -37,6 +37,7 @@ module PDF.DocumentStructure
        , simpleWidthAt
        , findResourcesDict
        , decodeStreamBytes
+       , streamFilterNames
        ) where
 
 import Data.Char (chr, isDigit, ord)

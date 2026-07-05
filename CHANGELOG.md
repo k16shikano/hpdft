@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.3.0 (2026-07-05)
+
+### Added
+
+- `PDF.Image` — extract `/Image` XObjects from a page (`extractPageImages`, `extractPageImagesToDir`)
+- `hpdft extract images -p PAGE -o DIR FILE` CLI subcommand (JPEG pass-through; DeviceRGB/Gray 8-bit → minimal PNG encoder)
+- Nested Form XObject images collected via extended `PDF.Interpret` walk
+- Fixture `data/fixtures/jpeg-image.pdf` and unit tests for image extraction and PNG encoding
+
+### Known limitations
+
+- Inline images (`BI` … `EI`) are not extracted in 0.4.3 (planned for a later release)
+- Non-JPEG, non–8-bit DeviceRGB/Gray images are written as `.raw` with a JSON sidecar
+
 ## 0.4.2.0 (2026-07-05)
 
 ### Added

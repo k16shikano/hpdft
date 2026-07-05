@@ -15,6 +15,7 @@ import PDF.Encrypt (Security)
 import PDF.Text (pdfToTextWithWarnings, pdfToTextGeomBSWith, pdfToTextTaggedBSWith, pageTextGeomWith)
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions)
 import PDF.Diff (TextChange(..), compareDocuments)
+import PDF.Image (extractPageImagesToDir)
 import PDF.Error (PdfError(..), PdfResult, PdfWarning(..), renderPdfWarning)
 
 import System.Environment (getArgs)
@@ -71,7 +72,7 @@ versionInfo = "hpdft - a PDF to text converter, version " <> showVersion Autogen
 
 -- | Top-level command dispatch.
 data Cmd
-  = CmdExtract ExtractOpt
+  = CmdExtract ExtractSub
   | CmdDiff DiffOpt
   | CmdInfo FilePath (Maybe String)
   | CmdTitle FilePath (Maybe String)
@@ -80,6 +81,10 @@ data Cmd
   | CmdObject Int FilePath (Maybe String)
   | CmdRefs FilePath (Maybe String)
   | CmdGrep String FilePath (Maybe String)
+
+data ExtractSub
+  = SubExtractText ExtractOpt
+  | SubExtractImages ImagesOpt
 
 data ExtractOpt = ExtractOpt
   { eoPage      :: Int
@@ -90,6 +95,13 @@ data ExtractOpt = ExtractOpt
   , eoRuby      :: Bool
   , eoPassword  :: String
   , eoFile      :: FilePath
+  }
+
+data ImagesOpt = ImagesOpt
+  { ioPage     :: Int
+  , ioOut      :: FilePath
+  , ioPassword :: String
+  , ioFile     :: FilePath
   }
 
 data DiffOpt = DiffOpt
@@ -118,12 +130,37 @@ commandParser = subparser
 extractCommand :: Parser Cmd
 extractCommand = CmdExtract <$> extractSub
 
-extractSub :: Parser ExtractOpt
+extractSub :: Parser ExtractSub
 extractSub =
   subparser
-    (command "text" (info extractOpts (progDesc "Extract text (explicit)")))
-  <|> extractOpts
+    (  command "text" (info (SubExtractText <$> extractOpts) (progDesc "Extract text (explicit)"))
+    <> command "images" (info (SubExtractImages <$> imagesOpts) (progDesc "Extract image XObjects from a page"))
+    )
+  <|> SubExtractText <$> extractOpts
 
+imagesOpts :: Parser ImagesOpt
+imagesOpts = ImagesOpt
+  <$> option auto
+      ( long "page"
+        <> short 'p'
+        <> metavar "PAGE"
+        <> help "Page number (1-based, required)" )
+  <*> strOption
+      ( long "output"
+        <> short 'o'
+        <> value "."
+        <> metavar "DIR"
+        <> help "Output directory (default: current directory)" )
+  <*> strOption
+      ( long "password"
+        <> short 'P'
+        <> value ""
+        <> metavar "PASSWORD"
+        <> help "Password for encrypted PDF" )
+  <*> strArgument
+      ( help "input pdf file"
+        <> metavar "FILE"
+        <> action "file" )
 extractOpts :: Parser ExtractOpt
 extractOpts = ExtractOpt
   <$> option auto
@@ -336,7 +373,7 @@ legacyToCmd LegacyOpt{loPage=pg, loRef=rf, loGrep=gr, loRefs=rs, loGeom=gm,
                       loPassword=pw, loFile=fn} =
   let mpw = maybePassword pw
       noMode = not gm && not tg && not lg
-      extract = ExtractOpt pg gm tg lg fnn rb pw fn
+      extract = SubExtractText (ExtractOpt pg gm tg lg fnn rb pw fn)
   in case () of
     _ | pg==0 && rf==0 && null gr && not rs && lg && not gm && not tg && not tt && not ii && not oo && not tr ->
         CmdExtract extract
@@ -365,7 +402,7 @@ legacyToCmd LegacyOpt{loPage=pg, loRef=rf, loGrep=gr, loRefs=rs, loGeom=gm,
 
 runCmd :: Cmd -> IO ()
 runCmd cmd = case cmd of
-  CmdExtract opt -> runExtract opt
+  CmdExtract sub -> runExtractSub sub
   CmdDiff opt -> runDiff opt
   CmdInfo fn mpw -> withFile fn $ showInfo fn mpw
   CmdTitle fn mpw -> withFile fn $ showTitle fn mpw
@@ -375,8 +412,13 @@ runCmd cmd = case cmd of
   CmdRefs fn mpw -> withFile fn $ showRefs fn mpw
   CmdGrep re fn mpw -> withFile fn $ grepPDF defaultLayoutOptions fn mpw re
 
-runExtract :: ExtractOpt -> IO ()
-runExtract ExtractOpt{eoPage=pg, eoGeom=gm, eoTagged=tg, eoLegacy=lg,
+runExtractSub :: ExtractSub -> IO ()
+runExtractSub sub = case sub of
+  SubExtractText opt -> runExtractText opt
+  SubExtractImages opt -> runExtractImages opt
+
+runExtractText :: ExtractOpt -> IO ()
+runExtractText ExtractOpt{eoPage=pg, eoGeom=gm, eoTagged=tg, eoLegacy=lg,
                       eoFootnotes=fnn, eoRuby=rb, eoPassword=pw, eoFile=fn} =
   withFile fn $
   let mpw = maybePassword pw
@@ -389,6 +431,18 @@ runExtract ExtractOpt{eoPage=pg, eoGeom=gm, eoTagged=tg, eoLegacy=lg,
          | gm && not tg && not lg -> pdfToTextGeom lopts fn mpw
          | tg || noMode           -> pdfToTextTagged lopts fn mpw
          | otherwise              -> pdfToTextTagged lopts fn mpw
+
+runExtractImages :: ImagesOpt -> IO ()
+runExtractImages ImagesOpt{ioPage=pg, ioOut=out, ioPassword=pw, ioFile=fn} =
+  withFile fn $
+  if pg < 1
+    then do
+      hPutStrLn stderr "hpdft: extract images requires -p PAGE (1-based)"
+      exitWith (ExitFailure 1)
+    else do
+      doc <- runOrDie (openDocument fn (maybePassword pw))
+      paths <- runOrDie (extractPageImagesToDir doc pg out)
+      mapM_ putStrLn paths
 
 runDiff :: DiffOpt -> IO ()
 runDiff DiffOpt{doRuby=rb, doJson=json, doPassword=pw, doFileA=fa, doFileB=fb} =

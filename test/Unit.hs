@@ -7,6 +7,7 @@ import PDF.Interpret
   , PageItem(..)
   , interpretContentWithFonts
   , interpretContentWithFontsItems
+  , interpretPageImageHits
   )
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, needsAozoraBar, aozoraRuby, layoutParagraphs, layoutParagraphsWith, layoutPageText, layoutDocument, sortLinesByReadingOrder, linesFromGlyphs, Line(..))
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
@@ -14,17 +15,26 @@ import PDF.Document (Document(..), openDocument)
 import PDF.Page (pageCount, pageRefAt, pageParagraphs)
 import PDF.Diff (TextChange(..), compareDocuments, diffParagraphs)
 import PDF.DocumentStructure (parseCIDWidths, simpleWidthAt, decodeStreamBytes)
+import PDF.Image
+  ( ImageFormat(..)
+  , PageImage(..)
+  , classifyImageBytes
+  , encodePngRgb
+  , extractPageImages
+  )
 import PDF.Text (pdfToTextTaggedBS)
 import PDF.Error (PdfResult)
 
 import qualified Data.Map as M
-import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy.Char8 as BSLC
 import qualified Data.Text as T
 
 import System.Exit (exitFailure)
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad (when)
+import Data.Word (Word8)
 
 epsilon :: Double
 epsilon = 1e-9
@@ -146,6 +156,7 @@ main = do
           ++ pageApiResults
           ++ diffResults
           ++ filterDecodeResults
+          ++ imageExtractResults
           ++ taggedEndToEndResults
   let failures = [msg | Fail msg <- results]
       passed = length results - length failures
@@ -881,12 +892,12 @@ filterDecodeResults :: [Result]
 filterDecodeResults =
   [ assertBool "DCTDecode pass-through"
       ( case decodeStreamBytes dctDict (BSLC.pack jpegStub) of
-          Right bs -> bs == BS.pack jpegStub
+          Right bs -> bs == BSC.pack jpegStub
           _ -> False
       )
   , assertBool "no filter pass-through"
       ( case decodeStreamBytes noFilterDict (BSLC.pack "plain") of
-          Right bs -> bs == BS.pack "plain"
+          Right bs -> bs == BSC.pack "plain"
           _ -> False
       )
   ]
@@ -894,6 +905,101 @@ filterDecodeResults =
     dctDict = M.fromList [("/Filter", PdfName "/DCTDecode")]
     noFilterDict = M.empty
     jpegStub = "\xff\xd8\xff\xe0" ++ replicate 10 'x' ++ "\xff\xd9"
+
+imageExtractResults :: [Result]
+imageExtractResults =
+  pngEncodeResults
+    ++ classifyImageResults
+    ++ pageImageFixtureResults
+
+pngEncodeResults :: [Result]
+pngEncodeResults =
+  let w = 2
+      h = 2
+      rgb = BS.pack (map (fromIntegral :: Int -> Word8) [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255])
+      pngSig = BS.pack (map (fromIntegral :: Int -> Word8) [137, 80, 78, 71, 13, 10, 26, 10])
+   in [ assertBool "encodePngRgb signature"
+          ( case encodePngRgb w h rgb of
+              Right png -> BS.take 8 png == pngSig
+              _ -> False
+          )
+      , assertBool "encodePngRgb IHDR chunk"
+          ( case encodePngRgb w h rgb of
+              Right png -> BS.length png > 40
+              _ -> False
+          )
+      ]
+
+classifyImageResults :: [Result]
+classifyImageResults =
+  let dctDict = M.fromList [("/Filter", PdfName "/DCTDecode")]
+      jpegBs = BSC.pack jpegStub
+   in [ assertBool "classifyImageBytes DCTDecode"
+          ( case classifyImageBytes M.empty dctDict jpegBs of
+              Right (ImageJPEG, bs) -> bs == jpegBs
+              _ -> False
+          )
+      , assertBool "classifyImageBytes raw RGB to PNG"
+          ( case classifyImageBytes M.empty rgbDict (BS.replicate 12 0) of
+              Right (ImagePNG, png) ->
+                BS.take 8 png
+                  == BS.pack (map (fromIntegral :: Int -> Word8) [137, 80, 78, 71, 13, 10, 26, 10])
+              _ -> False
+          )
+      ]
+  where
+    rgbDict =
+      M.fromList
+        [ ("/Width", PdfNumber 2)
+        , ("/Height", PdfNumber 2)
+        , ("/BitsPerComponent", PdfNumber 8)
+        , ("/ColorSpace", PdfName "/DeviceRGB")
+        ]
+    jpegStub = "\xff\xd8\xff\xe0" ++ replicate 10 'x' ++ "\xff\xd9"
+
+pageImageFixtureResults :: [Result]
+pageImageFixtureResults =
+  [ runJpegImageFixture
+  , runJpegImageHits
+  ]
+
+runJpegImageFixture :: Result
+runJpegImageFixture =
+  let path = "data/fixtures/jpeg-image.pdf"
+  in unsafePerformIO $ do
+    result <- openDocument path Nothing
+    return $ case result of
+      Right doc ->
+        case extractPageImages doc 1 of
+          Right [img]
+            | piFormat img == ImageJPEG
+                && BS.take 2 (piBytes img) == BS.pack [0xff, 0xd8] ->
+                pass "jpeg-image.pdf extractPageImages"
+          Right xs ->
+            testFail "jpeg-image.pdf extractPageImages" ("expected 1 image, got " ++ show (length xs))
+          Left err -> testFail "jpeg-image.pdf extractPageImages" (show err)
+      Left err -> testFail "jpeg-image.pdf open" (show err)
+
+runJpegImageHits :: Result
+runJpegImageHits =
+  let path = "data/fixtures/jpeg-image.pdf"
+  in unsafePerformIO $ do
+    result <- openDocument path Nothing
+    return $ case result of
+      Right doc ->
+        case pageRefAt doc 1 of
+          Right r ->
+            case interpretPageImageHits doc r of
+              Right [(ref, bbox)]
+                | ref == 5 && approxEq 50 (rectX0 bbox) ->
+                    pass "jpeg-image interpretPageImageHits"
+              Right xs -> testFail "jpeg-image hits" ("unexpected hits " ++ show xs)
+              Left err -> testFail "jpeg-image hits" (show err)
+          Left err -> testFail "jpeg-image pageRefAt" (show err)
+      Left err -> testFail "jpeg-image open hits" (show err)
+
+{-# NOINLINE runJpegImageFixture #-}
+{-# NOINLINE runJpegImageHits #-}
 
 runTaggedFixture :: Result
 runTaggedFixture =

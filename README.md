@@ -18,6 +18,7 @@ Legacy flat-flag invocation (`hpdft document.pdf`, `hpdft -p 3 document.pdf`) st
 ```
 hpdft extract [OPTIONS] FILE              # text extraction (tagged → geom)
 hpdft extract text [OPTIONS] FILE         # explicit text extraction
+hpdft extract images -p PAGE -o DIR FILE   # image XObjects from one page
 hpdft diff [OPTIONS] FILE_A FILE_B        # paragraph-level diff
 hpdft info FILE                           # PDF metadata
 hpdft title FILE                          # document title
@@ -37,6 +38,12 @@ Extract options:
   -P,--password PASSWORD   Password for encrypted PDF
   FILE                     input pdf file
   -h,--help                Show help text
+
+Extract images options:
+  -p,--page PAGE           Page number (1-based, required)
+  -o,--output DIR          Output directory (default: current directory)
+  -P,--password PASSWORD   Password for encrypted PDF
+  FILE                     input pdf file
 
 Diff options:
   --json                   JSON output
@@ -78,6 +85,7 @@ cabal run interpret-page -- FILE PAGE   # debug glyph positions
 |--------|---------|
 | `PDF.Document` | Single-read document handle |
 | `PDF.Page` | Page enumeration and structured extraction |
+| `PDF.Image` | Image XObject extraction |
 | `PDF.Diff` | Paragraph-level document comparison |
 | `PDF.Text` | Text extraction drivers |
 | `PDF.Interpret` | Content-stream geometry interpreter |
@@ -87,5 +95,5 @@ cabal run interpret-page -- FILE PAGE   # debug glyph positions
 
 ## Version
 
-Released: **0.4.2.0** on `feature/0.4-api` (2026-07-05).
-Previous release: **0.4.1.0**.
+Released: **0.4.3.0** on `feature/0.4-api` (2026-07-05).
+Previous release: **0.4.2.0**.
