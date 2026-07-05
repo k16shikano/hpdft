@@ -14,6 +14,9 @@ module PDF.Interpret
   , interpretContentItems
   , interpretContentWithFonts
   , interpretContentWithFontsItems
+  , bytesToCodes
+  , encodingUnicode
+  , unicodeBytesToCodes
   ) where
 
 import PDF.Definition
@@ -30,13 +33,14 @@ import PDF.DocumentStructure
   , rawStreamByRef
   )
 import PDF.Matrix
-import PDF.Character (pdfcharmap, adobeJapanOneSixMap)
+import PDF.Character (pdfcharmap, adobeJapanOneSixMap, cp932Map, jisx0208Map)
 import PDF.Encrypt (Security)
 import PDF.Error (PdfError(..), PdfResult)
 import PDF.Object (parseRefsArray)
 
 import Data.Char (chr, isDigit, ord)
 import Data.List (find, foldl', isPrefixOf)
+import Data.Bits (shiftL)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Word (Word8)
 import qualified Numeric as Num
@@ -577,6 +581,9 @@ repairCidFontInfo name fi
   | not (isCidFontName name) = fi
   | fiBytesPerCode fi == 2, CIDmap{} <- fiEncoding fi = fi
   | fiBytesPerCode fi == 2, Encoding{} <- fiEncoding fi = fi
+  | SJISmap <- fiEncoding fi = fi
+  | UnicodeMap <- fiEncoding fi = fi
+  | JISmap <- fiEncoding fi = fi
   | otherwise = defaultAdobeJapanFontInfo fi
 
 isCidFontName :: T.Text -> Bool
@@ -674,13 +681,56 @@ glyphStep gs fi (txt, tm) code =
 
 bytesToCodes :: FontInfo -> [Int] -> [Int]
 bytesToCodes fi bytes =
-  if fiBytesPerCode fi == 2
-  then pairs bytes
-  else bytes
+  case fiEncoding fi of
+    SJISmap -> sjisBytesToCodes bytes
+    UnicodeMap -> unicodeBytesToCodes bytes
+    JISmap -> jisBytesToCodes bytes
+    _ | fiBytesPerCode fi == 2 -> pairs bytes
+    _ -> bytes
   where
     pairs [] = []
     pairs [_] = []
     pairs (a:b:rest) = (a * 256 + b) : pairs rest
+
+isUtf16HighSurrogate :: Int -> Bool
+isUtf16HighSurrogate u = u >= 0xD800 && u <= 0xDBFF
+
+isUtf16LowSurrogate :: Int -> Bool
+isUtf16LowSurrogate u = u >= 0xDC00 && u <= 0xDFFF
+
+surrogatePairToCode :: Int -> Int -> Int
+surrogatePairToCode hi lo = 0x10000 + ((hi - 0xD800) `shiftL` 10) + (lo - 0xDC00)
+
+unicodeBytesToCodes :: [Int] -> [Int]
+unicodeBytesToCodes [] = []
+unicodeBytesToCodes [_] = []
+unicodeBytesToCodes (a:b:rest) =
+  let unit = a * 256 + b
+  in if isUtf16HighSurrogate unit
+     then case rest of
+       (c:d:rs) ->
+         let unit2 = c * 256 + d
+         in if isUtf16LowSurrogate unit2
+            then surrogatePairToCode unit unit2 : unicodeBytesToCodes rs
+            else unit : unicodeBytesToCodes rest
+       _ -> [unit]
+     else unit : unicodeBytesToCodes rest
+
+jisBytesToCodes :: [Int] -> [Int]
+jisBytesToCodes [] = []
+jisBytesToCodes [_] = []
+jisBytesToCodes (a:b:rest) = (a * 256 + b) : jisBytesToCodes rest
+
+isSjisLead :: Int -> Bool
+isSjisLead b = (b >= 0x81 && b <= 0x9F) || (b >= 0xE0 && b <= 0xFC)
+
+sjisBytesToCodes :: [Int] -> [Int]
+sjisBytesToCodes [] = []
+sjisBytesToCodes (b:rest)
+  | isSjisLead b = case rest of
+      (t:rs) -> (b * 256 + t) : sjisBytesToCodes rs
+      _ -> [b]
+  | otherwise = b : sjisBytesToCodes rest
 
 codeToUnicode :: FontInfo -> Int -> T.Text
 codeToUnicode fi code =
@@ -710,6 +760,21 @@ encodingUnicode (CIDmap "Adobe-Japan1") code =
     Just bs -> T.pack (BSLU.toString bs)
     Nothing -> T.singleton (safeChr code)
 encodingUnicode (CIDmap _) code = T.singleton (safeChr code)
+encodingUnicode SJISmap code =
+  case M.lookup code cp932Map of
+    Just bs -> T.pack (BSLU.toString bs)
+    Nothing ->
+      if code >= 0 && code <= 0x7F
+      then T.singleton (safeChr code)
+      else "\xFFFD"
+encodingUnicode UnicodeMap code = T.singleton (safeChr code)
+encodingUnicode JISmap code =
+  case M.lookup code jisx0208Map of
+    Just bs -> T.pack (BSLU.toString bs)
+    Nothing ->
+      if code >= 0 && code <= 0x7F
+      then T.singleton (safeChr code)
+      else "\xFFFD"
 encodingUnicode (WithCharSet "ZapfDingbats") code =
   fromMaybe (T.singleton (safeChr code)) (dingbatCodeUnicode code)
 encodingUnicode (WithCharSet _) code = T.singleton (safeChr code)
@@ -1012,11 +1077,15 @@ parseLiteral (c : rest) depth acc = parseLiteral rest depth (ord c : acc)
 
 readHexString :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
 readHexString bs =
-  let hex = BSL.takeWhile hexDigit8 (BSL.tail bs)
-      rest = BSL.drop (1 + BSL.length hex) bs
-  in case BSL.uncons rest of
-       Just (62, r) -> Just (TokOperand (PdfHex (T.pack (map w2c (BSL.unpack hex)))), r)
-       _ -> Nothing
+  case BSL.break ((== 62) . fromIntegral) (BSL.tail bs) of
+    (hexBody, rest) ->
+      case BSL.uncons rest of
+        Just (_, r) ->
+          let hex = BSL.filter hexDigit8 hexBody
+          in if BSL.null hex
+             then Nothing
+             else Just (TokOperand (PdfHex (T.pack (map w2c (BSL.unpack hex)))), r)
+        _ -> Nothing
 
 readArray :: BSL.ByteString -> Maybe (Token, BSL.ByteString)
 readArray bs = parseArrayElems (BSL.tail bs) []

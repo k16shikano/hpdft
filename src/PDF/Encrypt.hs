@@ -17,6 +17,10 @@ import Data.Bits (shiftL, shiftR, xor, (.&.))
 import Data.List (foldl')
 import qualified Data.Map as M
 import Control.Applicative ((<|>))
+import Control.Monad (forM_, forM)
+import Control.Monad.ST (ST, runST)
+import Data.Array.ST (STUArray, newArray, readArray, writeArray)
+import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Word (Word8, Word32)
 import Numeric (readHex)
 
@@ -225,7 +229,7 @@ int16LE n =
 rc4Decrypt :: BS.ByteString -> BS.ByteString -> BS.ByteString
 rc4Decrypt key ciphertext =
   let ks = rc4KeyStream key (BS.length ciphertext)
-  in BS.pack $ zipWith xor (BS.unpack ciphertext) ks
+  in BS.pack $ zipWith xor (BS.unpack ciphertext) (BS.unpack ks)
 
 rc4DecryptRev3 :: Int -> BS.ByteString -> BS.ByteString -> BS.ByteString
 rc4DecryptRev3 keyLen key ciphertext =
@@ -233,31 +237,45 @@ rc4DecryptRev3 keyLen key ciphertext =
          ciphertext
          [19,18..0]
 
-rc4KeyStream :: BS.ByteString -> Int -> [Word8]
-rc4KeyStream key nbytes =
-  let keyInts = map fromIntegral (BS.unpack key) :: [Int]
-      state = ksaInit keyInts
-  in map fromIntegral $ take nbytes $ prga state
-  where
-    ksaInit k' =
-      let len = length k'
-          step (st, j) i =
-            let j' = (j + st !! i + k' !! (i `mod` len)) `mod` 256
-                st' = swap st i j'
-            in (st', j')
-      in fst $ foldl' step ([0..255], 0) [0..255]
-    prga st = reverse $ go st 0 0 []
-      where go sbox i j out
-              | length out >= nbytes = out
-              | otherwise =
-                  let i' = (i + 1) `mod` 256
-                      j' = (j + sbox !! i') `mod` 256
-                      s' = swap sbox i' j'
-                      byte = s' !! ((s' !! i' + s' !! j') `mod` 256)
-                  in go s' i' j' (byte:out)
-    swap s i j =
-      [ if x == i then s !! j else if x == j then s !! i else v
-      | (x, v) <- zip [0..] s ]
+rc4KeyStream :: BS.ByteString -> Int -> BS.ByteString
+rc4KeyStream _ nbytes | nbytes <= 0 = BS.empty
+rc4KeyStream key nbytes = runST $ do
+  let keyLen = BS.length key
+  sbox <- newArray (0, 255) 0 :: ST s (STUArray s Int Word8)
+  forM_ [0..255] $ \i -> writeArray sbox i (fromIntegral i :: Word8)
+  jRef <- newSTRef (0 :: Int)
+  forM_ [0..255] $ \i -> do
+    j <- readSTRef jRef
+    si <- fmap fromIntegral (readArray sbox i)
+    kj <- return $ fromIntegral (BS.index key (i `mod` keyLen))
+    let j' = (j + si + kj) `mod` 256
+    rc4Swap sbox i j'
+    writeSTRef jRef j'
+  out <- (newArray (0, nbytes - 1) (0 :: Word8) :: ST s (STUArray s Int Word8))
+  iRef <- newSTRef 0
+  jRef2 <- newSTRef 0
+  forM_ [0..nbytes - 1] $ \n -> do
+    i <- readSTRef iRef
+    j <- readSTRef jRef2
+    let i' = (i + 1) `mod` 256
+    si <- fmap fromIntegral (readArray sbox i')
+    let j' = (j + si) `mod` 256
+    rc4Swap sbox i' j'
+    a <- fmap fromIntegral (readArray sbox i')
+    b <- fmap fromIntegral (readArray sbox j')
+    byte <- readArray sbox ((a + b) `mod` 256)
+    writeArray out n byte
+    writeSTRef iRef i'
+    writeSTRef jRef2 j'
+  arr <- forM [0..nbytes - 1] (readArray out)
+  return (BS.pack arr)
+
+rc4Swap :: STUArray s Int Word8 -> Int -> Int -> ST s ()
+rc4Swap arr i j = do
+  a <- readArray arr i
+  b <- readArray arr j
+  writeArray arr i b
+  writeArray arr j a
 
 decryptString :: Maybe Security -> Int -> Int -> BS.ByteString -> BS.ByteString
 decryptString Nothing _ _ bs = bs

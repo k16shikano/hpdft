@@ -8,6 +8,9 @@ import PDF.Interpret
   , interpretContentWithFonts
   , interpretContentWithFontsItems
   , interpretPageImageHits
+  , bytesToCodes
+  , encodingUnicode
+  , unicodeBytesToCodes
   )
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, needsAozoraBar, aozoraRuby, layoutParagraphs, layoutParagraphsWith, layoutPageText, layoutDocument, sortLinesByReadingOrder, linesFromGlyphs, Line(..))
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
@@ -15,6 +18,7 @@ import PDF.Document (Document(..), openDocument)
 import PDF.Page (pageCount, pageRefAt, pageParagraphs)
 import PDF.Diff (TextChange(..), compareDocuments, diffParagraphs)
 import PDF.DocumentStructure (parseCIDWidths, simpleWidthAt, decodeStreamBytes)
+import PDF.Character (jisx0208Map)
 import PDF.Image
   ( ImageFormat(..)
   , PageImage(..)
@@ -182,6 +186,7 @@ main = do
           ++ formExtractResults
           ++ taggedEndToEndResults
           ++ textStreamResults
+          ++ cmapEncodingResults
           ++ tuiScrollResults
   let failures = [msg | Fail msg <- results]
       passed = length results - length failures
@@ -1317,5 +1322,58 @@ tuiScrollResults =
           (padToDisplayWidth 6 "あ" == "あ    ")
       , assertBool "tuiScroll pad straddling wide char"
           (stringDisplayWidth (padToDisplayWidth 4 "あい") == 4)
+      ]
+
+cmapTestFontInfo :: Encoding -> FontInfo
+cmapTestFontInfo enc =
+  FontInfo
+    { fiEncoding = enc
+    , fiToUnicode = M.empty
+    , fiWidth = const 1000
+    , fiWidthV = const 1000
+    , fiWMode = 0
+    , fiBytesPerCode = 2
+    , fiDefaultWidth = 1000
+    }
+
+cmapEncodingResults :: [Result]
+cmapEncodingResults =
+  let ufi = cmapTestFontInfo UnicodeMap
+      jfi = cmapTestFontInfo JISmap
+      bmp = [0x65, 0xE5, 0x67, 0x2C]
+      mixed = [0x65, 0xE5, 0xD8, 0x3D, 0xDE, 0x00, 0x67, 0x2C]
+      odd = [0x65, 0xE5, 0x67]
+   in [ assertBool "unicodeBytesToCodes BMP"
+          (unicodeBytesToCodes bmp == [0x65E5, 0x672C])
+      , assertBool "unicodeBytesToCodes surrogate pair"
+          (unicodeBytesToCodes [0xD8, 0x3D, 0xDE, 0x00] == [0x1F600])
+      , assertBool "unicodeBytesToCodes BMP and surrogate mixed"
+          (unicodeBytesToCodes mixed == [0x65E5, 0x1F600, 0x672C])
+      , assertBool "unicodeBytesToCodes odd trailing byte"
+          (unicodeBytesToCodes odd == [0x65E5])
+      , assertBool "bytesToCodes UnicodeMap via FontInfo"
+          (bytesToCodes ufi bmp == [0x65E5, 0x672C])
+      , assertTextEq "encodingUnicode UnicodeMap BMP"
+          "\x65E5"
+          (encodingUnicode UnicodeMap 0x65E5)
+      , assertTextEq "encodingUnicode UnicodeMap invalid"
+          "\xFFFD"
+          (encodingUnicode UnicodeMap 0x110000)
+      , assertTextEq "encodingUnicode JISmap 0x3021"
+          "\x4E9C"
+          (encodingUnicode JISmap 0x3021)
+      , assertTextEq "encodingUnicode JISmap 0x2422"
+          "\x3042"
+          (encodingUnicode JISmap 0x2422)
+      , assertTextEq "encodingUnicode JISmap ASCII"
+          "A"
+          (encodingUnicode JISmap 0x41)
+      , assertTextEq "encodingUnicode JISmap missing"
+          "\xFFFD"
+          (encodingUnicode JISmap 0x2021)
+      , assertBool "jisx0208Map has 日本語 codes"
+          (M.member 0x467C jisx0208Map && M.member 0x4B5C jisx0208Map)
+      , assertBool "bytesToCodes JISmap 2-byte fixed"
+          (bytesToCodes jfi [0x46, 0x7C, 0x4B, 0x5C] == [0x467C, 0x4B5C])
       ]
 

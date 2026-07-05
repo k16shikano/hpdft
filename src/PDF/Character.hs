@@ -4,7 +4,9 @@
 module PDF.Character
        ( pdfcharmap
        , extendedAscii
-       , adobeJapanOneSixMap) where
+       , adobeJapanOneSixMap
+       , cp932Map
+       , jisx0208Map) where
 
 import qualified Data.Text as T
 import qualified Data.Map as Map
@@ -20,6 +22,12 @@ extendedAscii = Map.fromList extendedasciidict
 
 adobeJapanOneSixMap :: Map.Map Int BSLU.ByteString
 adobeJapanOneSixMap = decode . decompress . BSL.fromChunks . (:[]) $ $(embedFile "data/map/Adobe-Japan1-6.map")
+
+cp932Map :: Map.Map Int BSLU.ByteString
+cp932Map = decode . decompress . BSL.fromChunks . (:[]) $ $(embedFile "data/map/cp932.map")
+
+jisx0208Map :: Map.Map Int BSLU.ByteString
+jisx0208Map = decode . decompress . BSL.fromChunks . (:[]) $ $(embedFile "data/map/jisx0208.map")
 
 extendedasciidict :: [(Int, Char)]
 extendedasciidict =

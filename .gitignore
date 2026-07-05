@@ -20,3 +20,6 @@ cabal.sandbox.config
 # Local PDF fixtures (not redistributable)
 data/sample/*
 !data/sample/.gitkeep
+
+# Python is not allowed in this repository; never commit generated helper scripts
+*.py

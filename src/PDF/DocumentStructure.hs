@@ -45,6 +45,7 @@ import Data.List (find, foldl', isSuffixOf, nub)
 import Data.Bits ((.&.), shiftR)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
+import qualified Data.ByteString.Lazy.UTF8 as BSLU
 import qualified Data.ByteString.Builder as B
 import qualified Data.Text as T
 import Data.Maybe (fromMaybe, listToMaybe)
@@ -129,9 +130,10 @@ buildIndex bytes msec xref = objs
           in maybe [PdfNull] (parseObjStmObject body) off
         Nothing -> [PdfNull]
     objStmBody cnum =
-      case rawStream msec cnum (M.findWithDefault [PdfNull] cnum objs) of
+      let containerObjs = M.findWithDefault [PdfNull] cnum objs
+      in case rawStream msec cnum containerObjs of
         Right streamBytes ->
-          case parseObjStmHeader (BSL.toStrict streamBytes) of
+          case parseObjStmHeader (objStmFirst containerObjs) (BSL.toStrict streamBytes) of
             Right cache -> cache
             Left _ -> ([], BS.empty)
         Left _ -> ([], BS.empty)
@@ -203,9 +205,50 @@ contentsStream dict st sec objs = case M.lookup "/Contents" dict of
 
 parseContentStream :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> BSL.ByteString -> PdfResult (PDFStream, [PdfWarning])
 parseContentStream dict st sec objs s =
-  parseStream (st {fontmaps=fontdict, cmaps=cmap}) s
+  parseStream (formTextRunner sec objs) (st {fontmaps=fontdict, cmaps=cmap, psResDict=Just dict}) s
   where fontdict = findFontEncoding dict sec objs
         cmap = findCMap dict sec objs
+
+maxLegacyFormDepth :: Int
+maxLegacyFormDepth = 12
+
+formTextRunner :: Maybe Security -> PDFObjIndex -> T.Text -> PSR -> T.Text
+formTextRunner sec objs name st
+  | psFormDepth st >= maxLegacyFormDepth = T.empty
+  | otherwise =
+      case formStream sec objs (psResDict st) name of
+        Nothing -> T.empty
+        Just (formDict, stream) ->
+          let runner = formTextRunner sec objs
+              st' = st { fontmaps = M.union (findFontEncoding formDict sec objs) (fontmaps st)
+                       , cmaps = M.union (findCMap formDict sec objs) (cmaps st)
+                       , psResDict = Just formDict
+                       , psFormDepth = psFormDepth st + 1
+                       }
+          in case parseStream runner st' stream of
+               Right (txt, _) -> T.pack (BSLU.toString txt)
+               Left _ -> T.empty
+
+formStream :: Maybe Security -> PDFObjIndex -> Maybe Dict -> T.Text -> Maybe (Dict, PDFStream)
+formStream sec objs resDict name =
+  case resDict >>= xobjectDict objs >>= M.lookup name of
+    Just (ObjRef r) ->
+      case findDictByRef r objs of
+        Just d | M.lookup "/Subtype" d == Just (PdfName "/Form") ->
+          case rawStreamByRef sec objs r of
+            Right stream -> Just (d, stream)
+            Left _ -> Nothing
+        _ -> Nothing
+    _ -> Nothing
+
+xobjectDict :: PDFObjIndex -> Dict -> Maybe (M.Map T.Text Obj)
+xobjectDict objs d =
+  case findResourcesDict d objs of
+    Just rd -> case findObjFromDict rd "/XObject" of
+      Just (PdfDict xd) -> Just xd
+      Just (ObjRef xr) -> findDictByRef xr objs
+      _ -> Nothing
+    Nothing -> Nothing
 
 rawStreamByRef :: Maybe Security -> PDFObjIndex -> Int -> PdfResult BSL.ByteString
 rawStreamByRef sec pdfobjs x = case findObjsByRef x pdfobjs of
@@ -384,13 +427,23 @@ isPdfEofLine line =
       BS.all isSpaceChar (BS.drop 5 rest)
     _ -> False
 
+isEol :: Char -> Bool
+isEol c = c == '\n' || c == '\r'
+
+splitLastLine :: BS.ByteString -> (BS.ByteString, BS.ByteString)
+splitLastLine bs =
+  let trimmed = BS.dropWhileEnd isEol bs
+      rev = BS.reverse trimmed
+      (lineRev, restRev) = BS.break isEol rev
+  in ( BS.reverse restRev
+     , BS.reverse lineRev
+     )
+
 getStartxrefOffset :: BS.ByteString -> PdfResult Int
 getStartxrefOffset source =
   let trimmed = BS.dropWhileEnd isSpaceChar source
-      numLine = case BS.breakEnd (== '\n') trimmed of
-        (_, n) | not (BS.null n) -> BS.dropWhile isSpaceChar n
-        _ -> trimmed
-  in readDec' $ BS.takeWhile (\c -> c >= '0' && c <= '9') numLine
+      (_, numLine) = splitLastLine trimmed
+  in readDec' $ BS.takeWhile (\c -> c >= '0' && c <= '9') (BS.dropWhile isSpaceChar numLine)
 
 isSpaceChar :: Char -> Bool
 isSpaceChar c = c `elem` (" \t\r\n" :: String)
@@ -404,17 +457,17 @@ mergeXRefStm all dict xref = case findObjFromDict dict "/XRefStm" of
   _ -> Right xref
 
 findTrailer :: BS.ByteString -> PdfResult Dict
-findTrailer bs = case BS.breakEnd (== '\n') bs of
+findTrailer bs = case splitLastLine bs of
   (source, eofLine)
     | isPdfEofLine eofLine -> do
         offset <- getStartxrefOffset source
         (dict, _) <- findTrailerDictXREF $ BS.drop offset bs
         return dict
     | source == "" -> Left (BrokenXref "no %%EOF or startxref found")
-    | otherwise -> findTrailer (BS.init bs)
+    | otherwise -> findTrailer source
 
 findTrailer' :: BS.ByteString -> PdfResult (Dict, XREF)
-findTrailer' bs = case BS.breakEnd (== '\n') bs of
+findTrailer' bs = case splitLastLine bs of
   (source, eofLine)
     | isPdfEofLine eofLine -> do
         offset <- getStartxrefOffset source
@@ -424,7 +477,7 @@ findTrailer' bs = case BS.breakEnd (== '\n') bs of
           Just (PdfNumber x) -> xrefs (truncate x) bs (dict, xref')
           _ -> Right (dict, xref')
     | source == "" -> Left (BrokenXref "no %%EOF or startxref found")
-    | otherwise -> findTrailer' (BS.init bs)
+    | otherwise -> findTrailer' source
   where
     xrefs n all (dict, sofar) = do
       (dict', xref) <- findTrailerDictXREF $ BS.drop n all
@@ -653,33 +706,52 @@ expandObjStm sec os = concat <$> traverse (objStm sec) os
 objStm :: Maybe Security -> PDFObj -> PdfResult [PDFObj]
 objStm sec (n, obj) = case findDictOfType "/ObjStm" obj of
   Nothing -> Right [(n,obj)]
-  Just _  -> do
+  Just d  -> do
     streamBytes <- rawStream sec n obj
-    pdfObjStm n (BSL.toStrict streamBytes)
-  
-refOffset :: Parser ([(Int, Int)], String)
-refOffset = spaces *> ((,) 
-                       <$> many1 refPair
-                       <*> many1 anyChar)
-  where
-    refPair = do
-      rStr <- many1 digit <* spaces
-      oStr <- many1 digit <* spaces
-      case (readDec rStr, readDec oStr) of
-        ([(r, "")], [(o, "")]) -> return (r, o)
-        _ -> fail "invalid object stream reference"
+    pdfObjStm n (objStmFirstFromDict d) (BSL.toStrict streamBytes)
 
-pdfObjStm n s =
-  case parseObjStmHeader s of
+objStmFirstFromDict :: Dict -> Maybe Int
+objStmFirstFromDict d = case findObjFromDict d "/First" of
+  Just (PdfNumber n) -> Just (truncate n)
+  _ -> Nothing
+
+objStmFirst :: [Obj] -> Maybe Int
+objStmFirst objs = findDict objs >>= objStmFirstFromDict
+
+refPair :: Parser (Int, Int)
+refPair = do
+  rStr <- many1 digit <* spaces
+  oStr <- many1 digit <* spaces
+  case (readDec rStr, readDec oStr) of
+    ([(r, "")], [(o, "")]) -> return (r, o)
+    _ -> fail "invalid object stream reference"
+
+refPairs :: Parser [(Int, Int)]
+refPairs = spaces *> many1 refPair
+
+refOffset :: Parser ([(Int, Int)], BS.ByteString)
+refOffset = do
+  location <- refPairs
+  rest <- BS.pack <$> many1 anyChar
+  return (location, rest)
+
+pdfObjStm :: Int -> Maybe Int -> BS.ByteString -> PdfResult [PDFObj]
+pdfObjStm n mFirst s =
+  case parseObjStmHeader mFirst s of
     Right (location, body) ->
       Right [ (r, parseObjStmObject body o) | (r, o) <- location ]
     Left err ->
       Left (ParseError ("Failed to parse Object Stream: " ++ show err) (BS.take 80 s))
 
-parseObjStmHeader :: BS.ByteString -> Either String ([(Int, Int)], BS.ByteString)
-parseObjStmHeader s =
+parseObjStmHeader :: Maybe Int -> BS.ByteString -> Either String ([(Int, Int)], BS.ByteString)
+parseObjStmHeader (Just first) s
+  | first >= 0 && first <= BS.length s =
+      case parseOnly refPairs (BS.take first s) of
+        Right location -> Right (location, BS.drop first s)
+        Left err -> Left (show err)
+parseObjStmHeader _ s =
   case parseOnly refOffset s of
-    Right (location, objstr) -> Right (location, BS.pack objstr)
+    Right (location, body) -> Right (location, body)
     Left err -> Left (show err)
 
 parseObjStmObject :: BS.ByteString -> Int -> [Obj]
@@ -735,6 +807,10 @@ encodingFromDict sec objs d = case subtype of
     Just (PdfName "/Identity-H") -> case cidSysInfo descendantFonts of
       (e:_) -> e
       []    -> NullMap
+    Just (PdfName n) | n `elem` sjisEncodings -> SJISmap
+    Just (PdfName n) | n `elem` unijisEncodings -> UnicodeMap
+    Just (PdfName "/H") -> JISmap
+    Just (PdfName "/V") -> JISmap
     Just (PdfName _) -> NullMap
     _ -> NullMap
   Just (PdfName "/Type1") -> case encField of
@@ -767,6 +843,21 @@ encodingFromDict sec objs d = case subtype of
   where
     subtype = M.lookup "/Subtype" d
     encField = M.lookup "/Encoding" d
+
+    sjisEncodings :: [T.Text]
+    sjisEncodings =
+      [ "/90ms-RKSJ-H", "/90ms-RKSJ-V"
+      , "/90msp-RKSJ-H", "/90msp-RKSJ-V"
+      , "/RKSJ-H", "/RKSJ-V"
+      ]
+
+    unijisEncodings :: [T.Text]
+    unijisEncodings =
+      [ "/UniJIS-UCS2-H", "/UniJIS-UCS2-V"
+      , "/UniJIS-UCS2-HW-H", "/UniJIS-UCS2-HW-V"
+      , "/UniJIS-UTF16-H", "/UniJIS-UTF16-V"
+      , "/UniJIS2004-UTF16-H", "/UniJIS2004-UTF16-V"
+      ]
 
     descendantFonts :: [Obj]
     descendantFonts = descendantFontObjsFromDict d objs
@@ -898,13 +989,16 @@ type0FontInfoDict sec objs d =
       wmode = wmodeFromEncoding (findObjFromDict d "/Encoding")
       widthFn cid = M.findWithDefault defaultW cid widthMap
       widthVFn cid = M.findWithDefault w1Default cid widthVMap
+      bpc = case enc of
+        SJISmap -> 1
+        _ -> 2
   in FontInfo
     { fiEncoding = enc
     , fiToUnicode = tuc
     , fiWidth = widthFn
     , fiWidthV = widthVFn
     , fiWMode = wmode
-    , fiBytesPerCode = 2
+    , fiBytesPerCode = bpc
     , fiDefaultWidth = defaultW
     }
 
@@ -988,6 +1082,7 @@ dw2Defaults (Just d) = case findObjFromDict d "/DW2" of
   _ -> (880, defaultVerticalW1)
 
 wmodeFromEncoding :: Maybe Obj -> Int
+wmodeFromEncoding (Just (PdfName "/V")) = 1
 wmodeFromEncoding (Just (PdfName n)) | "-V" `T.isSuffixOf` n = 1
 wmodeFromEncoding _ = 0
 

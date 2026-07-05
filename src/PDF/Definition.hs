@@ -67,12 +67,15 @@ ppObjAt _ (ObjOther o) = T.unpack o
 ppObjAt _ PdfNull = ""
 
 
-data Encoding = CIDmap T.Text | Encoding (Map Char T.Text) | WithCharSet T.Text | NullMap
+data Encoding = CIDmap T.Text | Encoding (Map Char T.Text) | WithCharSet T.Text | SJISmap | UnicodeMap | JISmap | NullMap
 
 instance Show Encoding where
   show (CIDmap s) = "CIDmap" ++ T.unpack s
   show (Encoding a) = "Encoding" ++ show a
   show (WithCharSet s) = "WithCharSet" ++ T.unpack s
+  show SJISmap = "SJISmap"
+  show UnicodeMap = "UnicodeMap"
+  show JISmap = "JISmap"
   show NullMap = []
 
 type CMap = Map Int T.Text
@@ -104,5 +107,7 @@ data PSR = PSR { linex      :: Double
                , colorspace :: T.Text
                , xcolorspaces :: [T.Text]
                , warnings     :: [PdfWarning]
+               , psResDict    :: Maybe Dict
+               , psFormDepth  :: Int
                }
          deriving (Show)

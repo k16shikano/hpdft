@@ -6,6 +6,7 @@ module PDF.ContentStream
        ) where
 
 import Data.Char (chr, ord)
+import Data.Bits (shiftL)
 import Data.String (fromString)
 import Data.List (isPrefixOf, dropWhileEnd)
 import Numeric (readOct, readHex)
@@ -27,21 +28,26 @@ import Control.Applicative
 
 import PDF.Definition
 import PDF.Object
-import PDF.Character (pdfcharmap, extendedAscii, adobeJapanOneSixMap)
+import PDF.Character (pdfcharmap, extendedAscii, adobeJapanOneSixMap, cp932Map, jisx0208Map)
 import PDF.Error (PdfError(..), PdfResult, PdfWarning(..))
 
 type PSParser a = GenParser Char PSR a
 
 parseContentStream p st = runParser p st ""
 
-parseStream :: PSR -> PDFStream -> PdfResult (PDFStream, [PdfWarning])
-parseStream psr pdfstream =
-  case parseContentStream contentParser psr pdfstream of
+type FormRunner = T.Text -> PSR -> T.Text
+
+noFormRunner :: FormRunner
+noFormRunner _ _ = T.empty
+
+parseStream :: FormRunner -> PSR -> PDFStream -> PdfResult (PDFStream, [PdfWarning])
+parseStream formRunner psr pdfstream =
+  case parseContentStream (contentParser formRunner) psr pdfstream of
     Left err -> Left (ParseError ("content stream: " ++ show err) BS.empty)
     Right (str, ws) -> Right (BSLC.pack $ BSSC.unpack $ encodeUtf8 str, reverse ws)
   where
-    contentParser = do
-      str <- T.concat <$> (spaces >> many (try elems <|> skipOther))
+    contentParser runner = do
+      str <- T.concat <$> (spaces >> many (try (elems runner) <|> skipOther))
       st <- getState
       return (str, warnings st)
 
@@ -49,7 +55,7 @@ parseColorSpace :: PSR -> BSLC.ByteString -> PdfResult [T.Text]
 parseColorSpace psr pdfstream = 
   case parseContentStream (many (choice [ try colorSpace
                                         , try $ T.concat <$> xObject
-                                        , (T.empty <$ elems)
+                                        , (T.empty <$ elems noFormRunner)
                                         ])) psr pdfstream of
     Left  err -> Left (ParseError ("color space: " ++ show err) BS.empty)
     Right str -> Right str
@@ -57,8 +63,8 @@ parseColorSpace psr pdfstream =
 
 -- | Parsers for Content Stream
 
-elems :: PSParser T.Text
-elems = choice [ try pdfopBT 
+elems :: FormRunner -> PSParser T.Text
+elems formRunner = choice [ try (pdfopBT formRunner)
                , try pdfopTf
                , try pdfopTD
                , try pdfopTd
@@ -79,16 +85,25 @@ elems = choice [ try pdfopBT
                , try array <* spaces
                , try pdfopGraphics
                , try dashPattern
-               , try $ T.empty <$ xObject
+               , try (formDoOp formRunner)
                , try graphicState
                , try pdfopcm
                , try $ T.empty <$ colorSpace
                , try $ T.empty <$ renderingIntent
-               , try pdfopBDC
-               , try pdfopBMC
+               , try (pdfopBDC formRunner)
+               , try (pdfopBMC formRunner)
                , try pdfopEMC
                , unknowns
                ]
+
+formDoOp :: FormRunner -> PSParser T.Text
+formDoOp runner = do
+  n <- (++) <$> string "/" <*> manyTill anyChar (try space)
+  spaces
+  string "Do"
+  spaces
+  st <- getState
+  return $ runner (T.pack n) st
 
 pdfopGraphics :: PSParser T.Text
 pdfopGraphics = do
@@ -152,30 +167,30 @@ xObject = do
 --  updateState (\s -> s {colorspace = xobjcs})
   return xobjcs
 
-pdfopBT :: PSParser T.Text
-pdfopBT = do
+pdfopBT :: FormRunner -> PSParser T.Text
+pdfopBT formRunner = do
   st <- getState
   updateState (\s -> s{text_m = (1,0,0,1,0,0), text_break = False})
   string "BT"
   spaces
-  t <- manyTill elems (try $ string "ET")
+  t <- manyTill (elems formRunner) (try $ string "ET")
   spaces
   return $ T.concat t
 
 -- should have refined according to the section 10.5 of PDF reference
 
-pdfopBMC :: PSParser T.Text
-pdfopBMC = do
+pdfopBMC :: FormRunner -> PSParser T.Text
+pdfopBMC formRunner = do
   tag <- (++) <$> string "/" <*> manyTill anyChar (try space)
   spaces
   string "BMC"
   spaces
-  manyTill elems (try $ string "EMC")
+  manyTill (elems formRunner) (try $ string "EMC")
   spaces
   return T.empty
 
-pdfopBDC :: PSParser T.Text
-pdfopBDC = do
+pdfopBDC :: FormRunner -> PSParser T.Text
+pdfopBDC formRunner = do
   tag <- name
   prop <- propertyList
   spaces
@@ -184,7 +199,7 @@ pdfopBDC = do
   case tag of
     "/Span" 
       | "/ActualText" == (fst prop)
-        -> do {spaces >> manyTill elems (try $ string "EMC") >> return (snd prop)}
+        -> do {spaces >> manyTill (elems formRunner) (try $ string "EMC") >> return (snd prop)}
       | otherwise  -> return $ T.empty
     _ -> return $ T.empty
 
@@ -263,9 +278,9 @@ unknowns :: PSParser T.Text
 unknowns = do
   ps <- manyTill anyChar (try $ oneOf "\r\n")
   st <- getState
-  case runParser elems st "" $ BSLC.pack ((Data.List.dropWhileEnd (=='\\') ps)++")Tj") of
+  case runParser (elems noFormRunner) st "" $ BSLC.pack ((Data.List.dropWhileEnd (=='\\') ps)++")Tj") of
     Right xs -> return xs
-    Left _ -> case runParser elems st "" $ BSLC.pack ("("++ps) of
+    Left _ -> case runParser (elems noFormRunner) st "" $ BSLC.pack ("("++ps) of
       Right xs -> return xs
       Left _ -> case ps of
         "" -> return T.empty
@@ -298,6 +313,9 @@ letters = do
       letterParser = case Map.lookup (curfont st) (fontmaps st) of
         Just (Encoding m) -> psletter m
         Just (CIDmap s) -> cidletter s
+        Just SJISmap -> sjisletters
+        Just UnicodeMap -> unicodeletters
+        Just JISmap -> jisletters
         Just (WithCharSet s) -> try $ bytesletter cmap <|> cidletters
         Just NullMap -> psletter Map.empty
         Nothing -> (T.pack) <$> (many1 $ choice [ try $ ')' <$ (string "\\)")
@@ -326,7 +344,7 @@ bytesletter cmap = do
   byteStringToText cmap txt
   where
     byteStringToText cmap' str = do
-      parts <- mapM (lookupUcs cmap') $ asInt16 $ map ord str
+      parts <- mapM (lookupUcs Nothing cmap') $ asInt16 $ map ord str
       return $ T.concat parts
 
     asInt16 :: [Int] -> [Int]
@@ -338,26 +356,136 @@ hexletters :: PSParser T.Text
 hexletters = do
   st <- getState
   char '<'
-  hexChars <- many (oneOf "0123456789ABCDEFabcdef")
+  hexChars <- many (oneOf "0123456789ABCDEFabcdef \t\r\n")
   char '>'
   spaces
-  let cmap = Map.findWithDefault Map.empty (curfont st) (cmaps st)
-      codes = hexStringToCodes (fontBytesPerCode st) hexChars
-  parts <- mapM (lookupUcs cmap) codes
+  let enc = Map.lookup (curfont st) (fontmaps st)
+      cmap = Map.findWithDefault Map.empty (curfont st) (cmaps st)
+      codes = hexStringToCodes enc (filter (\c -> c `notElem` (" \t\r\n" :: String)) hexChars)
+  parts <- mapM (lookupUcs enc cmap) codes
   return $ T.concat parts
 
--- | Split a hex string into character codes (matches 'PDF.Interpret.hexPairs'
--- and 'bytesToCodes' for 1- vs 2-byte fonts).
-fontBytesPerCode :: PSR -> Int
-fontBytesPerCode st =
-  case Map.lookup (curfont st) (fontmaps st) of
-    Just (CIDmap _) -> 2
-    _ -> 1
-
-hexStringToCodes :: Int -> String -> [Int]
-hexStringToCodes bpc hex =
+-- | Split a hex string into character codes (matches 'PDF.Interpret.bytesToCodes').
+hexStringToCodes :: Maybe Encoding -> String -> [Int]
+hexStringToCodes enc hex =
   let bytes = hexPairs hex
-  in if bpc == 2 then pairBytes bytes else bytes
+  in case enc of
+    Just SJISmap -> sjisBytesToCodes bytes
+    Just UnicodeMap -> unicodeBytesToCodes bytes
+    Just JISmap -> pairBytes bytes
+    Just (CIDmap _) -> pairBytes bytes
+    _ -> bytes
+  where
+    pairBytes [] = []
+    pairBytes [_] = []
+    pairBytes (a:b:rest) = (a * 256 + b) : pairBytes rest
+
+isUtf16HighSurrogate :: Int -> Bool
+isUtf16HighSurrogate u = u >= 0xD800 && u <= 0xDBFF
+
+isUtf16LowSurrogate :: Int -> Bool
+isUtf16LowSurrogate u = u >= 0xDC00 && u <= 0xDFFF
+
+surrogatePairToCode :: Int -> Int -> Int
+surrogatePairToCode hi lo = 0x10000 + ((hi - 0xD800) `shiftL` 10) + (lo - 0xDC00)
+
+unicodeBytesToCodes :: [Int] -> [Int]
+unicodeBytesToCodes [] = []
+unicodeBytesToCodes [_] = []
+unicodeBytesToCodes (a:b:rest) =
+  let unit = a * 256 + b
+  in if isUtf16HighSurrogate unit
+     then case rest of
+       (c:d:rs) ->
+         let unit2 = c * 256 + d
+         in if isUtf16LowSurrogate unit2
+            then surrogatePairToCode unit unit2 : unicodeBytesToCodes rs
+            else unit : unicodeBytesToCodes rest
+       _ -> [unit]
+     else unit : unicodeBytesToCodes rest
+
+isSjisLead :: Int -> Bool
+isSjisLead b = (b >= 0x81 && b <= 0x9F) || (b >= 0xE0 && b <= 0xFC)
+
+sjisBytesToCodes :: [Int] -> [Int]
+sjisBytesToCodes [] = []
+sjisBytesToCodes (b:rest)
+  | isSjisLead b = case rest of
+      (t:rs) -> (b * 256 + t) : sjisBytesToCodes rs
+      _ -> [b]
+  | otherwise = b : sjisBytesToCodes rest
+
+sjisCodeToText :: Int -> T.Text
+sjisCodeToText code =
+  case Map.lookup code cp932Map of
+    Just bs -> T.pack $ BSLU.toString bs
+    Nothing ->
+      if code >= 0 && code <= 0x7F
+      then T.singleton (chr code)
+      else "\xFFFD"
+
+unicodeCodeToText :: Int -> T.Text
+unicodeCodeToText code =
+  if code >= 0 && code <= 0x10FFFF
+  then T.singleton (chr code)
+  else "\xFFFD"
+
+jisCodeToText :: Int -> T.Text
+jisCodeToText code =
+  case Map.lookup code jisx0208Map of
+    Just bs -> T.pack $ BSLU.toString bs
+    Nothing ->
+      if code >= 0 && code <= 0x7F
+      then T.singleton (chr code)
+      else "\xFFFD"
+
+sjisletters :: PSParser T.Text
+sjisletters = do
+  txt <- (many1 $ choice [ try $ ')' <$ (string "\\)")
+                         , try $ '(' <$ (string "\\(")
+                         , try $ (chr 10) <$ (string "\\n")
+                         , try $ (chr 13) <$ (string "\\r")
+                         , try $ (chr 8) <$ (string "\\b")
+                         , try $ (chr 9) <$ (string "\\t")
+                         , try $ (chr 12) <$ (string "\\f")
+                         , try $ (chr 92) <$ (string "\\\\")
+                         , try $ chr <$> ((string "\\") *> octnum)
+                         , try $ noneOf ")"
+                         ])
+  let codes = sjisBytesToCodes $ map ord txt
+  return $ T.concat $ map sjisCodeToText codes
+
+unicodeletters :: PSParser T.Text
+unicodeletters = do
+  txt <- (many1 $ choice [ try $ ')' <$ (string "\\)")
+                         , try $ '(' <$ (string "\\(")
+                         , try $ (chr 10) <$ (string "\\n")
+                         , try $ (chr 13) <$ (string "\\r")
+                         , try $ (chr 8) <$ (string "\\b")
+                         , try $ (chr 9) <$ (string "\\t")
+                         , try $ (chr 12) <$ (string "\\f")
+                         , try $ (chr 92) <$ (string "\\\\")
+                         , try $ chr <$> ((string "\\") *> octnum)
+                         , try $ noneOf ")"
+                         ])
+  let codes = unicodeBytesToCodes $ map ord txt
+  return $ T.concat $ map unicodeCodeToText codes
+
+jisletters :: PSParser T.Text
+jisletters = do
+  txt <- (many1 $ choice [ try $ ')' <$ (string "\\)")
+                         , try $ '(' <$ (string "\\(")
+                         , try $ (chr 10) <$ (string "\\n")
+                         , try $ (chr 13) <$ (string "\\r")
+                         , try $ (chr 8) <$ (string "\\b")
+                         , try $ (chr 9) <$ (string "\\t")
+                         , try $ (chr 12) <$ (string "\\f")
+                         , try $ (chr 92) <$ (string "\\\\")
+                         , try $ chr <$> ((string "\\") *> octnum)
+                         , try $ noneOf ")"
+                         ])
+  let codes = pairBytes $ map ord txt
+  return $ T.concat $ map jisCodeToText codes
   where
     pairBytes [] = []
     pairBytes [_] = []
@@ -391,16 +519,21 @@ adobeOneSix a = case Map.lookup a adobeJapanOneSixMap of
   Just cs -> T.pack $ BSLU.toString cs
   Nothing -> T.pack $ "[" ++ show a ++ "]"
 
-lookupUcs :: CMap -> Int -> PSParser T.Text
-lookupUcs m h = case Map.lookup h m of
+lookupUcs :: Maybe Encoding -> CMap -> Int -> PSParser T.Text
+lookupUcs enc m h = case Map.lookup h m of
   Just ucs -> return ucs
-  Nothing
-    | Map.null m -> case Map.lookup h adobeJapanOneSixMap of
-        Just cs -> return $ T.pack $ BSLU.toString cs
-        Nothing -> do
-          updateState (\s -> s {warnings = UnmappedCid h : warnings s})
-          return $ adobeOneSix h
-    | otherwise -> return $ T.singleton (chr h)
+  Nothing ->
+    case enc of
+      Just SJISmap -> return $ sjisCodeToText h
+      Just UnicodeMap -> return $ unicodeCodeToText h
+      Just JISmap -> return $ jisCodeToText h
+      _ | Map.null m ->
+          case Map.lookup h adobeJapanOneSixMap of
+            Just cs -> return $ T.pack $ BSLU.toString cs
+            Nothing -> do
+              updateState (\s -> s {warnings = UnmappedCid h : warnings s})
+              return $ adobeOneSix h
+      _ -> return $ T.singleton (chr h)
 
 cidletters = choice [try hexletter, try octletter]
 
@@ -413,7 +546,7 @@ hexletter = do
                       , try $ (:"0") <$> (oneOf "0123456789ABCDEFabcdef")
                       ]
   case readHex hexDigits of
-    [(h, "")] -> lookupUcs cmap h
+    [(h, "")] -> lookupUcs (Map.lookup (curfont st) (fontmaps st)) cmap h
     _ -> return "????"
 
 octletter :: PSParser T.Text
@@ -421,7 +554,7 @@ octletter = do
   st <- getState
   let cmap = Map.findWithDefault Map.empty (curfont st) (cmaps st)
   o <- octnum
-  lookupUcs cmap o
+  lookupUcs (Map.lookup (curfont st) (fontmaps st)) cmap o
 
 psletter :: Map.Map Char T.Text -> PSParser T.Text
 psletter fontmap = do
@@ -453,7 +586,7 @@ cidletter _ = do
   o1 <- octnum
   o2 <- octnum
   let d = 256 * o1 + o2
-  lookupUcs Map.empty d
+  lookupUcs Nothing Map.empty d
 
 octnum :: PSParser Int
 octnum = do

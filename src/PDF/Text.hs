@@ -87,6 +87,8 @@ initstate = PSR { linex=0
                 , colorspace=T.empty
                 , xcolorspaces=[]
                 , warnings=[]
+                , psResDict=Nothing
+                , psFormDepth=0
                 }
 
 pdfToTextBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)

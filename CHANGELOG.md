@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.6.3 (2026-07-06)
+
+### Added
+
+- Predefined CMap support for Japanese Type0 fonts without `/ToUnicode`:
+  - Shift-JIS: `/90ms-RKSJ-H/V`, `/90msp-RKSJ-H/V`, `/RKSJ-H/V` (new `SJISmap` encoding backed by an embedded CP932→Unicode table, `data/map/cp932.map`)
+  - Unicode: `/UniJIS-UCS2-H/V`, `/UniJIS-UCS2-HW-H/V`, `/UniJIS-UTF16-H/V`, `/UniJIS2004-UTF16-H/V` (new `UnicodeMap` encoding; UTF-16BE splitting with surrogate-pair support, no table needed)
+  - JIS X 0208: `/H`, `/V` (new `JISmap` encoding backed by an embedded JIS→Unicode table, `data/map/jisx0208.map`)
+  - Vertical variants set the writing mode; `/V` is matched exactly in addition to the `-V` suffix.
+- Legacy extraction (and the TUI viewer) now descends into Form XObjects invoked with `Do`, so text drawn inside forms is no longer silently dropped.
+- Golden fixtures `data/fixtures/cmap-unijis.pdf` and `data/fixtures/cmap-jis-h.pdf` plus unit tests for the new code splitting and table lookups.
+
+### Fixed
+
+- Object stream (ObjStm) parsing now splits header and body strictly at the `/First` offset instead of relying on the parser stop position; a 1-byte misalignment previously made every object in an affected stream unparseable (mojibake or missing text in PDFs from pdfTeX and similar producers).
+- PDFs using CR-only line endings no longer fail trailer/xref discovery (which previously caused a long "broken cross-reference" scan before erroring out).
+- RC4 decryption rewritten with a mutable unboxed array (`Data.Array.ST`), turning the previous quadratic key-stream generation linear; large encrypted objects (e.g. full-page images) now decrypt in milliseconds instead of tens of seconds.
+- Hex strings in content streams may contain embedded whitespace (e.g. `<65E5 672C 8A9E>`), as allowed by the PDF spec.
+
 ## 0.4.6.2 (2026-07-06)
 
 ### Fixed
