@@ -6,6 +6,7 @@ module PDF.Encrypt
   , securityFromEncryptDict
   , decryptString
   , decryptStream
+  , rc4KeyStream
   ) where
 
 import PDF.Definition
@@ -17,6 +18,7 @@ import Data.Bits (shiftL, shiftR, xor, (.&.))
 import Data.List (foldl')
 import qualified Data.Map as M
 import Control.Applicative ((<|>))
+import Data.Maybe (mapMaybe)
 import Control.Monad (forM_, forM)
 import Control.Monad.ST (ST, runST)
 import Data.Array.ST (STUArray, newArray, readArray, writeArray)
@@ -143,10 +145,22 @@ idEntryBytes _            = Nothing
 hexToBytes :: T.Text -> Maybe BS.ByteString
 hexToBytes h
   | T.null h = Just BS.empty
-  | otherwise = Just $ BS.pack $ map (fromIntegral . fst . head . readHex) (pairs (T.unpack h))
+  | otherwise =
+      let chunks = pairs (T.unpack h)
+          bytes = mapMaybe parseHexPair chunks
+      in if length bytes == length chunks then Just (BS.pack bytes) else Nothing
   where
     pairs [] = []
     pairs s  = take 2 s : pairs (drop 2 s)
+    parseHexPair [a, b] =
+      case readHex [a, b] of
+        [(n, "")] -> Just (fromIntegral n)
+        _         -> Nothing
+    parseHexPair [a] =
+      case readHex [a, '0'] of
+        [(n, "")] -> Just (fromIntegral n)
+        _         -> Nothing
+    parseHexPair _ = Nothing
 
 md5 :: BS.ByteString -> BS.ByteString
 md5 bs = convert (hash bs :: Digest MD5)

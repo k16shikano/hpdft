@@ -51,13 +51,13 @@ module PDF.Text
   ) where
 
 import PDF.Definition
-import PDF.Error (PdfResult, PdfWarning(..))
+import PDF.Error (PdfResult, PdfWarning(..), renderPdfError)
 import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
 import PDF.Encrypt (Security)
 import PDF.Interpret (Glyph(..), Rect(..), PageItem(..), interpretPageItems)
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, aozoraRuby, joinGlyphsRun, layoutDocumentFromPageLines, layoutPageTextWith, linesFromGlyphs, pageLinesRaw, stripHeadersFooters, joinParaLines, forcePageLines)
-import PDF.Page (pageRefs)
+import PDF.Page (pageRefs, pageRefsFromRoot)
 import PDF.Structure (StructElem(..), RubySpan(..), structTree, logicalOrder, collectRubySpans)
 
 import Control.DeepSeq (force)
@@ -133,11 +133,11 @@ pdfToTextStreamDoc doc callback =
         Just os ->
           case findDictOfType "/Page" os of
             Just dict -> do
-              let (txt, ws) = pageContent dict initstate sec objs
+              let (txt, ws) = pageContent ref dict initstate sec objs
               callback num total txt
               return ws
-            Nothing -> return []
-        Nothing -> return []
+            Nothing -> return [PageContentFailed ref "not a page dictionary"]
+        Nothing -> return [PageContentFailed ref "missing page object"]
 
 pdfToTextGeomBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
 pdfToTextGeomBS = pdfToTextGeomBSWith defaultLayoutOptions
@@ -341,27 +341,23 @@ artifactGlyphs :: [PageItem] -> [Glyph]
 artifactGlyphs items = [g | ItemGlyph g <- items, glyphMCID g == Nothing]
 
 walkdown :: PSR -> Int -> Maybe Security -> PDFObjIndex -> (BSL.ByteString, [PdfWarning])
-walkdown st parent sec objs =
-  case findObjsByRef parent objs of
-    Just os -> case findDictOfType "/Catalog" os of
-      Just dict -> case findPages dict of
-        Just pr -> walkdown st pr sec objs
-        Nothing -> ("", [])
-      Nothing -> case findDictOfType "/Pages" os of
-        Just dict -> case findKids dict of
-          Just kidsrefs ->
-            let results = map (\k -> walkdown st k sec objs) kidsrefs
-            in ( BSL.concat (map fst results)
-               , concatMap snd results
-               )
-          Nothing -> ("", [])
-        Nothing -> case findDictOfType "/Page" os of
-          Just dict -> pageContent dict st sec objs
-          Nothing -> ("", [])
-    Nothing -> ("", [])
+walkdown st rootref sec objs =
+  let refs = pageRefsFromRoot rootref objs
+      results = map (pageContentRef st sec objs) refs
+  in ( BSL.concat (map fst results)
+     , concatMap snd results
+     )
 
-pageContent :: Dict -> PSR -> Maybe Security -> PDFObjIndex -> (BSL.ByteString, [PdfWarning])
-pageContent dict st sec objs =
+pageContentRef :: PSR -> Maybe Security -> PDFObjIndex -> Int -> (BSL.ByteString, [PdfWarning])
+pageContentRef st sec objs ref =
+  case findObjsByRef ref objs of
+    Just os -> case findDictOfType "/Page" os of
+      Just dict -> pageContent ref dict st sec objs
+      Nothing -> ("", [PageContentFailed ref "not a page dictionary"])
+    Nothing -> ("", [PageContentFailed ref "missing page object"])
+
+pageContent :: Int -> Dict -> PSR -> Maybe Security -> PDFObjIndex -> (BSL.ByteString, [PdfWarning])
+pageContent ref dict st sec objs =
   case contentsStream dict st sec objs of
     Right (s, ws) -> (s, ws)
-    Left _ -> ("", [])
+    Left err -> ("", [PageContentFailed ref (renderPdfError err)])

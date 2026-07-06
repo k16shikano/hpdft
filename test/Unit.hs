@@ -1,19 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 import PDF.Matrix (Matrix, identity, multiply, apply, applyVec, translate, scale, mkMatrix, components)
 import PDF.Definition (Obj(..), FontInfo(..), Encoding(..))
-import PDF.Interpret
-  ( Glyph(..)
-  , Rect(..)
-  , PageItem(..)
-  , interpretContentWithFonts
-  , interpretContentWithFontsItems
-  , interpretPageImageHits
-  , bytesToCodes
-  , encodingUnicode
+import PDF.StreamLex
+  ( normalizePdfNumber
+  , parsePdfNumber
   , unicodeBytesToCodes
   )
-import qualified PDF.Interpret as Interpret
-import qualified PDF.ContentStream as ContentStream
+import PDF.StreamLex
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, needsAozoraBar, aozoraRuby, layoutParagraphs, layoutParagraphsWith, layoutPageText, layoutDocument, sortLinesByReadingOrder, linesFromGlyphs, Line(..))
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
 import PDF.Document (Document(..), openDocument)
@@ -45,6 +38,18 @@ import System.Directory (doesFileExist, getTemporaryDirectory)
 import System.FilePath ((</>))
 import Control.Monad (when)
 import Data.IORef (newIORef, readIORef, modifyIORef)
+import PDF.Interpret
+  ( Glyph(..)
+  , Rect(..)
+  , PageItem(..)
+  , interpretContentWithFonts
+  , interpretContentWithFontsItems
+  , interpretPageImageHits
+  , bytesToCodes
+  , encodingUnicode
+  )
+import EncryptSpec (encryptSpecCases)
+import TuiGeometry (HeightSpec(..), parseHeightSpec, viewportHeight)
 import TuiScroll
   ( ScrollState(..)
   , initialScrollState
@@ -120,6 +125,12 @@ assertTextEq label expected actual =
     then pass label
     else testFail label ("expected " ++ show expected ++ ", got " ++ show actual)
 
+assertBytesEq :: String -> BS.ByteString -> BS.ByteString -> Result
+assertBytesEq label expected actual =
+  if expected == actual
+    then pass label
+    else testFail label ("expected " ++ show expected ++ ", got " ++ show actual)
+
 assertGlyphOrigin :: String -> Double -> Double -> Glyph -> Result
 assertGlyphOrigin label x y g =
   if approxEq x (glyphX g) && approxEq y (glyphY g)
@@ -190,6 +201,8 @@ main = do
           ++ textStreamResults
           ++ cmapEncodingResults
           ++ normalizePdfNumberResults
+          ++ heightSpecResults
+          ++ encryptSpecResults
           ++ tuiScrollResults
   let failures = [msg | Fail msg <- results]
       passed = length results - length failures
@@ -1398,24 +1411,35 @@ normalizePdfNumberResults =
         , "."
         , "-."
         ]
-   in [ assertDoubleEq ("Interpret.parsePdfNumber " ++ s) n (Interpret.parsePdfNumber s)
+   in [ assertDoubleEq ("StreamLex.parsePdfNumber " ++ s) n (parsePdfNumber s)
       | (s, n) <- cases
       ]
-      ++ [ assertDoubleEq ("ContentStream.parsePdfNumber " ++ s) n (ContentStream.parsePdfNumber s)
-         | (s, n) <- cases
-         ]
-      ++ [ assertBool ("Interpret.parsePdfNumber abnormal " ++ show s)
-             (Interpret.parsePdfNumber s `seq` True)
+      ++ [ assertBool ("StreamLex.parsePdfNumber abnormal " ++ show s)
+             (parsePdfNumber s `seq` True)
          | s <- abnormal
          ]
-      ++ [ assertBool ("ContentStream.parsePdfNumber abnormal " ++ show s)
-             (ContentStream.parsePdfNumber s `seq` True)
-         | s <- abnormal
-         ]
-      ++ [ assertTextEq ("Interpret.normalizePdfNumber " ++ s) (T.pack expected) (T.pack (Interpret.normalizePdfNumber s))
+      ++ [ assertTextEq ("StreamLex.normalizePdfNumber " ++ s) (T.pack expected) (T.pack (normalizePdfNumber s))
          | (s, expected) <- [(".5", "0.5"), ("-.5", "-0.5"), ("-.23999999", "-0.23999999")]
          ]
-      ++ [ assertTextEq ("ContentStream.normalizePdfNumber " ++ s) (T.pack expected) (T.pack (ContentStream.normalizePdfNumber s))
-         | (s, expected) <- [(".5", "0.5"), ("-.5", "-0.5"), ("-.23999999", "-0.23999999")]
-         ]
+
+encryptSpecResults :: [Result]
+encryptSpecResults =
+  [ assertBytesEq label expected actual | (label, expected, actual) <- encryptSpecCases ]
+
+heightSpecResults :: [Result]
+heightSpecResults =
+  [ assertBool "parseHeightSpec rows" (parseHeightSpec "12" == Just (HeightRows 12))
+  , assertBool "parseHeightSpec percent" (parseHeightSpec "50%" == Just (HeightPercent 50))
+  , assertBool "parseHeightSpec rejects bad percent"
+      (parseHeightSpec "150%" == Nothing)
+  , assertBool "viewportHeight default half" (viewportHeight 24 Nothing == 12)
+  , assertBool "viewportHeight rows clamp min"
+      (viewportHeight 24 (Just (HeightRows 3)) == 6)
+  , assertBool "viewportHeight rows clamp max"
+      (viewportHeight 24 (Just (HeightRows 40)) == 24)
+  , assertBool "viewportHeight percent"
+      (viewportHeight 20 (Just (HeightPercent 50)) == 10)
+  , assertBool "viewportHeight percent full"
+      (viewportHeight 10 (Just (HeightPercent 100)) == 10)
+  ]
 

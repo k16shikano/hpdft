@@ -27,12 +27,14 @@ module PDF.Page
   , pageCount
   , pageRefAt
   , pageRefs
+  , pageRefsFromRoot
   , pageItems
   , pageGlyphs
   , pageLines
   , pageParagraphs
   , PageRegion(..)
   , pageRegions
+  , Rect(..)
   ) where
 
 import PDF.Definition (PDFObjIndex)

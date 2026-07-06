@@ -1,6 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module TuiPreview (runTuiPreview) where
+module TuiPreview
+  ( runTuiPreview
+  ) where
+
+import TuiGeometry (HeightSpec, parseHeightSpec, viewportHeight)
 
 import PDF.Document (Document)
 import PDF.Text (pdfToTextStreamDoc)
@@ -51,14 +55,14 @@ import System.IO
 import Text.Regex.Base.RegexLike (makeRegexM, matchAll, matchTest)
 import Text.Regex.TDFA (Regex)
 
-runTuiPreview :: FilePath -> Document -> IO ()
-runTuiPreview path doc =
+runTuiPreview :: FilePath -> Document -> Maybe HeightSpec -> IO ()
+runTuiPreview path doc mHeight =
   let run term =
         uiLoop term path doc `catch` \e ->
           case e of
             UserInterrupt -> return ()
             _ -> throwIO e
-  in bracket acquireTerminal releaseTerminal run
+  in bracket (acquireTerminal mHeight) releaseTerminal run
 
 data Terminal = Terminal
   { termStdout      :: Handle
@@ -84,18 +88,15 @@ data Key
   | KEsc
   | KOther
 
--- | Status-line mode: normal view, or entering a search pattern after @/@.
 data UiMode = ModeView | ModeInput String
 
-acquireTerminal :: IO Terminal
-acquireTerminal = do
+acquireTerminal :: Maybe HeightSpec -> IO Terminal
+acquireTerminal mHeight = do
   oldEcho <- hGetEcho stdin
   oldBuf <- hGetBuffering stdin
   hSetEcho stdin False
   hSetBuffering stdin NoBuffering
-  (rows, cols, vh, textRows, vTop) <- queryGeometry stdout
-  -- Hide the cursor and disable autowrap: a wrap on the bottom row would
-  -- scroll the whole screen and drag the viewport out of place.
+  (rows, cols, vh, textRows, vTop) <- queryGeometry stdout mHeight
   hPutStr stdout "\ESC[?25l\ESC[?7l"
   hFlush stdout
   return Terminal
@@ -120,16 +121,15 @@ releaseTerminal term = do
   hSetEcho (termStdin term) (termOldEcho term)
   hSetBuffering (termStdin term) (termOldBuffer term)
 
--- Viewport layout: top bar, text rows, status bar (bottom).
-queryGeometry :: Handle -> IO (Int, Int, Int, Int, Int)
-queryGeometry h = do
+queryGeometry :: Handle -> Maybe HeightSpec -> IO (Int, Int, Int, Int, Int)
+queryGeometry h mHeight = do
   mw <- hSize h
   let reported f dflt = case mw of
         Just w | fromIntegral (f w) > 0 -> fromIntegral (f w)
         _ -> dflt
       rows = reported height 24
       cols = reported width 80
-      vh = max 6 (rows `div` 2)
+      vh = viewportHeight rows mHeight
       textRows = max 1 (vh - 2)
       vTop = rows - vh + 1
   return (rows, cols, vh, textRows, vTop)
@@ -193,7 +193,6 @@ uiLoop term path doc = do
         modifyIORef' scrollRef (\st -> st {scrollTotalLines = length ls})
         return ls
 
-      -- Jump forward (or backward) to the next line matching the active pattern.
       searchStep forward = do
         msearch <- readIORef searchRef
         case msearch of
@@ -299,8 +298,6 @@ moveKey textRows key st = case key of
   KChar 'u' -> scrollHalfPageUp st
   _         -> st
 
--- | Line buffer invariant: the last element is the still-open line
--- (empty when the previous chunk ended with a newline).
 appendChunk :: Text -> [Text] -> [Text]
 appendChunk chunk [] = T.split (== '\n') chunk
 appendChunk chunk ls =
@@ -339,8 +336,6 @@ drawFrame term path scroll ls pg total done mode msg mre = do
       statusRow = termViewportTop term + termViewportH term - 1
   mapM_ (\i -> drawTextRow term Nothing (i, "")) [filled .. termTextRows term - 1]
   drawBarRow term statusRow status
-  -- During search input, park the visible cursor after the query so IME
-  -- composition windows anchor to the right spot.
   case mode of
     ModeInput _ -> do
       let col = min (termCols term) (stringDisplayWidth status + 1)
@@ -357,7 +352,6 @@ drawTextRow term mre (i, txt) = do
       rendered = maybe clipped (`highlightMatches` clipped) mre
   hPutStr (termStdout term) $ "\ESC[" ++ show row ++ ";1H\ESC[K" ++ rendered
 
--- | Wrap every regex match on the (already clipped) line in reverse video.
 highlightMatches :: Regex -> String -> String
 highlightMatches re s = go 0 s spans
   where
@@ -368,7 +362,6 @@ highlightMatches re s = go 0 s spans
           (hit, rest'') = splitAt len rest'
        in before ++ "\ESC[7m" ++ hit ++ "\ESC[0m" ++ go (off + len) rest'' more
 
--- | Full-width reverse-video bar (used for the top border and the status line).
 drawBarRow :: Terminal -> Int -> String -> IO ()
 drawBarRow term row content = do
   let padded = padToDisplayWidth (termCols term) content

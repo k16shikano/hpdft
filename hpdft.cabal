@@ -1,6 +1,6 @@
 cabal-version:       3.8
 name:                hpdft
-version:             0.4.6.4
+version:             0.4.7.0
 synopsis:            PDF parsing library and CLI for text, layout, diff, images, and forms
 description:
     hpdft is a Haskell library and command-line tool for parsing PDF files.
@@ -25,6 +25,7 @@ extra-source-files:  README.md
                      , dev/0.3-roadmap.md
                      , dev/0.4-roadmap.md
                      , dev/0.5-text-ux.md
+                     , dev/0.5-roadmap.md
                      , scripts/bench_book.sh
                      , scripts/bench_pages.hs
                      , examples/extract-text/Main.hs
@@ -43,9 +44,10 @@ source-repository head
                        
 library
   hs-source-dirs:      src/
+  ghc-options:         -O2
   exposed-modules:     PDF.PDFIO
                      , PDF.Document
-                     , PDF.ContentStream
+                     , PDF.StreamLex
                      , PDF.Character
                      , PDF.Cmap
                      , PDF.Definition
@@ -66,7 +68,8 @@ library
                      , PDF.Interpret
                      , PDF.Layout
                      , PDF.Structure
-  other-modules:       Paths_hpdft
+  other-modules:       PDF.ContentStream
+                     , Paths_hpdft
   other-extensions:    OverloadedStrings
   build-depends:       array >= 0.5 && < 0.6
                      , attoparsec >= 0.14.4 && < 0.15
@@ -94,11 +97,18 @@ library
 
 executable hpdft
   main-is:           hpdft.hs
-  ghc-options:       -O2 -threaded -rtsopts "-with-rtsopts=-N -A64m"
-  hs-source-dirs:    .
+  ghc-options:       -threaded -rtsopts "-with-rtsopts=-N -A64m"
+  hs-source-dirs:    app
   other-modules:     Paths_hpdft
                      , TuiPreview
                      , TuiScroll
+                     , TuiGeometry
+                     , Cli.Common
+                     , Cli.Grep
+                     , Cli.Misc
+                     , Cli.Parser
+                     , Cli.Text
+                     , Cli.View
   other-extensions:    OverloadedStrings
   build-depends:       array >= 0.5 && < 0.6
                      , base >= 4.18.0 && < 4.23
@@ -132,7 +142,7 @@ test-suite hpdft-unit
   type:                exitcode-stdio-1.0
   main-is:             Unit.hs
   hs-source-dirs:      test
-                     , .
+                     , app
   ghc-options:         -threaded -rtsopts "-with-rtsopts=-N -A64m"
   build-depends:       base >= 4.18.0 && < 4.23
                      , bytestring >= 0.11.4 && < 0.13
@@ -142,6 +152,8 @@ test-suite hpdft-unit
                      , hpdft
                      , text >= 2.0.2 && < 2.2.2
   other-modules:       TuiScroll
+                     , TuiGeometry
+                     , EncryptSpec
   default-language:    Haskell2010
 
 executable interpret-page

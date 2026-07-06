@@ -35,6 +35,7 @@ module PDF.Error
   , PdfResult
   , PdfWarning(..)
   , renderPdfWarning
+  , renderPdfError
   , note
   ) where
 
@@ -73,6 +74,8 @@ data PdfWarning
     -- ^ Fallback encoding used for a font.
   | UnmappedCid Int
     -- ^ CID not found in Adobe-Japan1-6; bracket placeholder emitted.
+  | PageContentFailed Int String
+    -- ^ Legacy content-stream extraction failed for a page object.
   deriving (Show, Eq)
 
 renderPdfWarning :: PdfWarning -> String
@@ -83,6 +86,17 @@ renderPdfWarning (SubstitutedEncoding n enc) =
   "font object " ++ show n ++ ": using fallback encoding " ++ enc
 renderPdfWarning (UnmappedCid cid) =
   "unmapped CID " ++ show cid ++ " (Adobe-Japan1-6)"
+renderPdfWarning (PageContentFailed ref reason) =
+  "page object " ++ show ref ++ ": content extraction failed: " ++ reason
+
+renderPdfError :: PdfError -> String
+renderPdfError (ParseError msg _) = "parse error: " ++ msg
+renderPdfError (BrokenXref msg) = "broken cross-reference: " ++ msg
+renderPdfError (MissingObject n) = "missing object: " ++ show n ++ " 0 R"
+renderPdfError (MissingKey key ctx) = "missing key " ++ key ++ " in " ++ ctx
+renderPdfError (UnsupportedFeature msg) = "unsupported feature: " ++ msg
+renderPdfError (DecryptionError msg) = "cannot decrypt: " ++ msg
+renderPdfError (FontError n msg) = "font error in object " ++ show n ++ ": " ++ msg
 
 -- | Annotate a 'Maybe' with an error.
 note :: PdfError -> Maybe a -> PdfResult a

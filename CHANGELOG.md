@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.7.0 (2026-07-06)
+
+### Added
+
+- `PDF.StreamLex` — shared content-stream lexing (PDF number normalization, hex pairs, UTF-16BE / SJIS / JIS code splitting) used by both legacy and geometry pipelines.
+- Golden tests for the geometry extraction path (`data/fixtures/expected-geom/`).
+- Unit tests for RC4 key-stream generation (`Encrypt.rc4KeyStream`) and TUI viewport height parsing/clamping (`--height N` / `N%`).
+- CLI `--height` for the implicit viewer (`hpdft FILE`) and legacy flat invocation; accepts row count or terminal percentage (e.g. `50%`, `100%`).
+
+### Changed
+
+- Page-tree traversal unified on `Page.pageRefsFromRoot` (legacy `walkdown`, CLI refs/grep/show-page).
+- Legacy page content parse failures emit `PageContentFailed` warnings instead of silent empty pages; grep reports geometry failures on stderr.
+- `DocumentStructure` object-stream header/value parsing returns `PdfResult`; `Encrypt.hexToBytes` no longer throws on malformed hex.
+- Executable sources moved under `app/` (`Cli.*` modules for text/view/grep, `TuiPreview`, `TuiScroll`); library `-O2` aligned with prior executable optimization.
+- Removed ignored `hpdft diff --legacy` flag; fixed legacy help typo for `-p`.
+
+### Breaking
+
+- `PDF.ContentStream` is no longer an exposed module (internal to the library). Use `PDF.StreamLex` for shared lexing helpers.
+- `PDF.Interpret` no longer re-exports `normalizePdfNumber`, `parsePdfNumber`, or `unicodeBytesToCodes`.
+
 ## 0.4.6.4 (2026-07-06)
 
 ### Fixed

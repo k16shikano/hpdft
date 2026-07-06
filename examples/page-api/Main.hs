@@ -13,9 +13,8 @@ module Main where
 
 import PDF.Document (openDocument)
 import PDF.Error (PdfResult)
-import PDF.Interpret (Rect(..))
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions)
-import PDF.Page (PageRegion(..), pageCount, pageParagraphs, pageRefAt, pageRegions)
+import PDF.Page (PageRegion(..), Rect(..), pageCount, pageParagraphs, pageRefAt, pageRegions)
 
 import Control.Monad (forM_)
 import System.Directory (doesFileExist, getCurrentDirectory)

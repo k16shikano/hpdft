@@ -1,6 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import PDF.Text (pdfToTextBS, pdfToTextTaggedBS)
+import PDF.Text (pdfToTextBS, pdfToTextTaggedBS, pdfToTextGeomBSWith)
+import PDF.Layout (defaultLayoutOptions)
+import PDF.Error (PdfError)
 
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as BSLC
@@ -10,10 +12,11 @@ import System.Exit (exitFailure)
 import System.FilePath ((</>), takeBaseName)
 import Control.Monad (when)
 
-fixturesDir, expectedDir, expectedLegacyDir, knownFailingDir :: FilePath
+fixturesDir, expectedDir, expectedLegacyDir, expectedGeomDir, knownFailingDir :: FilePath
 fixturesDir = "data/fixtures"
 expectedDir = fixturesDir </> "expected"
 expectedLegacyDir = fixturesDir </> "expected-legacy"
+expectedGeomDir = fixturesDir </> "expected-geom"
 knownFailingDir = fixturesDir </> "known-failing"
 
 main :: IO ()
@@ -22,12 +25,16 @@ main = do
   let pdfs = map (fixturesDir </>) (sort entries)
   failsDefault <- concat <$> mapM (checkFixture "default" expectedDir pdfToTextTaggedBS) pdfs
   failsLegacy <- concat <$> mapM (checkFixture "legacy" expectedLegacyDir pdfToTextBS) pdfs
-  let fails = failsDefault ++ failsLegacy
+  failsGeom <- concat <$> mapM (checkFixture "geom" expectedGeomDir geomExtract) pdfs
+  let fails = failsDefault ++ failsLegacy ++ failsGeom
   known <- listKnownFailing
   mapM_ (putStrLn . ("SKIP (known-failing): " ++)) known
   when (not (null fails)) $ do
     mapM_ putStrLn fails
     exitFailure
+
+geomExtract :: FilePath -> Maybe String -> IO (Either PdfError BSL.ByteString)
+geomExtract path mpw = pdfToTextGeomBSWith defaultLayoutOptions path mpw
 
 listKnownFailing :: IO [FilePath]
 listKnownFailing = do

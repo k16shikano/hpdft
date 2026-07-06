@@ -740,19 +740,18 @@ pdfObjStm n mFirst s =
   case parseObjStmHeader mFirst s of
     Right (location, body) ->
       Right [ (r, parseObjStmObject body o) | (r, o) <- location ]
-    Left err ->
-      Left (ParseError ("Failed to parse Object Stream: " ++ show err) (BS.take 80 s))
+    Left err -> Left err
 
-parseObjStmHeader :: Maybe Int -> BS.ByteString -> Either String ([(Int, Int)], BS.ByteString)
+parseObjStmHeader :: Maybe Int -> BS.ByteString -> PdfResult ([(Int, Int)], BS.ByteString)
 parseObjStmHeader (Just first) s
   | first >= 0 && first <= BS.length s =
       case parseOnly refPairs (BS.take first s) of
         Right location -> Right (location, BS.drop first s)
-        Left err -> Left (show err)
+        Left err -> Left (ParseError ("Failed to parse Object Stream header: " ++ show err) (BS.take 80 s))
 parseObjStmHeader _ s =
   case parseOnly refOffset s of
     Right (location, body) -> Right (location, body)
-    Left err -> Left (show err)
+    Left err -> Left (ParseError ("Failed to parse Object Stream header: " ++ show err) (BS.take 80 s))
 
 parseObjStmObject :: BS.ByteString -> Int -> [Obj]
 parseObjStmObject body off =
@@ -760,14 +759,14 @@ parseObjStmObject body off =
     Right obj -> obj
     Left _ -> [PdfNull]
 
-parseObjStmValue :: BS.ByteString -> Either String [Obj]
+parseObjStmValue :: BS.ByteString -> PdfResult [Obj]
 parseObjStmValue s' = case parseOnly pdfdictionary s' of
   Right obj -> Right [obj]
   Left _ -> case parseOnly pdfarray s' of
     Right obj -> Right [obj]
     Left _ -> case parseOnly pdfletters s' of
       Right obj -> Right [obj]
-      Left err -> Left (show err)
+      Left err -> Left (ParseError ("Failed to parse Object Stream value: " ++ show err) (BS.take 80 s'))
 
 
 -- make fontmap from page's /Resources (see 3.7.2 of PDF Ref.)

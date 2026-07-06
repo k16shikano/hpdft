@@ -3,12 +3,17 @@
 module PDF.ContentStream 
        ( parseStream
        , parseColorSpace
-       , normalizePdfNumber
-       , parsePdfNumber
        ) where
 
+import PDF.StreamLex
+  ( hexPairs
+  , parsePdfNumber
+  , sjisBytesToCodes
+  , unicodeBytesToCodes
+  , jisBytesToCodes
+  )
+
 import Data.Char (chr, ord)
-import Data.Bits (shiftL)
 import Data.String (fromString)
 import Data.List (isPrefixOf, dropWhileEnd)
 import Numeric (readOct, readHex)
@@ -374,48 +379,13 @@ hexStringToCodes enc hex =
   in case enc of
     Just SJISmap -> sjisBytesToCodes bytes
     Just UnicodeMap -> unicodeBytesToCodes bytes
-    Just JISmap -> pairBytes bytes
+    Just JISmap -> jisBytesToCodes bytes
     Just (CIDmap _) -> pairBytes bytes
     _ -> bytes
   where
     pairBytes [] = []
     pairBytes [_] = []
     pairBytes (a:b:rest) = (a * 256 + b) : pairBytes rest
-
-isUtf16HighSurrogate :: Int -> Bool
-isUtf16HighSurrogate u = u >= 0xD800 && u <= 0xDBFF
-
-isUtf16LowSurrogate :: Int -> Bool
-isUtf16LowSurrogate u = u >= 0xDC00 && u <= 0xDFFF
-
-surrogatePairToCode :: Int -> Int -> Int
-surrogatePairToCode hi lo = 0x10000 + ((hi - 0xD800) `shiftL` 10) + (lo - 0xDC00)
-
-unicodeBytesToCodes :: [Int] -> [Int]
-unicodeBytesToCodes [] = []
-unicodeBytesToCodes [_] = []
-unicodeBytesToCodes (a:b:rest) =
-  let unit = a * 256 + b
-  in if isUtf16HighSurrogate unit
-     then case rest of
-       (c:d:rs) ->
-         let unit2 = c * 256 + d
-         in if isUtf16LowSurrogate unit2
-            then surrogatePairToCode unit unit2 : unicodeBytesToCodes rs
-            else unit : unicodeBytesToCodes rest
-       _ -> [unit]
-     else unit : unicodeBytesToCodes rest
-
-isSjisLead :: Int -> Bool
-isSjisLead b = (b >= 0x81 && b <= 0x9F) || (b >= 0xE0 && b <= 0xFC)
-
-sjisBytesToCodes :: [Int] -> [Int]
-sjisBytesToCodes [] = []
-sjisBytesToCodes (b:rest)
-  | isSjisLead b = case rest of
-      (t:rs) -> (b * 256 + t) : sjisBytesToCodes rs
-      _ -> [b]
-  | otherwise = b : sjisBytesToCodes rest
 
 sjisCodeToText :: Int -> T.Text
 sjisCodeToText code =
@@ -486,23 +456,8 @@ jisletters = do
                          , try $ chr <$> ((string "\\") *> octnum)
                          , try $ noneOf ")"
                          ])
-  let codes = pairBytes $ map ord txt
+  let codes = jisBytesToCodes $ map ord txt
   return $ T.concat $ map jisCodeToText codes
-  where
-    pairBytes [] = []
-    pairBytes [_] = []
-    pairBytes (a:b:rest) = (a * 256 + b) : pairBytes rest
-
-hexPairs :: String -> [Int]
-hexPairs [] = []
-hexPairs [x] =
-  case readHex [x, '0'] of
-    [(n, "")] -> [n]
-    _         -> []
-hexPairs (a:b:rest) =
-  case readHex [a, b] of
-    [(n, "")] -> n : hexPairs rest
-    _         -> hexPairs rest
 
 octletters :: PSParser T.Text
 octletters = do
@@ -868,25 +823,6 @@ digitParam = do
          <|>
          ((++) <$> (many1 digit) <*> ((++) <$> (many $ char '.') <*> many digit))
   return $ parsePdfNumber $ sign ++ num
-
-normalizePdfNumber :: String -> String
-normalizePdfNumber s
-  | null s = s
-  | head s == '.' = '0' : s
-  | length s >= 2 && head s == '-' && s !! 1 == '.' = '-' : '0' : drop 1 s
-  | otherwise = s
-
-parsePdfNumber :: String -> Double
-parsePdfNumber s
-  | null s || s == "-" || s == "+" = 0
-  | last s == '.' =
-      case reads (normalizePdfNumber s ++ "0") of
-        [(n, "")] -> n
-        _         -> 0
-  | otherwise =
-      case reads (normalizePdfNumber s) of
-        [(n, "")] -> n
-        _         -> 0
 
 hexParam :: Parser T.Text
 hexParam = do
