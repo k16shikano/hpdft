@@ -3,6 +3,8 @@
 module PDF.ContentStream 
        ( parseStream
        , parseColorSpace
+       , normalizePdfNumber
+       , parsePdfNumber
        ) where
 
 import Data.Char (chr, ord)
@@ -871,7 +873,7 @@ normalizePdfNumber :: String -> String
 normalizePdfNumber s
   | null s = s
   | head s == '.' = '0' : s
-  | length s >= 2 && head s == '-' && s !! 1 == '.' = '-' : '0' : drop 2 s
+  | length s >= 2 && head s == '-' && s !! 1 == '.' = '-' : '0' : drop 1 s
   | otherwise = s
 
 parsePdfNumber :: String -> Double

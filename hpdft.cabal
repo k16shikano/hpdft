@@ -1,6 +1,6 @@
 cabal-version:       3.8
 name:                hpdft
-version:             0.4.6.3
+version:             0.4.6.4
 synopsis:            PDF parsing library and CLI for text, layout, diff, images, and forms
 description:
     hpdft is a Haskell library and command-line tool for parsing PDF files.

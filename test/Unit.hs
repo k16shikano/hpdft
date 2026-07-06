@@ -12,6 +12,8 @@ import PDF.Interpret
   , encodingUnicode
   , unicodeBytesToCodes
   )
+import qualified PDF.Interpret as Interpret
+import qualified PDF.ContentStream as ContentStream
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, needsAozoraBar, aozoraRuby, layoutParagraphs, layoutParagraphsWith, layoutPageText, layoutDocument, sortLinesByReadingOrder, linesFromGlyphs, Line(..))
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
 import PDF.Document (Document(..), openDocument)
@@ -187,6 +189,7 @@ main = do
           ++ taggedEndToEndResults
           ++ textStreamResults
           ++ cmapEncodingResults
+          ++ normalizePdfNumberResults
           ++ tuiScrollResults
   let failures = [msg | Fail msg <- results]
       passed = length results - length failures
@@ -1376,4 +1379,43 @@ cmapEncodingResults =
       , assertBool "bytesToCodes JISmap 2-byte fixed"
           (bytesToCodes jfi [0x46, 0x7C, 0x4B, 0x5C] == [0x467C, 0x4B5C])
       ]
+
+normalizePdfNumberResults :: [Result]
+normalizePdfNumberResults =
+  let cases =
+        [ (".5", 0.5)
+        , ("-.5", -0.5)
+        , ("-.23999999", -0.23999999)
+        , ("1.5", 1.5)
+        , ("-1.5", -1.5)
+        , ("5.", 5.0)
+        ]
+      abnormal =
+        [ ""
+        , "-"
+        , "+"
+        , "-.5."
+        , "."
+        , "-."
+        ]
+   in [ assertDoubleEq ("Interpret.parsePdfNumber " ++ s) n (Interpret.parsePdfNumber s)
+      | (s, n) <- cases
+      ]
+      ++ [ assertDoubleEq ("ContentStream.parsePdfNumber " ++ s) n (ContentStream.parsePdfNumber s)
+         | (s, n) <- cases
+         ]
+      ++ [ assertBool ("Interpret.parsePdfNumber abnormal " ++ show s)
+             (Interpret.parsePdfNumber s `seq` True)
+         | s <- abnormal
+         ]
+      ++ [ assertBool ("ContentStream.parsePdfNumber abnormal " ++ show s)
+             (ContentStream.parsePdfNumber s `seq` True)
+         | s <- abnormal
+         ]
+      ++ [ assertTextEq ("Interpret.normalizePdfNumber " ++ s) (T.pack expected) (T.pack (Interpret.normalizePdfNumber s))
+         | (s, expected) <- [(".5", "0.5"), ("-.5", "-0.5"), ("-.23999999", "-0.23999999")]
+         ]
+      ++ [ assertTextEq ("ContentStream.normalizePdfNumber " ++ s) (T.pack expected) (T.pack (ContentStream.normalizePdfNumber s))
+         | (s, expected) <- [(".5", "0.5"), ("-.5", "-0.5"), ("-.23999999", "-0.23999999")]
+         ]
 

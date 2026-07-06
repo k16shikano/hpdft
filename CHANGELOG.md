@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.6.4 (2026-07-06)
+
+### Fixed
+
+- Content-stream number parsing no longer corrupts negative fractions with an omitted integer part (e.g. `-.24` in a `cm` matrix); the previous bug turned them into large integers, broke the CTM, and left geometry/tagged text extraction empty while legacy/TUI output still looked fine.
+- Golden fixture `data/fixtures/negative-fraction-ctm.pdf` and unit tests for `normalizePdfNumber` / `parsePdfNumber` in both the geometry and legacy lexers.
+
 ## 0.4.6.3 (2026-07-06)
 
 ### Added
