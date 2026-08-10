@@ -864,6 +864,24 @@ data Line = Line
   , lineLastSuper   :: !Bool
   } deriving (Show)
 
+
+-- | Leading character looks like a common footnote / reference mark.
+superscriptMarkGlyph :: Glyph -> Bool
+superscriptMarkGlyph g =
+  case T.uncons (glyphText g) of
+    Just (c, _) -> isSuperscriptMarkChar c
+    Nothing -> False
+
+isSuperscriptMarkChar :: Char -> Bool
+isSuperscriptMarkChar c =
+  c == '†'  -- dagger
+  || c == '‡'  -- double dagger
+  || c == '※'  -- reference mark
+  || c == '*'
+  || c == '＊'  -- fullwidth asterisk
+  || c == '⁑'  -- two asterisks
+  || c == '⁂'  -- asterism
+
 buildLines :: [Glyph] -> [Line]
 buildLines = reverse . foldl' go []
   where
@@ -877,7 +895,11 @@ buildLines = reverse . foldl' go []
       where
         d = baselineOf (lineWMode l) g - lineBaseline l
         gap = inlineStartOf (lineWMode l) g - lineInlineEnd l
-        inlineCont refSize = gap >= -0.5 * refSize && gap <= 2.0 * refSize
+        -- Footnote marks (†‡※…) are usually superscripts and often overlap
+        -- the previous glyph's advance box; allow a wider negative gap for them.
+        inlineCont refSize =
+          let lo = if superscriptMarkGlyph g then -1.0 * refSize else -0.5 * refSize
+          in gap >= lo && gap <= 2.0 * refSize
         superAttach =
           glyphSize g <= 0.92 * lineSize l
           && glyphSize g >= 0.5 * lineSize l
@@ -1155,10 +1177,22 @@ paragraphBreak wmode graphics pageBounds prev cur gaps paraMinInline =
   || afterListHeadingBreak wmode prev cur gaps
   || sameHangListItemBreak wmode prev cur gaps
   || codeBlockBreak prev cur
-  || (gapBreak && not (cjkWrapContinuation prev cur))
-  || indentBreak paraMinInline cur
+  || (gapBreak && not (cjkSoftWrap wmode prev cur gaps))
+  -- Horizontal hanging wraps (footnote body under †1, etc.) must not
+  -- become paragraph breaks. Keep indentBreak for vertical columns,
+  -- which also look like CJK continuation across column starts.
+  || (indentBreak paraMinInline cur
+      && not (wmode == 0 && cjkWrapContinuation prev cur))
   || (graphicBreak wmode graphics pageBounds prev cur
-      && not (cjkWrapContinuation prev cur))
+      && not (cjkSoftWrap wmode prev cur gaps))
+
+-- | CJK line wrap that should stay in one paragraph. Large gaps (heading
+-- to body) still break even when the boundary characters are CJK.
+cjkSoftWrap :: Int -> Line -> Line -> [Double] -> Bool
+cjkSoftWrap wmode prev cur gaps =
+  cjkWrapContinuation prev cur
+  && abs (baselineGap wmode prev cur)
+       <= 2.2 * typicalLeading gaps (max (lineSize prev) (lineSize cur))
 
 cjkWrapContinuation :: Line -> Line -> Bool
 cjkWrapContinuation prev cur =

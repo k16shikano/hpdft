@@ -442,6 +442,10 @@ layoutParagraphResults =
         , ItemGlyph (mkGlyph 70 372 8 8 0 "\x3067")
         , ItemGlyph (mkGlyph 78 372 8 8 0 "\x898b")
         ]
+      headingBodySplit = layoutParagraphs
+        [ ItemGlyph (mkGlyph 120 456 120 18 0 "言語入門")
+        , ItemGlyph (mkGlyph 58 370 80 8 0 "本書では、")
+        ]
       dingbatBullet = layoutPageText
         [ ItemGlyph (mkGlyph 60 434 0 9 0 "r")
         , ItemGlyph (mkGlyph 66 431 0 8 0 "HTTP")
@@ -493,6 +497,10 @@ layoutParagraphResults =
       , assertBool "layout CJK wrap keeps one paragraph" (length cjkWrapSplit == 1)
       , assertTextEq "layout CJK wrap joined text"
           (T.pack "\x8a18\x6cd5\x3067\x898b") (head cjkWrapSplit)
+      , assertBool "layout heading to body splits paragraph"
+          (length headingBodySplit == 2)
+      , assertTextEq "layout heading stays separate"
+          (T.pack "言語入門") (head headingBodySplit)
       , assertTextEq "layout dingbat r prefix becomes bullet"
           (T.pack "\8226 HTTP\n") dingbatBullet
       , assertBool "layout lettered list items split" (length letteredList == 3)
@@ -668,6 +676,17 @@ superscriptResults =
         [ body "text", supAt 132 "\8224", supAt 136 "1", bodyAfter 140 "." ]
       farSupGlyphs =
         [ g | ItemGlyph g <- [body "text", ItemGlyph (mkGlyph 132 708.5 4 7 0 "\8224")]]
+      -- Overlap slightly past the normal -0.5em inlineCont floor (leanbook-work dagger case).
+      tightDaggerOverlap =
+        let sz = 8.41
+            bodyY = 200.0
+            prefix = mkGlyph 50 bodyY 50 sz 0 "NNG"
+            paren = mkGlyph 100 bodyY sz sz 0 "）"
+            dagX = 100 + sz - 0.51 * sz
+            dag = mkGlyph dagX (bodyY + 0.44 * sz) (0.45 * sz) (0.71 * sz) 0 "†"
+            three = mkGlyph (dagX + 0.45 * sz) (bodyY + 0.36 * sz) (0.45 * sz) (0.71 * sz) 0 "3"
+            quote = mkGlyph (dagX + 0.95 * sz) bodyY sz sz 0 "」"
+        in linesFromGlyphs [prefix, paren, dag, three, quote]
       rebase = layoutParagraphs
         [ ItemGlyph (mkGlyph 72 87.6 4 7 0 "\8224")
         , ItemGlyph (mkGlyph 76 87.6 4 7 0 "1")
@@ -696,11 +715,22 @@ superscriptResults =
           , ItemGlyph (mkGlyph 75 87.6 3 7 0 "2")
           , ItemGlyph (mkGlyph 80 84.3 60 8 0 "orphan note")
           ])
+      hangFootnoteParas =
+        layoutParagraphs
+          [ ItemGlyph (mkGlyph 72 87.6 4 7 0 "†")
+          , ItemGlyph (mkGlyph 76 87.6 4 7 0 "1")
+          , ItemGlyph (mkGlyph 82 84.3 120 8 0 "Lean製")
+          , ItemGlyph (mkGlyph 82 72.5 120 8 0 "のツール")
+          ]
    in [ assertBool "superscript merges inline" (length merged == 1)
       , assertTextEq "superscript inline text order"
           (T.pack "text\8224\&1.") (head merged)
       , assertBool "superscript beyond window stays separate line"
           (length (linesFromGlyphs farSupGlyphs) == 2)
+      , assertBool "dagger overlaps >0.5em still merges"
+          (length tightDaggerOverlap == 1)
+      , assertTextEq "dagger overlap keeps reading order"
+          (T.pack "NNG）†3」") (lineText (head tightDaggerOverlap))
       , assertBool "marker line rebases onto body" (length rebase == 1)
       , assertTextEq "rebased line text" (T.pack "\8224\&1note body") (head rebase)
       , assertBool "footnotes on: body inlined"
@@ -715,6 +745,9 @@ superscriptResults =
           (T.isInfixOf "anchor\8224\&9" unmatchedAnchor)
       , assertBool "orphan footnote block stays"
           (T.isInfixOf "orphan note" orphanBlock)
+      , assertBool "hanging footnote wrap stays one paragraph"
+          (length hangFootnoteParas == 1
+           && T.isInfixOf (T.pack "Lean製のツール") (head hangFootnoteParas))
       ]
 
 rubyResults :: [Result]
