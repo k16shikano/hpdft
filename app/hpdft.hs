@@ -210,6 +210,12 @@ diffOpts = DiffOpt
   <*> switch
       ( long "json"
         <> help "Emit JSON instead of human-readable diff" )
+  <*> strOption
+      ( long "color"
+        <> metavar "WHEN"
+        <> value "auto"
+        <> showDefault
+        <> help "Colorize unified diff: auto (TTY only), always, never" )
   <*> passwordOpt
   <*> strArgument
       ( help "first PDF file"

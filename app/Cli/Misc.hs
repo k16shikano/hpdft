@@ -18,7 +18,7 @@ import Cli.Parser (DiffOpt(..), FormOpt(..), ImagesOpt(..))
 import PDF.Definition (Obj(..), ppObj, ppDictEntries)
 import PDF.Document (Document(..), docInfoDict, docRootRef, docTrailer, openDocument)
 import PDF.DocumentStructure
-import PDF.Diff (TextChange(..), DiffPipeline(..), compareDocumentsWith)
+import PDF.Diff (TextChange(..), DiffPipeline(..), DiffColor(..), compareDocumentsWith, renderUnifiedDiff)
 import PDF.FormExtract (extractFormToFile, pageFormNames)
 import PDF.Image (extractPageImagesToDir)
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions)
@@ -27,7 +27,7 @@ import PDF.Page (pageRefsFromRoot)
 import PDF.PDFIO (getObjectByRef, getStream)
 
 import System.Exit (exitWith, ExitCode(..))
-import System.IO (hPutStrLn, putStrLn, stderr)
+import System.IO (hIsTerminalDevice, hPutStrLn, putStr, putStrLn, stderr, stdout)
 
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.Text as T
@@ -67,7 +67,8 @@ runExtractForm FormOpt{foPage=pg, foName=mn, foOut=out, foPassword=pw, foFile=fn
           putStrLn path
 
 runDiff :: DiffOpt -> IO ()
-runDiff DiffOpt{doLegacy=legacy, doRuby=rb, doJson=json, doPassword=pw, doFileA=fa, doFileB=fb} =
+runDiff DiffOpt{doLegacy=legacy, doRuby=rb, doJson=json, doColor=colorWhen,
+                doPassword=pw, doFileA=fa, doFileB=fb} =
   withFile fa $
   withFile fb $
   let mpw = maybePassword pw
@@ -81,36 +82,19 @@ runDiff DiffOpt{doLegacy=legacy, doRuby=rb, doJson=json, doPassword=pw, doFileA=
     changes <- runOrDie (return (compareDocumentsWith pipeline docA docB))
     if json
       then putStrLn (renderDiffJson changes)
-      else mapM_ putStrLn (renderDiffHuman changes)
+      else do
+        color <- resolveDiffColor colorWhen
+        putStr (renderUnifiedDiff color fa fb changes)
 
-renderDiffHuman :: [TextChange] -> [String]
-renderDiffHuman = map renderOne
-  where
-    renderOne (PageCountMismatch pa pb) =
-      "page count mismatch: " ++ show pa ++ " vs " ++ show pb
-    renderOne TextChange{changePageA = pa, changePageB = pb,
-                         changeParaA = pxa, changeParaB = pxb,
-                         changeOld = old, changeNew = new} =
-      unlines
-        ( pageLine
-        : paraLine
-        : ("- old: " ++ T.unpack old) : ("+ new: " ++ T.unpack new) : []
-        )
-      where
-        pageLine =
-          case (pa, pb) of
-            (Just a, Just b) | a == b -> "page " ++ show a ++ ":"
-            (Just a, Just b) -> "page " ++ show a ++ " vs " ++ show b ++ ":"
-            (Just a, Nothing) -> "page " ++ show a ++ " (only in first file):"
-            (Nothing, Just b) -> "page " ++ show b ++ " (only in second file):"
-            _ -> "page ?:"
-        paraLine =
-          case (pxa, pxb) of
-            (Just a, Just b) | a == b -> "para " ++ show (a + 1) ++ ":"
-            (Just a, Just b) -> "para " ++ show (a + 1) ++ " vs " ++ show (b + 1) ++ ":"
-            (Just a, Nothing) -> "para " ++ show (a + 1) ++ ":"
-            (Nothing, Just b) -> "para " ++ show (b + 1) ++ ":"
-            _ -> "para ?:"
+resolveDiffColor :: String -> IO DiffColor
+resolveDiffColor "always" = return DiffColorAnsi
+resolveDiffColor "never"  = return DiffColorOff
+resolveDiffColor "auto"   = do
+  tty <- hIsTerminalDevice stdout
+  return (if tty then DiffColorAnsi else DiffColorOff)
+resolveDiffColor other = do
+  hPutStrLn stderr ("hpdft: unknown --color " ++ show other ++ " (use auto, always, never)")
+  exitWith (ExitFailure 1)
 
 renderDiffJson :: [TextChange] -> String
 renderDiffJson changes = "[" ++ intercalate "," (map encodeChange changes) ++ "]"

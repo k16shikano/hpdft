@@ -7,7 +7,8 @@ License     : MIT
 
 Compare two opened documents page by page using the same paragraph layout as
 'PDF.Page.pageParagraphs'. Emits 'TextChange' records (and optionally a
-'PageCountMismatch' when page counts differ).
+'PageCountMismatch' when page counts differ). Paragraph equality ignores
+whitespace by default.
 
 @example
 import PDF.Diff (compareDocuments)
@@ -18,10 +19,13 @@ changes <- compareDocuments defaultLayoutOptions docA docB
 module PDF.Diff
   ( TextChange(..)
   , DiffPipeline(..)
+  , DiffColor(..)
   , compareDocuments
   , compareDocumentsWith
   , diffParagraphs
   , legacyTextParagraphs
+  , alignChangeSpans
+  , renderUnifiedDiff
   ) where
 
 import PDF.Document (Document)
@@ -31,7 +35,7 @@ import PDF.Page (pageCount, pageRefAt, pageParagraphs)
 import PDF.Text (pageLegacyText)
 
 import Data.Char (isSpace)
-import Data.List (sortOn)
+import Data.List (intercalate, nub, sort, sortOn)
 import qualified Data.Text as T
 
 data TextChange
@@ -52,6 +56,11 @@ data TextChange
 data DiffPipeline
   = DiffGeom !LayoutOptions
   | DiffLegacy
+
+-- | Whether human-readable unified diff should include ANSI colors.
+data DiffColor
+  = DiffColorOff
+  | DiffColorAnsi
   deriving (Eq, Show)
 
 -- | Paragraph-level diff using geometry layout (default).
@@ -121,9 +130,9 @@ onlyInB pipeline doc page = do
 -- | Split legacy page text into paragraph-sized units (blank-line separated).
 legacyTextParagraphs :: T.Text -> [T.Text]
 legacyTextParagraphs t =
-  let chunks = filter (not . T.null) $ map normalizePara $ T.splitOn "\n\n" t
-  in if null chunks && not (T.null (normalizePara t))
-     then [normalizePara t]
+  let chunks = filter (not . T.null) $ map collapseParaWS $ T.splitOn "\n\n" t
+  in if null chunks && not (T.null (collapseParaWS t))
+     then [collapseParaWS t]
      else chunks
 
 diffParagraphsOnPage :: Int -> [T.Text] -> [T.Text] -> [TextChange]
@@ -208,8 +217,15 @@ isAddition TextChange{changeOld = old, changeNew = new} =
   T.null old && not (T.null new)
 isAddition _ = False
 
+-- | Comparison key for a paragraph. Whitespace is ignored: PDF extractors
+-- often disagree on Latin/CJK spacing while the visible text is the same.
+-- Display text in 'TextChange' stays as extracted.
 normalizePara :: T.Text -> T.Text
-normalizePara = collapseInternalWS . T.strip
+normalizePara = T.filter (not . isSpace)
+
+-- | Soft-normalize legacy paragraph chunks for display (strip + collapse runs).
+collapseParaWS :: T.Text -> T.Text
+collapseParaWS = collapseInternalWS . T.strip
   where
     collapseInternalWS t =
       T.pack $ go False (T.unpack t)
@@ -232,3 +248,185 @@ lcsTable xs ys =
       tableAt i j = table !! (i * (n + 1) + j)
       table = [row i j | i <- [0 .. m], j <- [0 .. n]]
    in table
+
+-- | Shared prefix / differing middles / shared suffix for two paragraph texts.
+-- Newlines are flattened to spaces so each change stays one unified-diff line.
+alignChangeSpans :: T.Text -> T.Text -> (T.Text, T.Text, T.Text, T.Text)
+alignChangeSpans old0 new0 =
+  let old = flattenOneLine old0
+      new = flattenOneLine new0
+      (pre, oldRest, newRest) = splitCommonPrefix old new
+      (suf, oldMid, newMid) = splitCommonSuffix oldRest newRest
+  in (pre, oldMid, newMid, suf)
+
+flattenOneLine :: T.Text -> T.Text
+flattenOneLine = T.map (\c -> if c == '\n' || c == '\r' then ' ' else c)
+
+splitCommonPrefix :: T.Text -> T.Text -> (T.Text, T.Text, T.Text)
+splitCommonPrefix a b =
+  let n = length (takeWhile id (zipWith (==) (T.unpack a) (T.unpack b)))
+  in (T.take n a, T.drop n a, T.drop n b)
+
+splitCommonSuffix :: T.Text -> T.Text -> (T.Text, T.Text, T.Text)
+splitCommonSuffix a b =
+  let ra = T.reverse a
+      rb = T.reverse b
+      n = length (takeWhile id (zipWith (==) (T.unpack ra) (T.unpack rb)))
+  in (T.takeEnd n a, T.dropEnd n a, T.dropEnd n b)
+
+-- | Context characters kept on each side of the changed span; longer common
+-- sides are elided with an ellipsis so editor -/+ lines stay scannable.
+spanContextChars :: Int
+spanContextChars = 12
+
+trimSpanContext :: T.Text -> T.Text -> (T.Text, T.Text)
+trimSpanContext pre suf =
+  ( trimPre pre
+  , trimSuf suf
+  )
+  where
+    trimPre t
+      | T.length t <= spanContextChars = t
+      | otherwise = T.cons '\x2026' (T.takeEnd spanContextChars t)
+    trimSuf t
+      | T.length t <= spanContextChars = t
+      | otherwise = T.take spanContextChars t `T.append` T.singleton '\x2026'
+
+-- | Unified-diff style rendering for CLI / @.diff@ files.
+--
+-- Structure uses @---@ / @+++@ / @\@\@@ / @-@ / @+@ so editor syntax
+-- highlighters treat it as a diff. Consecutive paragraph changes on the
+-- same page are merged into one hunk; within a hunk all deletions come
+-- before all additions (classic multi-line replace), not interleaved
+-- per paragraph. With 'DiffColorAnsi', only the changed span inside each
+-- line is colored (TTY); redirected files should use 'DiffColorOff'.
+renderUnifiedDiff :: DiffColor -> FilePath -> FilePath -> [TextChange] -> String
+renderUnifiedDiff _ _ _ [] = ""
+renderUnifiedDiff color fileA fileB changes =
+  intercalate "\n" (headerLines ++ concatMap (renderHunk color) (groupDiffHunks changes)) ++ "\n"
+  where
+    headerLines =
+      [ paint color meta ("--- " ++ fileA)
+      , paint color meta ("+++ " ++ fileB)
+      ]
+
+-- | Merge consecutive same-page 'TextChange's into one hunk.
+groupDiffHunks :: [TextChange] -> [[TextChange]]
+groupDiffHunks [] = []
+groupDiffHunks (c@(PageCountMismatch{}) : rest) =
+  [c] : groupDiffHunks rest
+groupDiffHunks (c@TextChange{} : rest) =
+  let (peers, rest') = span (sameHunkPage c) rest
+  in (c : peers) : groupDiffHunks rest'
+
+sameHunkPage :: TextChange -> TextChange -> Bool
+sameHunkPage TextChange{changePageA = pa, changePageB = pb}
+             TextChange{changePageA = pa', changePageB = pb'} =
+  pa == pa' && pb == pb'
+sameHunkPage _ _ = False
+
+renderHunk :: DiffColor -> [TextChange] -> [String]
+renderHunk color [PageCountMismatch pa pb] =
+  [ paint color hunk "@@ page count @@"
+  , paintDel color (show pa ++ " pages")
+  , paintAdd color (show pb ++ " pages")
+  ]
+renderHunk _ (PageCountMismatch{} : _) =
+  -- PageCountMismatch is always alone; defensive fallback.
+  []
+renderHunk color cs@(TextChange{changePageA = pa, changePageB = pb} : _) =
+  let bodies = map (changeLines color) cs
+      dels = concatMap fst bodies
+      adds = concatMap snd bodies
+  in paint color hunk ("@@ " ++ hunkLocation pa pb cs ++ " @@")
+       : (dels ++ adds)
+renderHunk _ _ = []
+
+-- | @('-' lines, '+' lines)@ for one paragraph change.
+changeLines :: DiffColor -> TextChange -> ([String], [String])
+changeLines _ PageCountMismatch{} = ([], [])
+changeLines color TextChange{changeOld = old, changeNew = new}
+  | T.null old = ([], [paintAdd color (T.unpack (flattenOneLine new))])
+  | T.null new = ([paintDel color (T.unpack (flattenOneLine old))], [])
+  | otherwise =
+      let (pre0, oldMid, newMid, suf0) = alignChangeSpans old new
+          (pre, suf) = trimSpanContext pre0 suf0
+      in ( [paintSpan color '-' pre oldMid suf]
+         , [paintSpan color '+' pre newMid suf]
+         )
+
+hunkLocation :: Maybe Int -> Maybe Int -> [TextChange] -> String
+hunkLocation pa pb cs =
+  case (pa, pb) of
+    (Just a, Just b) | a == b ->
+      "page " ++ show a ++ ", " ++ paraLabel
+    (Just a, Just b) ->
+      "page " ++ show a ++ " vs " ++ show b ++ ", " ++ paraLabel
+    (Just a, Nothing) ->
+      "page " ++ show a ++ " (only in first), " ++ paraLabel
+    (Nothing, Just b) ->
+      "page " ++ show b ++ " (only in second), " ++ paraLabel
+    _ -> paraLabel
+  where
+    paraLabel = formatParaRefs [ (pxa, pxb) | TextChange{changeParaA = pxa, changeParaB = pxb} <- cs ]
+
+-- | Compact 1-based paragraph references: @para 6@, @para 6-9@, @para 6, 8-11@.
+formatParaRefs :: [(Maybe Int, Maybe Int)] -> String
+formatParaRefs refs =
+  case collect of
+    [] -> "para ?"
+    xs -> "para " ++ intercalate ", " (map formatRun (groupRuns xs))
+  where
+    collect = sort $ nub [ n | (ma, mb) <- refs, n <- maybePara ma mb ]
+    maybePara (Just a) (Just b)
+      | a == b = [a + 1]
+      | otherwise = [a + 1, b + 1]
+    maybePara (Just a) Nothing = [a + 1]
+    maybePara Nothing (Just b) = [b + 1]
+    maybePara _ _ = []
+
+    groupRuns [] = []
+    groupRuns (x : xs) = go [x] xs
+      where
+        go run [] = [reverse run]
+        go run@(r : _) (y : ys)
+          | y == r + 1 = go (y : run) ys
+          | otherwise = reverse run : go [y] ys
+        go _ _ = []
+
+    formatRun [a] = show a
+    formatRun (a : rest) = show a ++ "-" ++ show (last (a : rest))
+    formatRun [] = "?"
+
+paintSpan :: DiffColor -> Char -> T.Text -> T.Text -> T.Text -> String
+paintSpan DiffColorOff mark pre mid suf =
+  mark : T.unpack (pre `T.append` mid `T.append` suf)
+paintSpan DiffColorAnsi mark pre mid suf =
+  let midColor = if mark == '-' then red else green
+  in mark
+       : dim (T.unpack pre)
+      ++ midColor (T.unpack mid)
+      ++ dim (T.unpack suf)
+      ++ reset
+
+paintDel :: DiffColor -> String -> String
+paintDel DiffColorOff s = '-' : s
+paintDel DiffColorAnsi s = '-' : red s ++ reset
+
+paintAdd :: DiffColor -> String -> String
+paintAdd DiffColorOff s = '+' : s
+paintAdd DiffColorAnsi s = '+' : green s ++ reset
+
+paint :: DiffColor -> (String -> String) -> String -> String
+paint DiffColorOff _ s = s
+paint DiffColorAnsi style s = style s ++ reset
+
+meta, hunk, red, green, dim :: String -> String
+meta s = "\ESC[1m" ++ s
+hunk s = "\ESC[36m" ++ s
+red s = "\ESC[31m" ++ s
+green s = "\ESC[32m" ++ s
+dim s = "\ESC[2m" ++ s
+
+reset :: String
+reset = "\ESC[0m"

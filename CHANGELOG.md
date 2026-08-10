@@ -10,6 +10,9 @@
 - Geometry layout: hanging-indent wraps in footnote bodies (CJK continuation after †1 etc.) no longer become blank-line paragraph breaks.
 - Geometry layout: large CJK gaps (chapter title to body) again start a new paragraph; soft-wrap suppression only applies within ~2.2× typical leading.
 - Diff: consecutive modified paragraphs stay index-aligned (no more "para N vs N-1" cross-wiring).
+- Diff: paragraph comparison ignores whitespace by default (spacing noise from extractors is omitted).
+- Diff CLI: unified-diff output (`---`/`+++`/`@@`/`-`/`+`) with changed-span focus; ANSI color on TTY (`--color auto|always|never`).
+- Diff CLI: consecutive same-page paragraph changes share one hunk (`@@ page N, para … @@`).
 
 ### Added
 

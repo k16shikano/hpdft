@@ -11,7 +11,7 @@ import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, needsAozoraBar, aozo
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
 import PDF.Document (Document(..), openDocument)
 import PDF.Page (pageCount, pageRefAt, pageParagraphs)
-import PDF.Diff (TextChange(..), DiffPipeline(..), compareDocuments, compareDocumentsWith, diffParagraphs, legacyTextParagraphs)
+import PDF.Diff (TextChange(..), DiffPipeline(..), DiffColor(..), compareDocuments, compareDocumentsWith, diffParagraphs, legacyTextParagraphs, alignChangeSpans, renderUnifiedDiff)
 import PDF.DocumentStructure (parseCIDWidths, simpleWidthAt, decodeStreamBytes)
 import PDF.Character (jisx0208Map)
 import PDF.Image
@@ -1027,6 +1027,45 @@ diffResults =
           [TextChange{changeParaA = Just 1, changeOld = old, changeNew = new}] ->
             old == T.pack "B" && T.null new
           _ -> False
+      )
+  , assertBool "diffParagraphs ignores whitespace by default"
+      ( null (diffParagraphs [T.pack "Lean の"] [T.pack "Leanの"])
+        && null (diffParagraphs [T.pack "a  b\nc"] [T.pack "abc"])
+      )
+  , assertBool "alignChangeSpans finds middle edit"
+      ( case alignChangeSpans (T.pack "prefixOLD-MIDDLEsuffix") (T.pack "prefixNEW-MIDDLEsuffix") of
+          (pre, o, n, suf) ->
+            pre == T.pack "prefix" && o == T.pack "OLD" && n == T.pack "NEW" && suf == T.pack "-MIDDLEsuffix"
+      )
+  , assertBool "renderUnifiedDiff is editor-friendly without ANSI"
+      ( let out = renderUnifiedDiff DiffColorOff "a.pdf" "b.pdf"
+              [ TextChange (Just 11) (Just 11) (Just 4) (Just 4)
+                  (T.pack "aaa製作bbb") (T.pack "aaa制作bbb") ]
+        in "--- a.pdf\n" `T.isPrefixOf` T.pack out
+           && "+++ b.pdf" `T.isInfixOf` T.pack out
+           && "@@ page 11, para 5 @@" `T.isInfixOf` T.pack out
+           && "-aaa製作bbb" `T.isInfixOf` T.pack out
+           && "+aaa制作bbb" `T.isInfixOf` T.pack out
+           && '\x1b' `notElem` out
+      )
+  , assertBool "renderUnifiedDiff groups same-page changes into one hunk"
+      ( let out = renderUnifiedDiff DiffColorOff "a.pdf" "b.pdf"
+              [ TextChange (Just 62) (Just 62) (Just 5) (Just 5)
+                  (T.pack "old-a") (T.pack "new-a")
+              , TextChange (Just 62) (Just 62) (Just 7) (Just 7)
+                  (T.pack "old-b") (T.pack "new-b")
+              , TextChange (Just 62) (Just 62) (Just 8) (Just 8)
+                  (T.pack "old-c") (T.pack "new-c")
+              ]
+            ls = lines out
+            n = length (filter (== "@@ page 62, para 6, 8-9 @@") ls)
+            -- Classic block replace: all '-' then all '+'.
+            body = dropWhile (not . (== "@@ page 62, para 6, 8-9 @@")) ls
+            after = drop 1 body
+        in n == 1
+           && take 3 after == ["-old-a", "-old-b", "-old-c"]
+           && take 3 (drop 3 after) == ["+new-a", "+new-b", "+new-c"]
+           && length (filter (T.isPrefixOf (T.pack "@@ ")) (T.lines (T.pack out))) == 1
       )
   , assertBool "diffParagraphs consecutive edits stay aligned"
       ( case diffParagraphs

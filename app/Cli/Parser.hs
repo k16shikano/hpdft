@@ -52,6 +52,7 @@ data DiffOpt = DiffOpt
   { doLegacy    :: Bool
   , doRuby      :: Bool
   , doJson      :: Bool
+  , doColor     :: String
   , doPassword  :: String
   , doFileA     :: FilePath
   , doFileB     :: FilePath

@@ -142,9 +142,11 @@ legacy  <- compareDocumentsWith DiffLegacy docA docB
 
 Geometry mode uses `pageParagraphs`. Legacy mode uses stream-order page text split on blank lines (`legacyTextParagraphs`).
 
-Each `TextChange` records old/new paragraph text and optional page/paragraph indices. A `PageCountMismatch` entry appears when page counts differ.
+Each `TextChange` records old/new paragraph text and optional page/paragraph indices. A `PageCountMismatch` entry appears when page counts differ. Equality ignores whitespace (spacing noise from extractors); reported text keeps the original spacing.
 
 CLI: `hpdft diff FILE_A FILE_B` (geometry, default). `hpdft diff --legacy FILE_A FILE_B` for legacy stream-order text.
+
+Human output is unified-diff shaped (`---` / `+++` / `@@` / `-` / `+`) so editors highlight `.diff` files; long unchanged sides are elided around the changed span. Consecutive changes on the same page share one hunk (`@@ page N, para 6, 8-11 @@`), with all `-` lines before all `+` lines. ANSI colors apply only on a TTY by default (`--color auto|always|never`).
 
 ## Image extraction
 
