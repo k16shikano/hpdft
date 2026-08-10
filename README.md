@@ -128,5 +128,5 @@ Developer notes (roadmaps, performance write-ups): [`dev/`](dev/)
 
 ## Version
 
-Released: **0.4.6.0** (2026-07-05) — Quick viewer (`hpdft FILE`) with ANSI TUI, legacy streaming, toc fix.
-Previous release: **0.4.5.0**.
+Released: **0.4.7.1** (2026-08-10) — Form/stream extraction fixes, layout heuristics, and aligned paragraph diff.
+Previous release: **0.4.7.0**.
