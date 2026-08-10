@@ -120,6 +120,9 @@ pdfopGraphics = do
          , try $ T.empty <$ oneOf "nsS" <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "jJM" <* space <* spaces
          , try $ T.empty <$ (digitParam <* spaces) <* oneOf "dwi" <* spaces
+         -- Gray / CMYK fill-stroke (must precede the generic "c" branch).
+         , try $ T.empty <$ (digitParam <* spaces) <* oneOf "gG" <* spaces
+         , try $ T.empty <$ (count 4 (digitParam <* spaces) *> oneOf "kK" <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "ml" <* space <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* oneOf "vy" <* space <* spaces)
          , try $ T.empty <$ (many1 (digitParam <* spaces) <* string "re" <* spaces)
@@ -204,15 +207,23 @@ pdfopBDC formRunner = do
   string "BDC"
   spaces
   case tag of
-    "/Span" 
+    "/Span"
       | "/ActualText" == (fst prop)
+        -- Replace marked content with ActualText; discard operators until EMC.
         -> do {spaces >> manyTill (elems formRunner) (try $ string "EMC") >> return (snd prop)}
-      | otherwise  -> return $ T.empty
-    _ -> return $ T.empty
+      | otherwise -> return T.empty
+    -- Other BDC markers (e.g. /P, /OC /MC0): leave body to the outer elems loop.
+    _ -> return T.empty
 
   where
+    -- Property list is either a dict or a name (Properties resource lookup).
     propertyList :: PSParser (T.Text, T.Text)
-    propertyList = spaces >> try dictionary
+    propertyList = spaces >> (try dictionary <|> nameOnly)
+
+    nameOnly :: PSParser (T.Text, T.Text)
+    nameOnly = do
+      n <- name
+      return (n, T.empty)
 
     dictionary :: PSParser (T.Text, T.Text)
     dictionary = do

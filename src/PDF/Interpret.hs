@@ -365,8 +365,14 @@ execOp "\"" st =
     _ -> st
 execOp "Do" st =
   case operandStack st of
-    PdfName name : _ -> invokeXObjectSt name st
+    PdfName name : rest -> invokeXObjectSt name (st {operandStack = rest})
     _ -> st
+execOp "g" st = popColorSt 1 st
+execOp "G" st = popColorSt 1 st
+execOp "rg" st = popColorSt 3 st
+execOp "RG" st = popColorSt 3 st
+execOp "k" st = popColorSt 4 st
+execOp "K" st = popColorSt 4 st
 execOp "m" st =
   case popNums 2 st of
     Just ([y, x], st') -> st' {pathAcc = [devicePoint st' x y]}
@@ -520,6 +526,9 @@ setGSDoubleSt f st =
   case popNums 1 st of
     Just ([v], st') -> modifyGStateSt (f v) st'
     _ -> st
+
+popColorSt :: Int -> IState -> IState
+popColorSt n st = maybe st snd (popNums n st)
 
 popNums :: Int -> IState -> Maybe ([Double], IState)
 popNums n st = go n (operandStack st) []
@@ -676,7 +685,6 @@ showBytesSt bytes st =
             , glyphMCID = currentMCID st
             }
       in st {itemsRev = ItemGlyph glyph : itemsRev st, tsCur = Just ts {tmMat = endTm}}
-    _ -> st
 
 glyphStep :: GState -> FontInfo -> (T.Text, Matrix) -> Int -> (T.Text, Matrix)
 glyphStep gs fi (txt, tm) code =
@@ -835,16 +843,21 @@ runXObjectSt ref st0
                 Right stream ->
                   let formMat = formMatrix d
                       formRes = fromMaybe (isRes st0) (findResourcesDict d (isObjs st0))
+                      -- Isolate the form: push, run, then pop *this* frame from the
+                      -- post-run state. Popping from st0 (pre-Do) would discard a
+                      -- page-level q that wrapped the Do and leave CTM as identity.
                       stPush = pushGStateSt st0
                       stMat = modifyGStateSt (\gs -> gs {ctm = multiply formMat (ctm gs)}) stPush
                       stRun = stMat {isRes = formRes, depth = depth st0 + 1, operandStack = []}
                       stDone = runStream stRun stream
-                      stPop = popGStateSt st0
+                      stPop = popGStateSt stDone
                   in stPop
                        { itemsRev = itemsRev stDone
                        , imagesRev = imagesRev stDone
                        , depth = depth st0
                        , isRes = isRes st0
+                       , operandStack = operandStack st0
+                       , mcStack = mcStack st0
                        }
                 Left _ -> st0
             Just (PdfName "/Image") ->

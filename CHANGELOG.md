@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.7.1 (2026-08-10)
+
+### Fixed
+
+- Geometry/Interpret: after Form XObject `Do`, pop the graphics state from the post-form state so a wrapping page-level `q`…`Q` stays intact; previously CTM reset to identity and later glyphs with negative device Y were dropped.
+- Legacy content stream: accept gray/CMYK color operators (`g`/`G`/`k`/`K`) before the generic `c` branch, and accept name-only BDC property lists (e.g. `/OC /MC0 BDC`). Failed parses on newline-sparse streams after embedded Forms no longer skip the rest of the page.
+
 ## 0.4.7.0 (2026-07-06)
 
 ### Added
