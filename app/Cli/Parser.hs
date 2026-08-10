@@ -49,7 +49,7 @@ data FormOpt = FormOpt
   }
 
 data DiffOpt = DiffOpt
-  { doGeom      :: Bool
+  { doLegacy    :: Bool
   , doRuby      :: Bool
   , doJson      :: Bool
   , doPassword  :: String

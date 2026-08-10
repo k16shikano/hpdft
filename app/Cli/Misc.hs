@@ -18,7 +18,7 @@ import Cli.Parser (DiffOpt(..), FormOpt(..), ImagesOpt(..))
 import PDF.Definition (Obj(..), ppObj, ppDictEntries)
 import PDF.Document (Document(..), docInfoDict, docRootRef, docTrailer, openDocument)
 import PDF.DocumentStructure
-import PDF.Diff (TextChange(..), compareDocuments)
+import PDF.Diff (TextChange(..), DiffPipeline(..), compareDocumentsWith)
 import PDF.FormExtract (extractFormToFile, pageFormNames)
 import PDF.Image (extractPageImagesToDir)
 import PDF.Layout (LayoutOptions(..), defaultLayoutOptions)
@@ -67,15 +67,18 @@ runExtractForm FormOpt{foPage=pg, foName=mn, foOut=out, foPassword=pw, foFile=fn
           putStrLn path
 
 runDiff :: DiffOpt -> IO ()
-runDiff DiffOpt{doRuby=rb, doJson=json, doPassword=pw, doFileA=fa, doFileB=fb} =
+runDiff DiffOpt{doLegacy=legacy, doRuby=rb, doJson=json, doPassword=pw, doFileA=fa, doFileB=fb} =
   withFile fa $
   withFile fb $
   let mpw = maybePassword pw
-      lopts = defaultLayoutOptions {optRuby = rb}
+      pipeline =
+        if legacy
+        then DiffLegacy
+        else DiffGeom defaultLayoutOptions {optRuby = rb}
   in do
     docA <- runOrDie (openDocument fa mpw)
     docB <- runOrDie (openDocument fb mpw)
-    changes <- runOrDie (return (compareDocuments lopts docA docB))
+    changes <- runOrDie (return (compareDocumentsWith pipeline docA docB))
     if json
       then putStrLn (renderDiffJson changes)
       else mapM_ putStrLn (renderDiffHuman changes)

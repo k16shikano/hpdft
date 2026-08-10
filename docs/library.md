@@ -130,18 +130,21 @@ See `examples/page-api/Main.hs` for a runnable program.
 
 ## Document diff
 
-`PDF.Diff.compareDocuments` aligns pages by number and diffs paragraph text:
+`PDF.Diff.compareDocuments` (geometry paragraphs) and `compareDocumentsWith` (geometry or legacy) align pages by number and diff paragraph-sized text:
 
 ```haskell
-import PDF.Diff (compareDocuments, TextChange(..))
+import PDF.Diff (compareDocuments, compareDocumentsWith, DiffPipeline(..), TextChange(..))
 import PDF.Layout (defaultLayoutOptions)
 
 changes <- compareDocuments defaultLayoutOptions docA docB
+legacy  <- compareDocumentsWith DiffLegacy docA docB
 ```
+
+Geometry mode uses `pageParagraphs`. Legacy mode uses stream-order page text split on blank lines (`legacyTextParagraphs`).
 
 Each `TextChange` records old/new paragraph text and optional page/paragraph indices. A `PageCountMismatch` entry appears when page counts differ.
 
-CLI equivalent: `hpdft diff FILE_A FILE_B`.
+CLI: `hpdft diff FILE_A FILE_B` (geometry, default). `hpdft diff --legacy FILE_A FILE_B` for legacy stream-order text.
 
 ## Image extraction
 

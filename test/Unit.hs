@@ -11,7 +11,7 @@ import PDF.Layout (LayoutOptions(..), defaultLayoutOptions, needsAozoraBar, aozo
 import PDF.Structure (StructElem(..), StructKid(..), structTree, logicalOrder)
 import PDF.Document (Document(..), openDocument)
 import PDF.Page (pageCount, pageRefAt, pageParagraphs)
-import PDF.Diff (TextChange(..), compareDocuments, diffParagraphs)
+import PDF.Diff (TextChange(..), DiffPipeline(..), compareDocuments, compareDocumentsWith, diffParagraphs, legacyTextParagraphs)
 import PDF.DocumentStructure (parseCIDWidths, simpleWidthAt, decodeStreamBytes)
 import PDF.Character (jisx0208Map)
 import PDF.Image
@@ -1028,7 +1028,26 @@ diffResults =
             old == T.pack "B" && T.null new
           _ -> False
       )
+  , assertBool "diffParagraphs consecutive edits stay aligned"
+      ( case diffParagraphs
+               [T.pack "P", T.pack "old-A", T.pack "old-B", T.pack "Q"]
+               [T.pack "P", T.pack "new-A", T.pack "new-B", T.pack "Q"] of
+          [ TextChange{changeParaA = Just 1, changeParaB = Just 1, changeOld = a, changeNew = a'}
+            , TextChange{changeParaA = Just 2, changeParaB = Just 2, changeOld = b, changeNew = b'}
+            ] ->
+              a == T.pack "old-A" && a' == T.pack "new-A"
+              && b == T.pack "old-B" && b' == T.pack "new-B"
+          _ -> False
+      )
+  , assertBool "legacyTextParagraphs blank-line split"
+      ( legacyTextParagraphs (T.pack "First\n\nSecond") ==
+        [T.pack "First", T.pack "Second"]
+      )
+  , assertBool "legacyTextParagraphs single block"
+      ( legacyTextParagraphs (T.pack "Only one") == [T.pack "Only one"]
+      )
   , runMultipageSelfDiff
+  , runMultipageSelfDiffLegacy
   ]
   where
     ps = [T.pack "Alpha", T.pack "Beta"]
@@ -1046,6 +1065,20 @@ runMultipageSelfDiff =
       Left err -> testFail "multipage.pdf self-diff open" (show err)
 
 {-# NOINLINE runMultipageSelfDiff #-}
+
+runMultipageSelfDiffLegacy :: Result
+runMultipageSelfDiffLegacy =
+  let path = "data/fixtures/multipage.pdf"
+  in unsafePerformIO $ do
+    result <- openDocument path Nothing
+    return $ case result of
+      Right doc ->
+        case compareDocumentsWith DiffLegacy doc doc of
+          Right changes -> assertBool "multipage.pdf legacy self-diff empty" (null changes)
+          Left err -> testFail "multipage.pdf legacy self-diff" (show err)
+      Left err -> testFail "multipage.pdf legacy self-diff open" (show err)
+
+{-# NOINLINE runMultipageSelfDiffLegacy #-}
 
 filterDecodeResults :: [Result]
 filterDecodeResults =

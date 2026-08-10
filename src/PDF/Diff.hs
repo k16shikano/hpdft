@@ -17,16 +17,21 @@ changes <- compareDocuments defaultLayoutOptions docA docB
 -}
 module PDF.Diff
   ( TextChange(..)
+  , DiffPipeline(..)
   , compareDocuments
+  , compareDocumentsWith
   , diffParagraphs
+  , legacyTextParagraphs
   ) where
 
 import PDF.Document (Document)
 import PDF.Error (PdfResult)
 import PDF.Layout (LayoutOptions)
 import PDF.Page (pageCount, pageRefAt, pageParagraphs)
+import PDF.Text (pageLegacyText)
 
 import Data.Char (isSpace)
+import Data.List (sortOn)
 import qualified Data.Text as T
 
 data TextChange
@@ -44,32 +49,47 @@ data TextChange
     }
   deriving (Eq, Show)
 
--- | Paragraph-level diff across two documents (aligned by 1-based page number).
+data DiffPipeline
+  = DiffGeom !LayoutOptions
+  | DiffLegacy
+  deriving (Eq, Show)
+
+-- | Paragraph-level diff using geometry layout (default).
 compareDocuments :: LayoutOptions -> Document -> Document -> PdfResult [TextChange]
-compareDocuments opts docA docB = do
+compareDocuments opts = compareDocumentsWith (DiffGeom opts)
+
+-- | Paragraph-level diff; pipeline selects geometry vs legacy stream-order text.
+compareDocumentsWith :: DiffPipeline -> Document -> Document -> PdfResult [TextChange]
+compareDocumentsWith pipeline docA docB = do
   nA <- pageCount docA
   nB <- pageCount docB
   let countChange =
         if nA /= nB
           then [PageCountMismatch {pagesA = nA, pagesB = nB}]
           else []
-  aligned <- mapM (diffPagePair opts docA docB) [1 .. min nA nB]
-  extraA <- mapM (onlyInA opts docA) [min nA nB + 1 .. nA]
-  extraB <- mapM (onlyInB opts docB) [min nA nB + 1 .. nB]
+  aligned <- mapM (diffPagePair pipeline docA docB) [1 .. min nA nB]
+  extraA <- mapM (onlyInA pipeline docA) [min nA nB + 1 .. nA]
+  extraB <- mapM (onlyInB pipeline docB) [min nA nB + 1 .. nB]
   return (countChange ++ concat aligned ++ concat extraA ++ concat extraB)
 
-diffPagePair :: LayoutOptions -> Document -> Document -> Int -> PdfResult [TextChange]
-diffPagePair opts docA docB page = do
+diffPagePair :: DiffPipeline -> Document -> Document -> Int -> PdfResult [TextChange]
+diffPagePair pipeline docA docB page = do
   refA <- pageRefAt docA page
   refB <- pageRefAt docB page
-  parasA <- pageParagraphs docA refA opts
-  parasB <- pageParagraphs docB refB opts
+  parasA <- pageParagraphsFor pipeline docA refA
+  parasB <- pageParagraphsFor pipeline docB refB
   return (diffParagraphsOnPage page parasA parasB)
 
-onlyInA :: LayoutOptions -> Document -> Int -> PdfResult [TextChange]
-onlyInA opts doc page = do
+pageParagraphsFor :: DiffPipeline -> Document -> Int -> PdfResult [T.Text]
+pageParagraphsFor (DiffGeom opts) doc ref = pageParagraphs doc ref opts
+pageParagraphsFor DiffLegacy doc ref = do
+  txt <- pageLegacyText doc ref
+  return (legacyTextParagraphs txt)
+
+onlyInA :: DiffPipeline -> Document -> Int -> PdfResult [TextChange]
+onlyInA pipeline doc page = do
   ref <- pageRefAt doc page
-  paras <- pageParagraphs doc ref opts
+  paras <- pageParagraphsFor pipeline doc ref
   return
     [ TextChange
         { changePageA = Just page
@@ -82,10 +102,10 @@ onlyInA opts doc page = do
     | (idx, txt) <- zip [0 ..] paras
     ]
 
-onlyInB :: LayoutOptions -> Document -> Int -> PdfResult [TextChange]
-onlyInB opts doc page = do
+onlyInB :: DiffPipeline -> Document -> Int -> PdfResult [TextChange]
+onlyInB pipeline doc page = do
   ref <- pageRefAt doc page
-  paras <- pageParagraphs doc ref opts
+  paras <- pageParagraphsFor pipeline doc ref
   return
     [ TextChange
         { changePageA = Nothing
@@ -98,6 +118,14 @@ onlyInB opts doc page = do
     | (idx, txt) <- zip [0 ..] paras
     ]
 
+-- | Split legacy page text into paragraph-sized units (blank-line separated).
+legacyTextParagraphs :: T.Text -> [T.Text]
+legacyTextParagraphs t =
+  let chunks = filter (not . T.null) $ map normalizePara $ T.splitOn "\n\n" t
+  in if null chunks && not (T.null (normalizePara t))
+     then [normalizePara t]
+     else chunks
+
 diffParagraphsOnPage :: Int -> [T.Text] -> [T.Text] -> [TextChange]
 diffParagraphsOnPage page parasA parasB =
   map attachPage (diffParagraphs parasA parasB)
@@ -107,9 +135,13 @@ diffParagraphsOnPage page parasA parasB =
     attachPage other = other
 
 -- | Paragraph LCS diff without page numbers (for unit tests).
+--
+-- When consecutive paragraphs both change, prefer a paired replace over
+-- independent delete+insert. Otherwise LCS + adjacent merge can cross-wire
+-- neighbors (e.g. old para N vs new para N-1).
 diffParagraphs :: [T.Text] -> [T.Text] -> [TextChange]
 diffParagraphs parasA parasB =
-  mergeReplaceChanges $ go (length normA) (length normB) []
+  sortChanges $ mergeReplaceChanges $ go (length normA) (length normB) []
   where
     normA = map normalizePara parasA
     normB = map normalizePara parasB
@@ -121,7 +153,13 @@ diffParagraphs parasA parasB =
     go i j acc
       | i > 0 && j > 0 && normA !! (i - 1) == normB !! (j - 1) =
           go (i - 1) (j - 1) acc
-      | j > 0 && (i == 0 || tableAt (i - 1) j <= tableAt i (j - 1)) =
+      | i > 0 && j > 0 && preferReplace i j =
+          go (i - 1) (j - 1)
+            ( TextChange Nothing Nothing (Just (i - 1)) (Just (j - 1))
+                (parasA !! (i - 1)) (parasB !! (j - 1))
+                : acc
+            )
+      | j > 0 && (i == 0 || tableAt (i - 1) j < tableAt i (j - 1)) =
           go i (j - 1)
             ( TextChange Nothing Nothing Nothing (Just (j - 1)) T.empty (parasB !! (j - 1))
                 : acc
@@ -132,6 +170,18 @@ diffParagraphs parasA parasB =
                 : acc
             )
       | otherwise = reverse acc
+
+    -- Substitution keeps the remaining LCS; pure insert or delete would not improve it.
+    preferReplace i j =
+      let diag = tableAt (i - 1) (j - 1)
+      in diag >= tableAt (i - 1) j && diag >= tableAt i (j - 1)
+
+sortChanges :: [TextChange] -> [TextChange]
+sortChanges =
+  sortOn
+    (\c -> case c of
+       TextChange{changeParaA = pa, changeParaB = pb} -> (pa, pb)
+       PageCountMismatch{} -> (Nothing, Nothing))
 
 mergeReplaceChanges :: [TextChange] -> [TextChange]
 mergeReplaceChanges [] = []

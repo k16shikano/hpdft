@@ -11,6 +11,12 @@
 - Geometry layout: hanging-indent wraps in footnote bodies (CJK continuation after †1 etc.) no longer become blank-line paragraph breaks.
 - Geometry layout: large CJK gaps (chapter title to body) again start a new paragraph; soft-wrap suppression only applies within ~2.2× typical leading.
 
+- Diff: consecutive modified paragraphs stay index-aligned (no more "para N vs N-1" cross-wiring).
+
+### Added
+
+- Working `hpdft diff --legacy` (and `DiffPipeline` / `compareDocumentsWith` / `pageLegacyText`) to compare stream-order text instead of geometry paragraphs.
+
 ## 0.4.7.0 (2026-07-06)
 
 ### Added

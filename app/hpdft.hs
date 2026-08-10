@@ -202,11 +202,11 @@ diffCommand = CmdDiff <$> diffOpts
 diffOpts :: Parser DiffOpt
 diffOpts = DiffOpt
   <$> switch
-      ( long "geom"
-        <> help "Use geometry-based layout (default for diff)" )
+      ( long "legacy"
+        <> help "Compare using legacy stream-order text (blank-line paragraph splits)" )
   <*> switch
       ( long "ruby"
-        <> help "Embed ruby in Aozora bunko notation during layout" )
+        <> help "Embed ruby in Aozora bunko notation (geometry pipeline only)" )
   <*> switch
       ( long "json"
         <> help "Emit JSON instead of human-readable diff" )

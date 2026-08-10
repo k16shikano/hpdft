@@ -47,11 +47,17 @@ module PDF.Text
   , pdfToTextTaggedDocWith
   , pageTextGeom
   , pageTextGeomWith
+  , pageLegacyText
   , pdfToTextStreamDoc
   ) where
 
 import PDF.Definition
-import PDF.Error (PdfResult, PdfWarning(..), renderPdfError)
+import PDF.Error
+  ( PdfResult
+  , PdfWarning(..)
+  , renderPdfError
+  , PdfError(MissingKey, MissingObject)
+  )
 import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
 import PDF.Encrypt (Security)
@@ -205,6 +211,20 @@ pageTextGeomWith :: LayoutOptions -> Document -> Int -> PdfResult BSL.ByteString
 pageTextGeomWith opts doc pageRef = do
   items <- interpretPageItems doc pageRef
   return $ BSLU.fromString (T.unpack (layoutPageTextWith opts items))
+
+-- | Legacy stream-order text for a single page (object reference number).
+pageLegacyText :: Document -> Int -> PdfResult T.Text
+pageLegacyText doc ref =
+  let sec = docSecurity doc
+      objs = docObjs doc
+  in case findObjsByRef ref objs of
+    Just os -> case findDictOfType "/Page" os of
+      Just dict ->
+        let (bs, _) = pageContent ref dict initstate sec objs
+        in Right (T.pack (BSLU.toString bs))
+      Nothing ->
+        Left (MissingKey "/Page" ("object " ++ show ref ++ " is not a page"))
+    Nothing -> Left (MissingObject ref)
 
 pdfToTextTaggedBS :: FilePath -> Maybe String -> IO (PdfResult BSL.ByteString)
 pdfToTextTaggedBS = pdfToTextTaggedBSWith defaultLayoutOptions
