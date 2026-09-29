@@ -13,6 +13,7 @@ It provides a basic way to find information from a PDF file.
 
 module PDF.Object
   ( parsePdfLetters
+  , displayPdfHex
   , parsePDFObj
   , parseRefsArray
   , pdfObj
@@ -26,7 +27,7 @@ module PDF.Object
   , xref
   ) where
 
-import Data.Char (chr)
+import Data.Char (chr, isHexDigit)
 import qualified Data.Map as M
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BSL
@@ -391,6 +392,28 @@ pdfhex = PdfHex <$> hex
 pdfhexletter s = case parseOnly (concat <$> many1 pdfhexutf16be) s of
   Right t -> utf16be t
   Left e -> BS.unpack s
+
+-- | Human-readable form of a parsed 'PdfHex' value (matches 'pdfhex' / 'pdfhexSec').
+displayPdfHex :: T.Text -> String
+displayPdfHex h
+  | T.all isHexDigit h = displayHexDigitString (BS.pack (T.unpack h))
+  | otherwise = T.unpack h
+
+displayHexDigitString :: BS.ByteString -> String
+displayHexDigitString lets =
+  case parseOnly
+         ( (try $ string "feff" <|> string "FEFF")
+           *> many1 (oneOf "0123456789abcdefABCDEF")
+         )
+         lets of
+    Right s -> pdfhexletter (BS.pack s)
+    Left _  -> displayPdfHexBytes (decodeHexBytes lets)
+
+displayPdfHexBytes :: BS.ByteString -> String
+displayPdfHexBytes decrypted =
+  case parseOnly parsePdfLetters (BS.cons '(' (BS.snoc decrypted ')')) of
+    Right t -> T.unpack t
+    Left _  -> BS.unpack decrypted
 
 pdfhexutf16be :: Parser String
 pdfhexutf16be = do

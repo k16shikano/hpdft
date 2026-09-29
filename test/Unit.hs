@@ -22,6 +22,7 @@ import PDF.Image
   , extractPageImages
   )
 import PDF.FormExtract (pageFormNames, extractFormPdf)
+import PDF.Object (displayPdfHex)
 import PDF.Text (pdfToTextTaggedBS, pdfToTextDoc, pdfToTextStreamDoc)
 import PDF.Error (PdfResult)
 
@@ -200,6 +201,7 @@ main = do
           ++ taggedEndToEndResults
           ++ textStreamResults
           ++ cmapEncodingResults
+          ++ pdfHexTitleResults
           ++ normalizePdfNumberResults
           ++ heightSpecResults
           ++ encryptSpecResults
@@ -1497,6 +1499,16 @@ cmapEncodingResults =
       , assertBool "bytesToCodes JISmap 2-byte fixed"
           (bytesToCodes jfi [0x46, 0x7C, 0x4B, 0x5C] == [0x467C, 0x4B5C])
       ]
+
+pdfHexTitleResults :: [Result]
+pdfHexTitleResults =
+  [ assertBool "displayPdfHex already decoded"
+      (displayPdfHex (T.pack "Hello") == "Hello")
+  , assertBool "displayPdfHex UTF-16BE hex digits"
+      (displayPdfHex (T.pack "FEFF00480065006C006C006F") == "Hello")
+  , assertBool "displayPdfHex latin1 hex digits"
+      (displayPdfHex (T.pack "48656c6c6f") == "Hello")
+  ]
 
 normalizePdfNumberResults :: [Result]
 normalizePdfNumberResults =

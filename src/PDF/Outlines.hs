@@ -25,7 +25,7 @@ import PDF.Definition hiding (toString)
 import PDF.Document (Document(..), openDocument, docRootRef)
 import PDF.DocumentStructure
 import PDF.Error (PdfError(..), PdfResult)
-import PDF.Object (parseRefsArray, parsePdfLetters)
+import PDF.Object (parseRefsArray, parsePdfLetters, displayPdfHex)
 
 import qualified Data.Text as T
 
@@ -231,15 +231,22 @@ resolveNamesDict dict objs =
 findTitle :: Dict -> PDFObjIndex -> PdfResult String
 findTitle dict objs =
   case findObjFromDict dict "/Title" of
-    Just (PdfText s) -> case parseOnly parsePdfLetters (BS.pack (T.unpack s)) of
-      Right t -> Right (T.unpack t)
-      Left _  -> Right (T.unpack s)
-    Just (ObjRef r) -> case findObjsByRef r objs of
-      Just [PdfText s] -> Right (T.unpack s)
-      Just s -> Left (ParseError ("Unknown title object: " ++ show s) BS.empty)
-      Nothing -> Left (MissingObject r)
-    Just x -> Right (show x)
     Nothing -> Left (MissingKey "/Title" "outline")
+    Just o  -> titleFromObj o objs
+
+titleFromObj :: Obj -> PDFObjIndex -> PdfResult String
+titleFromObj (PdfText s) _ =
+  case parseOnly parsePdfLetters (BS.pack (T.unpack s)) of
+    Right t -> Right (T.unpack t)
+    Left _  -> Right (T.unpack s)
+titleFromObj (PdfHex h) _ = Right (displayPdfHex h)
+titleFromObj (ObjRef r) objs =
+  case findObjsByRef r objs of
+    Just (o : _) -> titleFromObj o objs
+    Just []      -> Left (ParseError "Empty title object" BS.empty)
+    Nothing      -> Left (MissingObject r)
+titleFromObj o _ =
+  Left (ParseError ("Unknown title object: " ++ show o) BS.empty)
 
 listToMaybe :: [a] -> Maybe a
 listToMaybe (x:_) = Just x
