@@ -176,9 +176,9 @@ showInfo filename mpw = do
   d <- runOrDie (return (docInfoDict doc))
   putStrLn $ ppObj (PdfDict d)
 
-showOutlines :: FilePath -> Maybe String -> IO ()
-showOutlines filename mpw = do
-  d <- runOrDie (getOutlines filename mpw)
+showOutlines :: FilePath -> Maybe String -> Maybe Int -> IO ()
+showOutlines filename mpw mDepth = do
+  d <- runOrDie (getOutlines filename mpw mDepth)
   putStrLn $ show d
 
 showTrailer :: FilePath -> IO ()

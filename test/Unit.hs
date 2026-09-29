@@ -23,6 +23,7 @@ import PDF.Image
   )
 import PDF.FormExtract (pageFormNames, extractFormPdf)
 import PDF.Object (displayPdfHex)
+import PDF.Outlines (getOutlines)
 import PDF.Text (pdfToTextTaggedBS, pdfToTextDoc, pdfToTextStreamDoc)
 import PDF.Error (PdfResult)
 
@@ -202,6 +203,7 @@ main = do
           ++ textStreamResults
           ++ cmapEncodingResults
           ++ pdfHexTitleResults
+          ++ outlineDepthResults
           ++ normalizePdfNumberResults
           ++ heightSpecResults
           ++ encryptSpecResults
@@ -1509,6 +1511,23 @@ pdfHexTitleResults =
   , assertBool "displayPdfHex latin1 hex digits"
       (displayPdfHex (T.pack "48656c6c6f") == "Hello")
   ]
+
+outlineDepthResults :: [Result]
+outlineDepthResults =
+  [ runOutlineDepth Nothing "L0\n L1\n  L2\n"
+  , runOutlineDepth (Just 1) "L0\n"
+  , runOutlineDepth (Just 2) "L0\n L1\n"
+  ]
+
+runOutlineDepth :: Maybe Int -> String -> Result
+runOutlineDepth maxDepth expected =
+  let path = "test/fixtures/outline-depth.pdf"
+  in unsafePerformIO $ do
+    result <- getOutlines path Nothing maxDepth
+    return $ case result of
+      Right tree ->
+        assertTextEq ("outline depth " ++ show maxDepth) (T.pack expected) (T.pack (show tree))
+      Left err -> testFail ("outline depth " ++ show maxDepth) (show err)
 
 normalizePdfNumberResults :: [Result]
 normalizePdfNumberResults =

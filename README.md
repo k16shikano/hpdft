@@ -28,7 +28,7 @@ hpdft form -p PAGE -n NAME -o DIR FILE    # extract one Form to standalone PDF
 hpdft diff [OPTIONS] FILE_A FILE_B        # paragraph-level diff
 hpdft info FILE                           # PDF metadata
 hpdft title FILE                          # document title
-hpdft toc FILE                            # table of contents
+hpdft toc [--depth N] FILE                # table of contents (1 = top level only)
 hpdft trailer FILE                        # PDF trailer dictionary
 hpdft object -r REF FILE                  # show object by reference
 hpdft refs FILE                           # page object references

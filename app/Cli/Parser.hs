@@ -15,7 +15,7 @@ data Cmd
   | CmdDiff DiffOpt
   | CmdInfo FilePath (Maybe String)
   | CmdTitle FilePath (Maybe String)
-  | CmdToc FilePath (Maybe String)
+  | CmdToc FilePath (Maybe String) (Maybe Int)
   | CmdTrailer FilePath
   | CmdObject Int FilePath (Maybe String)
   | CmdRefs FilePath (Maybe String)
@@ -71,6 +71,7 @@ data LegacyOpt = LegacyOpt
   , loTitle     :: Bool
   , loInfo      :: Bool
   , loToc       :: Bool
+  , loDepth     :: Maybe Int
   , loTrailer   :: Bool
   , loHeight    :: String
   , loPassword  :: String

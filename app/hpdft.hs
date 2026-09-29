@@ -56,7 +56,7 @@ subcommandNames =
 
 main :: IO ()
 main = do
-  args <- getArgs
+  args <- promoteLegacyTocArgs <$> getArgs
   when (listToMaybe args == Just "extract") $ do
     hPutStrLn stderr "hpdft: 'extract' subcommand removed; use text, image, or form"
     exitWith (ExitFailure 1)
@@ -65,14 +65,15 @@ main = do
         _ -> False
       isMeta = any (`elem` args) ["--help", "-h", "--version", "-V"]
       parserExtras = helper <**> simpleVersioner versionInfo
+      runParser p = handleParseResult $ execParserPure defaultPrefs p args
   cmd <- if useSubcommands
-         then execParser (info (commandParser <**> parserExtras) (fullDesc <> header versionInfo))
+         then runParser (info (commandParser <**> parserExtras) (fullDesc <> header versionInfo))
          else if isMeta
-              then execParser (info (legacyCmd <**> parserExtras) (fullDesc <> header versionInfo))
+              then runParser (info (legacyCmd <**> parserExtras) (fullDesc <> header versionInfo))
               else do
                 when (legacyNeedsDeprecation args) $
                   hPutStrLn stderr deprecationMsg
-                execParser (info (legacyCmd <**> parserExtras) (fullDesc <> header versionInfo))
+                runParser (info (legacyCmd <**> parserExtras) (fullDesc <> header versionInfo))
   runCmd cmd
 
 versionInfo :: String
@@ -87,7 +88,7 @@ runCmd cmd = case cmd of
   CmdDiff opt -> runDiff opt
   CmdInfo fn mpw -> showInfo fn mpw
   CmdTitle fn mpw -> showTitle fn mpw
-  CmdToc fn mpw -> showOutlines fn mpw
+  CmdToc fn mpw depth -> showOutlines fn mpw depth
   CmdTrailer fn -> showTrailer fn
   CmdObject rf fn mpw -> showContent fn mpw rf
   CmdRefs fn mpw -> showRefs fn mpw
@@ -100,6 +101,21 @@ passwordOpt = strOption
     <> value ""
     <> metavar "PASSWORD"
     <> help "Password for encrypted PDF" )
+
+tocDepthOpt :: Parser (Maybe Int)
+tocDepthOpt =
+  optional $
+    option
+      (maybeReader readTocDepth)
+      ( long "depth"
+        <> metavar "N"
+        <> help "Max outline nesting depth (1 = top level only; default: all levels)" )
+
+readTocDepth :: String -> Maybe Int
+readTocDepth s =
+  case reads s of
+    [(n, "")] | n >= 1 -> Just n
+    _ -> Nothing
 
 heightOpt :: Parser (Maybe String)
 heightOpt = optional $
@@ -233,7 +249,8 @@ titleCommand :: Parser Cmd
 titleCommand = CmdTitle <$> fileArg <*> (maybePassword <$> passwordOpt)
 
 tocCommand :: Parser Cmd
-tocCommand = CmdToc <$> fileArg <*> (maybePassword <$> passwordOpt)
+tocCommand =
+  CmdToc <$> fileArg <*> (maybePassword <$> passwordOpt) <*> tocDepthOpt
 
 trailerCommand :: Parser Cmd
 trailerCommand = CmdTrailer <$> fileArg
@@ -315,6 +332,7 @@ legacyOptions = LegacyOpt
       ( long "toc"
         <> short 'O'
         <> help "Show table of contents (from metadata) " )
+  <*> tocDepthOpt
   <*> switch
       ( long "trailer"
         <> help "Show the trailer of PDF" )
@@ -332,7 +350,7 @@ legacyOptions = LegacyOpt
 legacyToCmd :: LegacyOpt -> Cmd
 legacyToCmd LegacyOpt{loPage=pg, loRef=rf, loGrep=gr, loRefs=rs, loGeom=gm,
                       loTagged=tg, loLegacy=lg, loFootnotes=fnn, loRuby=rb,
-                      loTitle=tt, loInfo=ii, loToc=oo, loTrailer=tr,
+                      loTitle=tt, loInfo=ii, loToc=oo, loDepth=od, loTrailer=tr,
                       loHeight=h, loPassword=pw, loFile=fn} =
   let mpw = maybePassword pw
       mHeight = if null h then Nothing else Just h
@@ -353,7 +371,7 @@ legacyToCmd LegacyOpt{loPage=pg, loRef=rf, loGrep=gr, loRefs=rs, loGeom=gm,
       | pg==0 && rf==0 && null gr && not rs && noMode && ii ->
         CmdInfo fn mpw
       | pg==0 && rf==0 && null gr && not rs && noMode && oo ->
-        CmdToc fn mpw
+        CmdToc fn mpw od
       | pg==0 && rf==0 && null gr && not rs && noMode && tr ->
         CmdTrailer fn
       | pg==0 && rf==0 && null gr && rs && noMode ->
@@ -366,6 +384,23 @@ legacyToCmd LegacyOpt{loPage=pg, loRef=rf, loGrep=gr, loRefs=rs, loGeom=gm,
         CmdGrep gr fn mpw
       | otherwise ->
         textCmd
+
+-- | Map `hpdft -O/--toc FILE` to `hpdft toc FILE` so scripts get the subcommand
+-- path (no deprecation on stderr) while keeping the old flag spelling.
+promoteLegacyTocArgs :: [String] -> [String]
+promoteLegacyTocArgs args
+  | maybe False (`elem` subcommandNames) (listToMaybe args) = args
+  | any (`elem` args) ["-O", "--toc"]
+    , not (any (`elem` args) blockedForTocPromote) =
+      "toc" : filter (`notElem` ["-O", "--toc"]) args
+  | otherwise = args
+
+blockedForTocPromote :: [String]
+blockedForTocPromote =
+  [ "-p", "--page", "-r", "--ref", "-g", "--grep", "-R", "--refs"
+  , "--geom", "--tagged", "--legacy", "--footnotes", "--ruby"
+  , "-T", "--title", "-I", "--info", "--trailer"
+  ]
 
 legacyNeedsDeprecation :: [String] -> Bool
 legacyNeedsDeprecation args =

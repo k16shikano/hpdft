@@ -44,8 +44,8 @@ toString depth PDFOutlinesEntry {dest=d, text=t, subs=s} = (replicate depth ' ' 
 toString depth (PDFOutlinesTree os) = concatMap (toString depth) os
 toString depth PDFOutlinesNE = ""
 
-getOutlines :: FilePath -> Maybe String -> IO (PdfResult PDFOutlines)
-getOutlines filename password = do
+getOutlines :: FilePath -> Maybe String -> Maybe Int -> IO (PdfResult PDFOutlines)
+getOutlines filename password maxDepth = do
   docResult <- openDocument filename password
   case docResult of
     Left err -> return (Left err)
@@ -58,27 +58,38 @@ getOutlines filename password = do
           case findFirst dict of
             Nothing -> return $ Left (MissingKey "/First" "outlines")
             Just firstref -> case findObjsByRef firstref objs of
-              Just [PdfDict d] -> return $ gatherOutlines d objs destsRoot
+              Just [PdfDict d] -> return $ gatherOutlines d objs destsRoot 0 maxDepth
               Just s -> return $ Left (ParseError ("Unknown outline object: " ++ show s) BS.empty)
               Nothing -> return $ Left (MissingObject firstref)
 
-gatherChildren :: Dict -> PDFObjIndex -> Maybe Int -> PdfResult PDFOutlines
-gatherChildren dict objs destsRoot = case findFirst dict of
-  Just r -> case findObjsByRef r objs of
-    Just [PdfDict d] -> gatherOutlines d objs destsRoot
-    Just s -> Left (ParseError ("Unknown outline child: " ++ show s) BS.empty)
-    Nothing -> Left (MissingObject r)
-  Nothing -> Right PDFOutlinesNE
+gatherChildren :: Dict -> PDFObjIndex -> Maybe Int -> Int -> Maybe Int -> PdfResult PDFOutlines
+gatherChildren dict objs destsRoot childLevel maxDepth
+  | not (depthAllows childLevel maxDepth) = Right PDFOutlinesNE
+  | otherwise =
+      case findFirst dict of
+        Just r -> case findObjsByRef r objs of
+          Just [PdfDict d] -> gatherOutlines d objs destsRoot childLevel maxDepth
+          Just s -> Left (ParseError ("Unknown outline child: " ++ show s) BS.empty)
+          Nothing -> Left (MissingObject r)
+        Nothing -> Right PDFOutlinesNE
 
-gatherOutlines :: Dict -> PDFObjIndex -> Maybe Int -> PdfResult PDFOutlines
-gatherOutlines dict objs destsRoot = do
-  c <- gatherChildren dict objs destsRoot
+depthAllows :: Int -> Maybe Int -> Bool
+depthAllows _ Nothing = True
+depthAllows level (Just maxD) = level < maxD
+
+gatherOutlines :: Dict -> PDFObjIndex -> Maybe Int -> Int -> Maybe Int -> PdfResult PDFOutlines
+gatherOutlines dict objs destsRoot level maxDepth = do
+  let childLevel = level + 1
+  c <-
+    if depthAllows childLevel maxDepth
+    then gatherChildren dict objs destsRoot childLevel maxDepth
+    else return PDFOutlinesNE
   let dest = destPage dict objs destsRoot
   title <- findTitle dict objs
   case findNext dict of
     Just r -> case findObjsByRef r objs of
       Just [PdfDict d] -> do
-        next <- gatherOutlines d objs destsRoot
+        next <- gatherOutlines d objs destsRoot level maxDepth
         return $ PDFOutlinesTree (PDFOutlinesEntry { dest = dest
                                                    , text = title ++ "\n"
                                                    , subs = c}
