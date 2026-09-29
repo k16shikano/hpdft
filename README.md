@@ -128,5 +128,5 @@ Developer notes (roadmaps, performance write-ups): [`dev/`](dev/)
 
 ## Version
 
-Released: **0.4.7.1** (2026-08-10) — Form/stream extraction fixes, layout heuristics, and aligned paragraph diff.
-Previous release: **0.4.7.0**.
+Released: **0.4.7.2** (2026-09-29) — Outline (`toc` / `-O`) titles from hex strings decode correctly.
+Previous release: **0.4.7.1**.

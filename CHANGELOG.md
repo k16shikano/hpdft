@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.7.2 (2026-09-29)
+
+### Fixed
+
+- Outlines: decode `/Title` stored as `PdfHex` (including via indirect objects) for `hpdft toc` / `-O`, using the same rules as hex string parsing instead of `Show` output.
+
+### Added
+
+- `PDF.Object.displayPdfHex` for human-readable text from a parsed hex string object.
+
 ## 0.4.7.1 (2026-08-10)
 
 ### Fixed
